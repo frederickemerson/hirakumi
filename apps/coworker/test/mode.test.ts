@@ -4,10 +4,12 @@ import { selectMode } from "../src/mode.js";
 const me = { id: "cow_1", name: "Hirakumi", isWhitelisted: true, capabilities: ["tasks"], archivedAt: null };
 
 describe("selectMode (hour-2 gate)", () => {
-  it("uses Sokosumi only for an active, whitelisted coworker with the tasks capability", () => {
+  it("uses Sokosumi for an active coworker with the tasks capability", () => {
     expect(selectMode(me)).toEqual({ kind: "sokosumi" });
     expect(selectMode(null)).toMatchObject({ kind: "dashboard" });
-    expect(selectMode({ ...me, isWhitelisted: false })).toEqual({ kind: "dashboard", reason: "coworker cow_1 is not whitelisted yet" });
+    // Whitelisting only controls marketplace listing: a non-whitelisted coworker still receives task events
+    // and can comment on its personal-workspace tasks (verified live on preprod, 6 Oct 2026).
+    expect(selectMode({ ...me, isWhitelisted: false })).toEqual({ kind: "sokosumi" });
     expect(selectMode({ ...me, capabilities: ["chat"] })).toMatchObject({ kind: "dashboard" });
     expect(selectMode({ ...me, archivedAt: "2026-10-06T00:00:00Z" })).toMatchObject({ kind: "dashboard" });
   });
