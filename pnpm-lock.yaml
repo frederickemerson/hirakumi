@@ -36,6 +36,9 @@ importers:
       '@hirakumi/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@hirakumi/masumi':
+        specifier: workspace:*
+        version: link:../../packages/masumi
       '@x402/cardano':
         specifier: 2.26.0
         version: 2.26.0

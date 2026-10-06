@@ -12,6 +12,7 @@
   "dependencies": {
     "@hirakumi/core": "workspace:*",
     "@hirakumi/db": "workspace:*",
+    "@hirakumi/masumi": "workspace:*",
     "@x402/cardano": "2.26.0",
     "@x402/core": "2.26.0",
     "@x402/express": "2.26.0",

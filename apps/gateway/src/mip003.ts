@@ -107,6 +107,7 @@ export function mip003Router(d: AppDeps): Router {
       const pr = await d.masumi.createPaymentRequest({
         agentIdentifier: loaded.api.agent_identifier, inputHash: hash, identifierFromPurchaser: pid,
         payByTime: new Date(now + d.config.escrow.payByMs), submitResultTime: new Date(now + d.config.escrow.submitResultMs),
+        sellerReturnAddress: loaded.api.pay_to,
       });
       const jobId = newId("job");
       await insertJob(d.sql, {

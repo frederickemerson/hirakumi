@@ -144,10 +144,10 @@ export class FakeFacilitator implements FacilitatorClient {
 
 export class FakeMasumi implements MasumiPort {
   state: PaymentState = "WaitingForPayment";
-  created: Array<{ agentIdentifier: string; inputHash: string; identifierFromPurchaser: string }> = [];
+  created: Array<{ agentIdentifier: string; inputHash: string; identifierFromPurchaser: string; sellerReturnAddress?: string }> = [];
   submitted: Array<{ blockchainIdentifier: string; resultHash: string }> = [];
-  async createPaymentRequest(p: { agentIdentifier: string; inputHash: string; identifierFromPurchaser: string; submitResultTime: Date; payByTime: Date }): Promise<PaymentRequestResult> {
-    this.created.push({ agentIdentifier: p.agentIdentifier, inputHash: p.inputHash, identifierFromPurchaser: p.identifierFromPurchaser });
+  async createPaymentRequest(p: { agentIdentifier: string; inputHash: string; identifierFromPurchaser: string; submitResultTime: Date; payByTime: Date; sellerReturnAddress?: string }): Promise<PaymentRequestResult> {
+    this.created.push({ agentIdentifier: p.agentIdentifier, inputHash: p.inputHash, identifierFromPurchaser: p.identifierFromPurchaser, ...(p.sellerReturnAddress ? { sellerReturnAddress: p.sellerReturnAddress } : {}) });
     return {
       blockchainIdentifier: `bc_${randomBytes(8).toString("hex")}`,
       payByTime: p.payByTime,

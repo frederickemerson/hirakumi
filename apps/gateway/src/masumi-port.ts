@@ -11,6 +11,8 @@ export type PaymentRequestResult = {
 export type MasumiPort = {
   createPaymentRequest(p: {
     agentIdentifier: string; inputHash: string; identifierFromPurchaser: string; submitResultTime: Date; payByTime: Date;
+    /** Contract v1.1 M2: escrow collection goes straight to the seller's verified address. */
+    sellerReturnAddress?: string;
   }): Promise<PaymentRequestResult>;
   getPaymentState(blockchainIdentifier: string): Promise<PaymentState>;
   submitResult(blockchainIdentifier: string, resultHash: string): Promise<void>;

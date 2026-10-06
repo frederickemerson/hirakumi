@@ -27,7 +27,8 @@ describe("start_job", () => {
     expect(r.body.amounts).toEqual([{ amount: "1000000", unit: "16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d" }]);
     for (const k of ["payByTime", "submitResultTime", "unlockTime", "externalDisputeUnlockTime"]) expect(typeof r.body[k]).toBe("number");
     expect(r.body.input_hash).toBe(inputHash(PID, input_data));
-    expect(h.masumi.created).toEqual([{ agentIdentifier: "agent_test_1", inputHash: inputHash(PID, input_data), identifierFromPurchaser: PID }]);
+    // Contract v1.1 M2: escrow pays the seller directly (non-custodial).
+    expect(h.masumi.created).toEqual([{ agentIdentifier: "agent_test_1", inputHash: inputHash(PID, input_data), identifierFromPurchaser: PID, sellerReturnAddress: h.seeded.payTo }]);
     expect(typeof r.body.payByTime).toBe("number");
     expect((await status(r.body.job_id)).body).toMatchObject({ status: "awaiting_payment" });
   });
