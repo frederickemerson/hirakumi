@@ -5,14 +5,18 @@ import { errorJson, json, readJson, requireSeller } from "@/lib/http";
 import { createApi, createApiForTask, findCoworkerTask, LISTED_BY_OTHER, type ApiInput } from "@/lib/repo/apis";
 import { validateApiName, validateOpenApiUrl, ValidationError } from "@/lib/validate";
 
-/** An OpenAPI link, or (no OpenAPI file) a base URL plus example requests, checked now so mistakes show at once. */
+/**
+ * An OpenAPI link, or (no OpenAPI file) a base URL plus example requests, checked now so mistakes show at once.
+ * The OpenAPI file may be hosted anywhere, so its origin is only a placeholder: the parse step sets the API's
+ * origin and path from servers[0]. A samples API has no file (openapi_url null) and its base is final.
+ */
 function readIntake(body: Record<string, unknown>, sellerId: string): ApiInput {
   if (body.mode === "samples") {
-    const { base, origin, hostname, proofUrl } = normalizeSamplesBase(body.baseUrl, env.allowInsecureUpstream());
+    const { base, origin, hostname } = normalizeSamplesBase(body.baseUrl, env.allowInsecureUpstream());
     const lines = typeof body.samples === "string" ? body.samples.trim() : "";
     if (lines.length > 20_000) throw new SampleError("The example requests are too long.");
     parseSampleLines(lines);
-    return { sellerId, name: validateApiName(body.name, hostname), origin, openapiUrl: proofUrl, samples: { base, lines } };
+    return { sellerId, name: validateApiName(body.name, hostname), origin, openapiUrl: null, samples: { base, lines } };
   }
   const { url, origin, hostname } = validateOpenApiUrl(body.openapiUrl, env.allowInsecureUpstream());
   return { sellerId, name: validateApiName(body.name, hostname), origin, openapiUrl: url };

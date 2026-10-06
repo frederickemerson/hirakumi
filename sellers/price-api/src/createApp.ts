@@ -12,7 +12,7 @@ export type AppDeps = {
   modes: ModeStore;
   now: () => number;
   adminToken: string | undefined;
-  /** Hirakumi ownership codes by API id; the latest one set is served in /openapi.json (see challenge.ts). */
+  /** Hirakumi ownership codes by API id; the latest one set is sent as the X-Hirakumi-Verify header (see challenge.ts). */
   verifyCodes: Record<string, string>;
   publicUrl: string;
   log: (msg: string, err?: unknown) => void;
@@ -27,6 +27,13 @@ function sameSecret(expected: string, given: string): boolean {
 export function createApp(deps: AppDeps): Express {
   const app = express();
   app.disable("x-powered-by");
+
+  // Hirakumi's ownership proof: every answer, a 404 or an error included, carries the latest code set.
+  app.use((_req, res, next) => {
+    const code = latestCode(deps.verifyCodes);
+    if (code) res.set("X-Hirakumi-Verify", code);
+    next();
+  });
 
   const requireAdmin = (req: Request, res: Response, next: NextFunction) => {
     if (!deps.adminToken) {
@@ -47,8 +54,8 @@ export function createApp(deps: AppDeps): Express {
   });
 
   app.get("/openapi.json", (_req, res) => {
-    // no-store: Hirakumi must see a newly set code on its next check.
-    res.set("Cache-Control", "no-store").json(buildOpenApi(deps.publicUrl, latestCode(deps.verifyCodes)));
+    // no-store: a cache must not keep an answer with an old X-Hirakumi-Verify code.
+    res.set("Cache-Control", "no-store").json(buildOpenApi(deps.publicUrl));
   });
 
   app.get("/price", async (req, res) => {
@@ -90,9 +97,9 @@ export function createApp(deps: AppDeps): Express {
     res.json({ mode });
   });
 
-  // Demo stand-in for "add x-hirakumi-verify to your OpenAPI file": the demo operator sets the API's code
-  // (shown on Hirakumi's ownership page) without a redeploy. The latest code set is the one /openapi.json
-  // serves. Kept in memory; restarts fall back to HIRAKUMI_CHALLENGE.
+  // Demo stand-in for "send the X-Hirakumi-Verify header": the demo operator sets the API's code (shown on
+  // Hirakumi's ownership page) without a redeploy. The latest code set is the one every answer sends.
+  // Kept in memory; restarts fall back to HIRAKUMI_CHALLENGE.
   app.put("/admin/challenge/:apiId", requireAdmin, express.text({ limit: "1kb", type: "*/*" }), (req, res) => {
     const apiId = String(req.params.apiId);
     const code = typeof req.body === "string" ? req.body.trim() : "";

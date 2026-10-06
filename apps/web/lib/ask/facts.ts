@@ -9,7 +9,7 @@ import { type EXTRA_QUESTIONS, type LANDING_QUESTIONS, type SUGGESTED_QUESTIONS,
  * - docs/submission/writeup.md (credits only on pass, 422/503 behaviour, escrow channel, measured numbers, production path)
  * - app/page.tsx landing FAQ (who decides pass or fail, Down, mainnet, cost and business model, wallets)
  * - lib/session.ts login message ("costs nothing and moves no funds"), components/ownership-panel.tsx and
- *   app/api/apis/[apiId]/ownership/verify/route.ts (x-hirakumi-verify, a passing check counts for 30 minutes)
+ *   app/api/apis/[apiId]/ownership/verify/route.ts (the X-Hirakumi-Verify header, a passing check counts for 30 minutes)
  * - app/api/apis/[apiId]/pricing/route.ts and lib/money.ts (1 tUSDM minimum, 1 to 100,000 calls per pack)
  * - app/apis/[apiId]/review/page.tsx (at least 5 test calls per endpoint)
  * - components/upstream-auth-form.tsx and @hirakumi/core upstreamAuth.ts (API keys: sealed for the gateway, never shown)
@@ -23,7 +23,7 @@ WHAT HIRAKUMI IS
 - Everything runs on Cardano preprod, a test network, with test USDM (tUSDM) and test ADA. It is not on mainnet. Nothing here moves real money.
 
 HOW LISTING WORKS (the seller's steps)
-1. Sign in at /login with a Cardano wallet, then paste the link to an OpenAPI 3 file at /apis/new. A seller can also start from a Sokosumi task: assign it to the Hirakumi coworker with the OpenAPI link, and it posts each step back as a comment. Steps that need the wallet still happen on the website.
+1. Sign in at /login with a Cardano wallet, then paste the link to an OpenAPI 3 file at /apis/new. The file can be hosted anywhere, GitHub too; when it isn't on the API's own host, its first servers entry must be the API's full URL. A seller can also start from a Sokosumi task: assign it to the Hirakumi coworker with the OpenAPI link, and it posts each step back as a comment. Steps that need the wallet still happen on the website.
    No OpenAPI file? On /apis/new the seller picks "I don't" and gives the API's base URL plus example requests, one per line, with real values (for example GET /price?symbol=ADA; {id=cardano} marks a path parameter, days?=7 an optional query parameter, a JSON body goes after the path). Hirakumi builds the description from them and uses the values for its test calls. The example requests must not include the API's key, because buyers see those values; a line with a key is refused, and the key goes on the ownership step instead. In a Sokosumi task, the seller can reply with the base URL and the example requests, one per line, instead of an OpenAPI link.
 2. Hirakumi reads the file and writes a plain description of each endpoint. This usually takes under a minute.
 3. The seller chooses which endpoints agents may buy. Every endpoint starts blocked. Only read-only endpoints should be sold; anything that might change data asks the seller to confirm first.
@@ -36,9 +36,9 @@ HOW LISTING WORKS (the seller's steps)
 - A seller's APIs are listed at /apis.
 
 OWNERSHIP PROOF AND THE WALLET
-- Two steps prove an API belongs to the seller. First, the seller adds one line, x-hirakumi-verify: "<code>", at the root of their OpenAPI file, the file at the openapi_url they gave. Each API has its own code, shown on the ownership step.
-- Without an OpenAPI file, the seller instead serves a small file, { "x-hirakumi-verify": "<code>" }, at hirakumi-verify.json in the base URL's folder (the exact address is shown on the ownership step). The same rules apply.
-- The OpenAPI file must be on the same origin as the API (scheme, host and port). The proof is folder-scoped: it covers only APIs in the file's folder or below it. Redirects are refused, and so is a link with a ?query or #fragment.
+- Two steps prove an API belongs to the seller. First, the seller makes their API send one response header, X-Hirakumi-Verify: <code>. Each API has its own code, shown on the ownership step with ready snippets for Express, nginx, Vercel, Netlify, Cloudflare, FastAPI and Flask.
+- Hirakumi checks it with one plain GET to the API's base URL (its address plus base path, shown on the ownership step). Any status counts, a 404 page too. Redirects are not followed, except one that only adds a slash at the end (from /v1 to /v1/). The seller can check it themselves with curl -s -o /dev/null -D - <base url> | grep -i x-hirakumi-verify.
+- The code proves the folder of the base URL: the API's endpoints must be in it or below it. This works the same with or without an OpenAPI file.
 - A passing check counts for 30 minutes. Within that time the seller signs one message with their wallet, and that signature sets the payout address where buyers pay.
 - Any CIP-30 wallet on preprod works, such as Lace or Eternl. The wallet address is the seller's account and the place buyers pay.
 - Signing in and proving ownership only sign a message. Signing costs nothing and moves no funds. It is not a transaction.
@@ -113,7 +113,7 @@ export function buildInstructions(seller: { apis: string | null } | null): strin
 
 const SUGGESTED_ANSWERS: Record<(typeof SUGGESTED_QUESTIONS)[number] | (typeof EXTRA_QUESTIONS)[number], string> = {
   "How do I list my API?":
-    "Sign in with your Cardano wallet, then paste the link to your OpenAPI 3 file at /apis/new. Hirakumi reads it and lists your endpoints. You choose which ones to sell, prove the API is yours by adding a code to your OpenAPI file and signing once with your wallet, then check the promise and set a pack price. Nothing is published until you press Publish.",
+    "Sign in with your Cardano wallet, then paste the link to your OpenAPI 3 file at /apis/new. Hirakumi reads it and lists your endpoints. You choose which ones to sell, prove the API is yours by making it send a header with a code and signing once with your wallet, then check the promise and set a pack price. Nothing is published until you press Publish.",
   "Is my money safe?":
     "A pack payment locks in a Cardano escrow contract, so Hirakumi never holds it. The buyer signs for each answer that kept the promise; the seller is paid for signed calls only and the rest goes back to the buyer. Every call has a receipt. Everything runs on preprod with test funds.",
   "Why do you need my wallet?":

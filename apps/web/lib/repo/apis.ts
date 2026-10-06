@@ -8,15 +8,18 @@ import type { Api, ApiState, OnboardStep } from "../types";
 import { API_DELETE_ORDER, registerStartedSql, soldSql } from "./delete-api";
 
 export const API_COLUMNS = [
-  "id", "seller_id", "name", "origin", "openapi_url", "intake_kind", "state", "health",
+  "id", "seller_id", "name", "origin", "path_prefix", "openapi_url", "intake_kind", "state", "health",
   "health_checked_at", "escrow_op_id", "agent_identifier", "created_at",
 ];
 
 /**
- * What the seller gave: an OpenAPI link, or (any API) a base URL and example requests. For the latter,
- * openapiUrl is the ownership proof file in the base folder (@hirakumi/core samples.ts).
+ * What the seller gave: an OpenAPI link (hosted anywhere; openapiUrl set, origin is the link's and only a
+ * placeholder until the parse step sets it from servers[0]), or (any API) a base URL and example requests
+ * (openapiUrl null, origin from the base, which is final).
  */
-export type ApiInput = { sellerId: string; name: string; origin: string; openapiUrl: string; samples?: { base: string; lines: string } };
+export type ApiInput =
+  | { sellerId: string; name: string; origin: string; openapiUrl: string; samples?: undefined }
+  | { sellerId: string; name: string; origin: string; openapiUrl: null; samples: { base: string; lines: string } };
 
 /** The samples as a jsonb parameter (an object, not a JSON string), or null for an OpenAPI link. */
 const samplesOf = (tx: postgres.TransactionSql, input: ApiInput) => (input.samples ? tx.json(input.samples as postgres.JSONValue) : null);
@@ -26,19 +29,19 @@ export async function createApi(
   input: ApiInput,
 ): Promise<{ api: Api; created: boolean } | { takenByOther: true }> {
   return sql.begin(async (tx) => {
-    // Serialise double submits of the same link by the same seller.
-    await tx`select pg_advisory_xact_lock(hashtext(${`${input.sellerId}|${input.openapiUrl}`}))`;
+    // Serialise double submits of the same link (or the same samples base) by the same seller.
+    await tx`select pg_advisory_xact_lock(hashtext(${`${input.sellerId}|${intakeKey(input)}`}))`;
     // Audit I1: an API whose onboarding failed for good is not "the same API" any more: pasting the link
     // again (after fixing the API) must start over, or the seller is stuck on the failure forever.
     const [existing] = await tx<Api[]>`
       select ${tx(API_COLUMNS)} from apis
-      where seller_id = ${input.sellerId} and openapi_url = ${input.openapiUrl} and state <> 'retired'
+      where seller_id = ${input.sellerId} and state <> 'retired' and ${sameIntake(tx, input)}
         and samples is not distinct from ${samplesOf(tx, input)}::jsonb
         and not exists (select 1 from onboard_steps s where s.api_id = apis.id and s.status = 'failed')
       order by created_at desc limit 1`;
     if (existing) return { api: existing, created: false };
     if (await isTakenEarly(tx, input)) return { takenByOther: true as const };
-    if (input.samples) await eraseEarlierSamples(tx, input);
+    if (input.samples) await eraseEarlierSamples(tx, input.sellerId, input.samples.base);
     const [api] = await tx<Api[]>`
       insert into apis (id, seller_id, name, origin, openapi_url, intake_kind, samples)
       values (${newId("api")}, ${input.sellerId}, ${input.name}, ${input.origin}, ${input.openapiUrl},
@@ -48,16 +51,23 @@ export async function createApi(
   });
 }
 
+/** What makes two submits "the same API": the OpenAPI link, or the samples base (samples APIs have no link). */
+const intakeKey = (input: ApiInput) => (input.samples ? `samples|${input.samples.base}` : `openapi|${input.openapiUrl}`);
+
+const sameIntake = (tx: postgres.TransactionSql, input: ApiInput) => (input.samples
+  ? tx`intake_kind = 'samples' and samples->>'base' = ${input.samples.base}`
+  : tx`intake_kind = 'openapi' and openapi_url = ${input.openapiUrl}`);
+
 /**
  * Corrected example requests for the same base URL replace the earlier ones: the earlier API is erased while
  * nothing about it was chosen yet (before the endpoints are confirmed), so the seller doesn't end up with two APIs
- * sharing one proof file, of which only one can be proven. Same rule as with an OpenAPI link, where resubmitting
- * returns the one API. An API on a Sokosumi task is left alone: the task tracks it.
+ * on one base, of which only one can be listed. Same rule as with an OpenAPI link, where resubmitting returns the
+ * one API. An API on a Sokosumi task is left alone: the task tracks it.
  */
-async function eraseEarlierSamples(tx: postgres.TransactionSql, input: ApiInput): Promise<void> {
+async function eraseEarlierSamples(tx: postgres.TransactionSql, sellerId: string, base: string): Promise<void> {
   const earlier = await tx<{ id: string }[]>`
     select id from apis
-    where seller_id = ${input.sellerId} and openapi_url = ${input.openapiUrl} and intake_kind = 'samples'
+    where seller_id = ${sellerId} and intake_kind = 'samples' and samples->>'base' = ${base}
       and state in ('intake', 'parsed', 'described') and sokosumi_task_id is null and deleted_at is null
     for update`;
   for (const { id } of earlier) {
@@ -71,11 +81,14 @@ export const queryOn = (sql: Sql | postgres.TransactionSql): QueryFn =>
   (text, params) => sql.unsafe(text, params as postgres.ParameterOrJSON<never>[]);
 
 /**
- * Early, advisory: another account already lists a base this link can only lead to (one API, one listing).
- * The check at proof of ownership (finalizeOwnership) is the authority.
+ * Early, advisory: another account already lists this base (one API, one listing). Only for example requests,
+ * whose base the seller just gave. An OpenAPI link says nothing about the base any more (the file may be hosted
+ * anywhere; servers[0] decides), so the parse step and the check at proof of ownership (finalizeOwnership) decide.
  */
-async function isTakenEarly(sql: Sql | postgres.TransactionSql, input: { sellerId: string; origin: string; openapiUrl: string }): Promise<boolean> {
-  return takenEarly(input, await listActiveOnOrigin(queryOn(sql), input.origin));
+async function isTakenEarly(sql: Sql | postgres.TransactionSql, input: ApiInput): Promise<boolean> {
+  if (!input.samples) return false;
+  const pathPrefix = new URL(input.samples.base).pathname;
+  return takenEarly({ sellerId: input.sellerId, origin: input.origin, pathPrefix }, await listActiveOnOrigin(queryOn(sql), input.origin));
 }
 
 /**

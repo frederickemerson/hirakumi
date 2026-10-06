@@ -14,10 +14,10 @@ export function startMockGateway(port: number, token: string, opts: { challengeO
     const check = url.match(/^\/internal\/challenge\/([^/]+)\/check$/);
     if (req.method === "POST" && check) {
       const ok = opts.challengeOk ?? process.env.MOCK_CHALLENGE !== "fail";
-      const triedUrl = "https://price.example.dev/openapi.json";
+      const triedUrl = "https://price.example.dev/";
       return send(res, 200, ok
-        ? { ok: true, reason: "verified", triedUrl, detail: "Found your code. The OpenAPI file is verified." }
-        : { ok: false, reason: "missing", triedUrl, detail: "We read your OpenAPI file, but it has no x-hirakumi-verify field at the root." });
+        ? { ok: true, reason: "verified", triedUrl, status: 200, detail: "Found your code in the X-Hirakumi-Verify header." }
+        : { ok: false, reason: "missing", triedUrl, status: 404, detail: "Your API answered 404 without an X-Hirakumi-Verify header." });
     }
     if (req.method === "POST" && /^\/internal\/apis\/[^/]+\/reload$/.test(url)) return send(res, 204);
     if (req.method === "GET" && /^\/internal\/apis\/[^/]+\/health$/.test(url)) {

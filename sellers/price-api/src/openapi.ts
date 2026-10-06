@@ -1,10 +1,8 @@
 import { SUPPORTED_SYMBOLS } from "./priceSource.js";
 
-/** `verifyCode`, when set, goes at the document root as x-hirakumi-verify (Hirakumi's ownership proof). */
-export function buildOpenApi(serverUrl: string, verifyCode: string | null = null): Record<string, unknown> {
+export function buildOpenApi(serverUrl: string): Record<string, unknown> {
   return {
     openapi: "3.1.0",
-    ...(verifyCode ? { "x-hirakumi-verify": verifyCode } : {}),
     info: {
       title: "Hirakumi Demo Price API",
       version: "1.0.0",

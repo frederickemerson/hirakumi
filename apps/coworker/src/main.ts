@@ -30,7 +30,7 @@ const masumiPort: MasumiPort = masumi;
 const fetchSpec = createSpecFetcher();
 
 const handlers: StateHandlers = {
-  intake: (apiId) => parseStep({ pool, fetchSpec }, apiId),
+  intake: (apiId) => parseStep({ pool, fetchSpec, allowInsecure: process.env.ALLOW_INSECURE_UPSTREAM === "1" }, apiId),
   parsed: (apiId) => describeStep({ pool, llm, webBaseUrl: config.webBaseUrl }, apiId),
   ownership_verified: (apiId) => qaStep({ pool, gateway, llm, webBaseUrl: config.webBaseUrl }, apiId),
   registering: (apiId) =>

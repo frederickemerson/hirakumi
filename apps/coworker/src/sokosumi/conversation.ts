@@ -1,4 +1,4 @@
-import { normalizeSamplesBase, parseSampleLines, SampleError, SAMPLES_PROOF_FILE, specFromSamples } from "@hirakumi/core";
+import { apiBaseUrl, normalizeSamplesBase, parseSampleLines, SampleError, specFromSamples } from "@hirakumi/core";
 import type pg from "pg";
 import type { Db } from "../db.js";
 import { PermanentError } from "../errors.js";
@@ -7,6 +7,7 @@ import type { StructuredCall } from "../llm/claude.js";
 import { mapReplyToChoice, type Offered } from "../llm/replyChoice.js";
 import { enqueueMessage, type TaskStatus } from "../messages.js";
 import type { HumanStep } from "../humanSteps.js";
+import { apiBase } from "../onboarding/parseStep.js";
 import { describeAuthHint, parseOpenApi, type AuthHint } from "../openapi/parse.js";
 import {
   findLinks, findSamplesIntake, formatCommand, formatTusdm, isOnlySamples, LinkError, looksLikeSecret, parseCommand, SUGGESTED_PACK, validateOpenApiUrl,
@@ -34,17 +35,15 @@ export type TaskRef = { taskId: string; sokosumiUserId: string; setupToken: stri
 const SUGGESTED_PRICE = `${formatTusdm(SUGGESTED_PACK.priceMicros)} tUSDM for ${SUGGESTED_PACK.calls} calls, and ${formatTusdm(SUGGESTED_PACK.escrowPriceMicros)} tUSDM per escrow job`;
 
 /**
- * How ownership is proven: the seller adds the API's own code (an `x-hirakumi-verify` line, shown on the
- * ownership page) at the root of the OpenAPI file they gave us, then signs once with their wallet.
- * There is no file to download or host.
+ * How ownership is proven: the seller makes their API send the response header X-Hirakumi-Verify with the API's own
+ * code (shown on the ownership page) on responses at its base URL, then signs once with their wallet. Any status
+ * counts, so a 404 page at the base is enough. The same for an OpenAPI link and for example requests.
  */
 export const OWNERSHIP_HOW =
-  "add the x-hirakumi-verify line from this page at the root of your OpenAPI file, then sign once with your Cardano wallet (no payment):";
-/** Without an OpenAPI file: a small proof file in the API's base folder (@hirakumi/core SAMPLES_PROOF_FILE). */
-export const OWNERSHIP_HOW_SAMPLES =
-  `serve a file named ${SAMPLES_PROOF_FILE} in your API's base folder with the code from this page (the page shows its exact address), then sign once with your Cardano wallet (no payment):`;
+  "make your API send the header X-Hirakumi-Verify with the code from this page on responses at your base URL (any status counts, even a 404 page), then sign once with your Cardano wallet (no payment):";
 
-export const ownershipHow = (api: Pick<TaskApi, "intakeKind">) => (api.intakeKind === "samples" ? OWNERSHIP_HOW_SAMPLES : OWNERSHIP_HOW);
+/** The URL the ownership check requests: origin + path_prefix, origin + "/" for the root. */
+export const baseUrlOf = (api: Pick<TaskApi, "origin" | "pathPrefix">) => apiBaseUrl(api);
 
 /** Keys are added on the ownership page (sealed so only the gateway reads them), never in a comment. */
 const keyLine = (hint: AuthHint | null) =>
@@ -172,7 +171,7 @@ export async function handleReply(deps: ConversationDeps, task: TaskRef, eventId
     }
     await say(deps.pool, task, key, `${understood}${r.message}`, { apiId: api.id, step: "Choose endpoints", status: "RUNNING" });
     await say(deps.pool, task, `${key}:ownership`,
-      `Prove you own ${api.origin}: ${ownershipHow(api)} ${ownershipLink(deps.webBaseUrl, api.id)}${keyLine(await apiAuthHint(deps.pool, api.id))}`,
+      `Prove you own ${baseUrlOf(api)}: ${OWNERSHIP_HOW} ${ownershipLink(deps.webBaseUrl, api.id)}${keyLine(await apiAuthHint(deps.pool, api.id))}`,
       { apiId: api.id, step: "Prove ownership", status: "INPUT_REQUIRED" });
     return;
   }
@@ -206,7 +205,7 @@ function helpFor(api: TaskApi, web: string, hint: AuthHint | null): string {
     case "described":
       return "Choose the endpoints to sell: reply `sell 1` with the numbers from my list (for example `sell 1 2`).";
     case "endpoints_confirmed":
-      return `Next, prove you own the API: ${ownershipHow(api)} ${ownershipLink(web, api.id)}${keyLine(hint)} (To change the endpoints first, reply \`sell\` with new numbers.)`;
+      return `Next, prove you own ${baseUrlOf(api)}: ${OWNERSHIP_HOW} ${ownershipLink(web, api.id)}${keyLine(hint)} (To change the endpoints first, reply \`sell\` with new numbers.)`;
     case "ownership_verified":
       return "Test calls are running. I'll post the promise and a suggested price here when they're done.";
     case "rule_built":
@@ -235,9 +234,10 @@ export function chooseEndpointsPrompt(ops: ListedOp[], sellable: number, web: st
 /** What the seller sent to start onboarding: an OpenAPI link, or (any API) a base URL and example requests. */
 type Intake = {
   name: string;
+  /** For an OpenAPI link, the link's origin: a placeholder until the parse step reads servers[0]. */
   origin: string;
-  /** The OpenAPI file, or for samples the ownership proof file in the base folder. */
-  openapiUrl: string;
+  /** The OpenAPI file, or null for example requests. */
+  openapiUrl: string | null;
   samples?: { base: string; lines: string };
   /** "your example requests for https://…" or the link: what "Reading … now" and "I couldn't read …" name. */
   label: string;
@@ -295,7 +295,7 @@ async function handleSamples(deps: ConversationDeps, task: TaskRef, intake: Samp
   await startIntake(deps, task, key, {
     name: base.hostname,
     origin: base.origin,
-    openapiUrl: base.proofUrl,
+    openapiUrl: null,
     samples: { base: base.base, lines: intake.lines },
     label: `your example requests for ${base.base}`,
     specText: async () => JSON.stringify(specFromSamples({ title: base.hostname, base: base.base, samples })),
@@ -327,6 +327,8 @@ async function startIntake(deps: ConversationDeps, task: TaskRef, key: string, i
   try {
     const parsed = await parseOpenApi(await intake.specText());
     const what = intake.samples ? "Your example requests have" : "Your OpenAPI file has";
+    // The same base rules as the parse step, so a file host with no full servers URL is told now, not after sign-in.
+    apiBase(parsed.serverUrl, intake.openapiUrl ?? intake.samples!.base, deps.allowInsecure);
     if (parsed.operations.length === 0) throw new PermanentError(`${what} no endpoints we can sell yet${parsed.skipped.length ? ` (${parsed.skipped.map((s) => `${s.method} ${s.path}: ${s.reason}`).join("; ")})` : ""}.`);
     const list = parsed.operations.map((o, i) => `${i + 1}. ${o.method.toUpperCase()} ${o.path} (${o.opId})${o.llm.summary ? `: ${o.llm.summary}` : ""}`);
     summary = [

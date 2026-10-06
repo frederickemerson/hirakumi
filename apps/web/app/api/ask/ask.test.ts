@@ -225,20 +225,26 @@ describe("POST /api/ask limits and guards", () => {
 describe("Ask teaches the current ownership flow (audit I4)", () => {
   const OLD_FLOW = /verification file|challenge file|download|\.well-known|unpaid agent|one file/i;
 
-  it("the model's facts describe x-hirakumi-verify in the OpenAPI file, folder scope, no redirects, 30 minutes, then the signature", () => {
+  it("the model's facts describe the X-Hirakumi-Verify header, any status, base URL folder, no redirects, 30 minutes, then the signature", () => {
     const facts = buildInstructions(null);
     expect(facts).not.toMatch(OLD_FLOW);
-    expect(facts).toContain('x-hirakumi-verify: "<code>"');
-    expect(facts).toMatch(/root of (your|their) OpenAPI file/);
-    expect(facts).toMatch(/same origin/);
+    expect(facts).not.toMatch(/hirakumi-verify\.json|root of (your|their) OpenAPI file|x-hirakumi-verify: "<code>"|same origin/i);
+    expect(facts).toContain("X-Hirakumi-Verify: <code>");
+    expect(facts).toMatch(/base URL/);
+    expect(facts).toMatch(/Any status counts, a 404 page too/);
     expect(facts).toMatch(/folder/);
-    expect(facts).toMatch(/redirects are refused/i);
+    expect(facts).toMatch(/Redirects are not followed, except one that only adds a slash/);
+    expect(facts).toContain("curl -s -o /dev/null -D - <base url> | grep -i x-hirakumi-verify");
+    expect(facts).toMatch(/hosted anywhere/);
     expect(facts).toMatch(/30 minutes/);
     expect(facts).toMatch(/payout address/);
   });
 
   it("no offline answer mentions the old file", () => {
-    for (const a of [...Object.values(OFFLINE_FAQ), OFFLINE_DEFAULT]) expect(a).not.toMatch(OLD_FLOW);
+    for (const a of [...Object.values(OFFLINE_FAQ), OFFLINE_DEFAULT]) {
+      expect(a).not.toMatch(OLD_FLOW);
+      expect(a).not.toMatch(/code to your OpenAPI file|hirakumi-verify\.json/i);
+    }
   });
 });
 

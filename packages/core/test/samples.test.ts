@@ -1,20 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { checkSpecBinding, verifySpecField } from "../src/ownership";
+import { ownershipCheckUrl } from "../src/ownership";
 import { normalizeSamplesBase, parseSampleLines, SampleError, schemaOfExample, specFromSamples } from "../src/samples";
 
 // Made up, and split so secret scanners do not read it as a real HubSpot key.
 const FAKE_HUBSPOT_KEY = ["pat", "na1", "11111111-2222-3333-4444-555555555555"].join("-");
 
 describe("normalizeSamplesBase", () => {
-  it("treats the base as a folder and puts the proof file in it", () => {
+  it("treats the base as a folder, without a trailing slash", () => {
     expect(normalizeSamplesBase("https://api.example.com/v1")).toEqual({
       base: "https://api.example.com/v1",
       origin: "https://api.example.com",
       hostname: "api.example.com",
-      proofUrl: "https://api.example.com/v1/hirakumi-verify.json",
     });
-    expect(normalizeSamplesBase("https://api.example.com/v1/").proofUrl).toBe("https://api.example.com/v1/hirakumi-verify.json");
-    expect(normalizeSamplesBase("https://api.example.com").proofUrl).toBe("https://api.example.com/hirakumi-verify.json");
+    expect(normalizeSamplesBase("https://api.example.com/v1/").base).toBe("https://api.example.com/v1");
     expect(normalizeSamplesBase("https://api.example.com").base).toBe("https://api.example.com");
   });
 
@@ -34,15 +32,16 @@ describe("normalizeSamplesBase", () => {
     }
   });
 
-  it("refuses two slashes in a row, which would put the proof file outside the base folder", () => {
+  it("refuses two slashes in a row, which some servers read as another folder", () => {
     for (const bad of ["https://h.com/a//", "https://h.com//", "https://h.com/a//b"]) {
       expect(() => normalizeSamplesBase(bad), bad).toThrow(/two slashes in a row/);
     }
   });
 
-  it("produces a proof URL that passes the gateway's folder binding for the base", () => {
-    const { base, origin, proofUrl } = normalizeSamplesBase("https://api.example.com/v1");
-    expect(checkSpecBinding({ openapiUrl: proofUrl, origin, pathPrefix: "/v1", serverUrl: base })).toEqual({ ok: true });
+  it("gives a base the gateway's ownership check accepts as its check URL", () => {
+    const { base, origin } = normalizeSamplesBase("https://api.example.com/v1");
+    expect(ownershipCheckUrl({ origin, pathPrefix: new URL(base).pathname, code: "hkv_Ab3dEf7hIj9kLm1nOp5qRs2tUv4wXy6zAb8cDe0fGh2" }))
+      .toEqual({ ok: true, url: base });
   });
 });
 
@@ -168,10 +167,6 @@ describe("specFromSamples", () => {
     expect(params.map((p) => [p.name, p.required])).toEqual([["a", true], ["b", false]]);
   });
 
-  it("is never confused with an ownership proof: it has no verify field", () => {
-    const spec = specFromSamples({ title: "t", base: "https://h.com", samples: parseSampleLines("/p?a=1") });
-    expect(verifySpecField(JSON.stringify(spec), "hkv_x").kind).toBe("missing");
-  });
 });
 
 describe("schemaOfExample", () => {

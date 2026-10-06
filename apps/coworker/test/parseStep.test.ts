@@ -78,44 +78,76 @@ describe("parseStep for an API that needs a key", () => {
 
 describe("parseStep honours servers[0].url (review I7)", () => {
   const withServers = (servers: unknown) => JSON.stringify({ ...JSON.parse(PRICE_SPEC), servers });
-  const prefixOf = async (apiId: string) => (await db.pool.query(`select path_prefix, state from apis where id = $1`, [apiId])).rows[0];
+  const baseOf = async (apiId: string) => (await db.pool.query(`select origin, path_prefix, state from apis where id = $1`, [apiId])).rows[0];
+  const errorOf = async (apiId: string) => (await getStep(db.pool, apiId, "parse"))?.output?.error as string;
   it("stores a same-host server path as the path prefix", async () => {
     const apiId = await seedApi(db.pool, {});
-    const { rows: [a] } = await db.pool.query(`select origin from apis where id = $1`, [apiId]);
-    await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(withServers([{ url: `${a.origin}/v1/` }])) }, apiId);
-    expect(await prefixOf(apiId)).toEqual({ path_prefix: "/v1", state: "parsed" });
+    await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(withServers([{ url: "https://price.example.dev/v1/" }])) }, apiId);
+    expect(await baseOf(apiId)).toEqual({ origin: "https://price.example.dev", path_prefix: "/v1", state: "parsed" });
   });
   it("resolves a relative server URL against the OpenAPI file's location", async () => {
-    const apiId = await seedApi(db.pool, {});
-    await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(withServers([{ url: "/api/v2" }])) }, apiId);
-    expect((await prefixOf(apiId)).path_prefix).toBe("/api/v2");
-  });
-  it("keeps the root when there is no servers list", async () => {
-    const apiId = await seedApi(db.pool, {});
-    await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(PRICE_SPEC) }, apiId);
-    expect((await prefixOf(apiId)).path_prefix).toBe("/");
-  });
-  it("accepts a base path under the OpenAPI file's folder", async () => {
     const apiId = await seedApi(db.pool, { openapiUrl: "https://price.example.dev/team-a/openapi.json" });
     await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(withServers([{ url: "v1" }])) }, apiId);
-    expect(await prefixOf(apiId)).toEqual({ path_prefix: "/team-a/v1", state: "parsed" });
+    expect(await baseOf(apiId)).toEqual({ origin: "https://price.example.dev", path_prefix: "/team-a/v1", state: "parsed" });
   });
-  it("refuses a base path outside the OpenAPI file's folder (the code in that file only covers its folder)", async () => {
-    const apiId = await seedApi(db.pool, { openapiUrl: "https://price.example.dev/team-a/openapi.json" });
-    const r = await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(withServers([{ url: "/team-b" }])) }, apiId);
-    expect(r).toBe("failed");
-    expect((await getStep(db.pool, apiId, "parse"))?.output?.error).toMatch(/only prove ownership of APIs under \/team-a\//);
-    expect((await prefixOf(apiId)).state).toBe("intake");
+  it("uses the OpenAPI file's origin and the root when there is no servers list, wherever the file is", async () => {
+    const apiId = await seedApi(db.pool, { openapiUrl: "https://docs.example.org/specs/openapi.json" });
+    await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(PRICE_SPEC) }, apiId);
+    expect(await baseOf(apiId)).toEqual({ origin: "https://docs.example.org", path_prefix: "/", state: "parsed" });
   });
-  it("refuses a file in a folder whose API has no servers (the API would be the whole host)", async () => {
-    const apiId = await seedApi(db.pool, { openapiUrl: "https://price.example.dev/team-a/openapi.json" });
-    expect(await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(PRICE_SPEC) }, apiId)).toBe("failed");
+  it("takes the API's origin from an absolute servers URL when the file is on GitHub (the file is not the proof)", async () => {
+    const apiId = await seedApi(db.pool, { openapiUrl: "https://raw.githubusercontent.com/acme/price/main/openapi.json" });
+    const fetchSpec = vi.fn().mockResolvedValue(withServers([{ url: "https://api.acme.dev/v2" }]));
+    expect(await parseStep({ pool: db.pool, fetchSpec }, apiId)).toBe("ran");
+    expect(fetchSpec).toHaveBeenCalledWith("https://raw.githubusercontent.com/acme/price/main/openapi.json");
+    expect(await baseOf(apiId)).toEqual({ origin: "https://api.acme.dev", path_prefix: "/v2", state: "parsed" });
   });
-  it("refuses an API that runs on a different host than its OpenAPI file (ownership covers the file's host only)", async () => {
+  it("names an API that was named after its file host after the API's own host instead", async () => {
+    const link = "https://raw.githubusercontent.com/acme/price/main/openapi.json";
+    const fetchSpec = vi.fn().mockResolvedValue(withServers([{ url: "https://api.acme.dev/v2" }]));
+    const unnamed = await seedApi(db.pool, { openapiUrl: link, name: "raw.githubusercontent.com" });
+    await parseStep({ pool: db.pool, fetchSpec }, unnamed);
+    const nameOf = async (apiId: string) => (await db.pool.query(`select name from apis where id = $1`, [apiId])).rows[0].name;
+    expect(await nameOf(unnamed)).toBe("api.acme.dev");
+    // A name the seller chose is kept.
+    const named = await seedApi(db.pool, { openapiUrl: link, name: "Acme prices" });
+    await parseStep({ pool: db.pool, fetchSpec }, named);
+    expect(await nameOf(named)).toBe("Acme prices");
+  });
+  it("accepts an API on another host than its OpenAPI file", async () => {
     const apiId = await seedApi(db.pool, {});
-    const r = await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(withServers([{ url: "https://other-host.example/v1" }])) }, apiId);
-    expect(r).toBe("failed");
-    expect((await getStep(db.pool, apiId, "parse"))?.output?.error).toMatch(/other-host\.example/);
-    expect((await prefixOf(apiId)).state).toBe("intake");
+    await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(withServers([{ url: "https://other-host.example/v1" }])) }, apiId);
+    expect(await baseOf(apiId)).toEqual({ origin: "https://other-host.example", path_prefix: "/v1", state: "parsed" });
+  });
+  it("refuses a relative or missing servers URL for a file on GitHub, with a clear message", async () => {
+    for (const spec of [withServers([{ url: "/v1" }]), PRICE_SPEC]) {
+      const apiId = await seedApi(db.pool, { openapiUrl: "https://raw.githubusercontent.com/acme/price/main/openapi.json" });
+      expect(await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(spec) }, apiId)).toBe("failed");
+      expect(await errorOf(apiId)).toMatch(/on raw\.githubusercontent\.com, which can't be where your API runs\. Set the first servers URL in the file to your API's full base URL/);
+      expect(await baseOf(apiId)).toEqual({ origin: "https://price.example.dev", path_prefix: "/", state: "intake" });
+    }
+  });
+  it.each([
+    ["http://api.acme.dev/v1", /must start with https/],
+    ["https://user:pw@api.acme.dev/v1", /username or password/],
+    ["https://api.acme.dev./v1", /dot at the end of its host name/],
+    ["https://api.acme.dev/v1?x=1", /\?query or #fragment/],
+    ["https://api.acme.dev/v1%2Fadmin", /encoded slash, dot or a ';'/],
+    ["https://api.acme.dev/v1;x", /encoded slash, dot or a ';'/],
+    ["https://api.acme.dev//v1", /two slashes in a row/],
+    ["https://api.acme.dev/{version}", /\{variable\} with no default/],
+  ])("refuses the base %s", async (url, why) => {
+    const apiId = await seedApi(db.pool, {});
+    expect(await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(withServers([{ url }])) }, apiId)).toBe("failed");
+    expect(await errorOf(apiId)).toMatch(why);
+    expect((await baseOf(apiId)).state).toBe("intake");
+  });
+  it("accepts http on localhost only when insecure upstreams are allowed", async () => {
+    const spec = withServers([{ url: "http://localhost:4010/v1" }]);
+    const refused = await seedApi(db.pool, {});
+    expect(await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(spec) }, refused)).toBe("failed");
+    const allowed = await seedApi(db.pool, {});
+    expect(await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(spec), allowInsecure: true }, allowed)).toBe("ran");
+    expect(await baseOf(allowed)).toEqual({ origin: "http://localhost:4010", path_prefix: "/v1", state: "parsed" });
   });
 });

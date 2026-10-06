@@ -70,7 +70,7 @@ describe("a brief with a base URL and example requests (no OpenAPI file)", () =>
     expect((await db.pool.query(`select 1 from apis where sokosumi_task_id = $1`, [t.id])).rowCount).toBe(0);
   });
 
-  it("linked seller: creates a samples API whose proof file is in the base folder, and parse reads it", async () => {
+  it("linked seller: creates a samples API with no OpenAPI link, and parse reads it", async () => {
     const host = `${rand()}.example.dev`;
     const t = newTask(`https://${host}/v1/\nGET /price?symbol=ADA`);
     const sellerId = await linkSeller(t.userId);
@@ -78,7 +78,7 @@ describe("a brief with a base URL and example requests (no OpenAPI file)", () =>
     const { rows: [api] } = await db.pool.query(
       `select id, seller_id, origin, openapi_url, intake_kind, samples, name from apis where sokosumi_task_id = $1`, [t.id]);
     expect(api).toMatchObject({
-      seller_id: sellerId, origin: `https://${host}`, openapi_url: `https://${host}/v1/hirakumi-verify.json`, intake_kind: "samples",
+      seller_id: sellerId, origin: `https://${host}`, openapi_url: null, intake_kind: "samples",
       samples: { base: `https://${host}/v1`, lines: "GET /price?symbol=ADA" }, name: host,
     });
     expect((await messagesForTask(t.id))[0].body).toBe(`Step 1 of 7, Read your file: Got your example requests. Reading your example requests for https://${host}/v1 now.`);
@@ -179,14 +179,14 @@ describe("keys in comments", () => {
 });
 
 describe("the ownership step for an API without an OpenAPI file", () => {
-  it("says to serve hirakumi-verify.json in the base folder, and to add the key on the same page", async () => {
+  it("says to send the X-Hirakumi-Verify header at the base URL, the same as for an OpenAPI link, and to add the key on the same page", async () => {
     const t = newTask();
     const sellerId = await linkSeller(t.userId);
     const { reply } = await run(t);
     const apiId = `api_${rand()}`;
     await db.pool.query(
       `insert into apis (id, seller_id, name, origin, openapi_url, state, sokosumi_task_id, path_prefix, intake_kind, samples)
-       values ($1, $2, 'S', 'https://s.example.dev', 'https://s.example.dev/v1/hirakumi-verify.json', 'described', $3, '/v1', 'samples', $4::jsonb)`,
+       values ($1, $2, 'S', 'https://s.example.dev', null, 'described', $3, '/v1', 'samples', $4::jsonb)`,
       [apiId, sellerId, t.id, JSON.stringify({ base: "https://s.example.dev/v1", lines: "GET /price?symbol=ADA" })]);
     await db.pool.query(`insert into onboard_steps (api_id, step, status, attempts, output) values ($1, 'parse', 'done', 0, $2::jsonb)`,
       [apiId, JSON.stringify({ authHint: { in: "header", name: "Authorization", prefix: "Bearer " } })]);
@@ -194,11 +194,13 @@ describe("the ownership step for an API without an OpenAPI file", () => {
     await reply("sell 1");
     const body = (await messagesForTask(t.id)).at(-1)?.body ?? "";
     expect(body).toBe(
-      "Step 4 of 7, Prove ownership: Prove you own https://s.example.dev: serve a file named hirakumi-verify.json in your API's base folder with the code from this page (the page shows its exact address), " +
-      `then sign once with your Cardano wallet (no payment): ${WEB}/apis/${apiId}/ownership Your API needs a key (a bearer token in the Authorization header): add it on the same page. Never paste it in a comment.`,
+      "Step 4 of 7, Prove ownership: Prove you own https://s.example.dev/v1: make your API send the header X-Hirakumi-Verify with the code from this page on responses at your base URL " +
+      `(any status counts, even a 404 page), then sign once with your Cardano wallet (no payment): ${WEB}/apis/${apiId}/ownership Your API needs a key (a bearer token in the Authorization header): add it on the same page. Never paste it in a comment.`,
     );
     await reply("what now?");
-    expect((await messagesForTask(t.id)).at(-1)?.body).toContain("hirakumi-verify.json");
+    const help = (await messagesForTask(t.id)).at(-1)?.body ?? "";
+    expect(help).toContain("Next, prove you own https://s.example.dev/v1: make your API send the header X-Hirakumi-Verify");
+    expect(help).not.toContain("hirakumi-verify.json");
   });
 });
 

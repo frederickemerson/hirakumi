@@ -1,7 +1,8 @@
+import { apiBaseUrl as coreApiBaseUrl, ownershipCheckUrl } from "@hirakumi/core";
 import { describe, expect, it } from "vitest";
 import { API_STATES } from "./types";
 import {
-  cardanoscanTxUrl, formatTime, healthLabel, JOB_STATUS_LABEL, PACK_STATUS_LABEL, plural, shortAddress,
+  apiBaseUrl, cardanoscanTxUrl, formatTime, healthLabel, JOB_STATUS_LABEL, PACK_STATUS_LABEL, plural, shortAddress,
   STATE_LABEL, STEP_STATUS_LABEL,
 } from "./copy";
 
@@ -40,5 +41,13 @@ describe("copy", () => {
     expect(plural(1, "call")).toBe("1 call");
     expect(plural(2, "call")).toBe("2 calls");
     expect(plural(0, "credit")).toBe("0 credits");
+  });
+
+  it("shows the same base URL the gateway's ownership check requests", () => {
+    for (const [origin, pathPrefix] of [["https://a.com", "/"], ["https://a.com", ""], ["https://a.com", "/v1"], ["https://a.com/", "/v1/x"]]) {
+      expect(apiBaseUrl({ origin, pathPrefix }), `${origin} ${pathPrefix}`).toBe(coreApiBaseUrl({ origin, pathPrefix }));
+      const check = ownershipCheckUrl({ origin, pathPrefix, code: "hkv_abcdefghijklmnopqrstuvwxyz0123456789" });
+      expect(check.ok && check.url).toBe(apiBaseUrl({ origin, pathPrefix }));
+    }
   });
 });

@@ -4,6 +4,10 @@ import { Agent, request, type Dispatcher } from "undici";
 import { isJsonMediaType, mediaTypeOf } from "./rules";
 
 export type UpstreamResult = { status: number; contentType: string | null; body: string; latencyMs: number };
+/** Response headers as undici gives them: lowercase names, a repeated header as an array. */
+export type UpstreamHeaders = Record<string, string | string[] | undefined>;
+/** A header probe's answer: the status and headers only. The body is never read. */
+export type UpstreamProbe = { status: number; headers: UpstreamHeaders; latencyMs: number };
 export class UpstreamBlockedError extends Error { override name = "UpstreamBlockedError"; }
 /** A 3xx answer. Never followed: a redirect would let a URL vouch for content served somewhere else. */
 export class UpstreamRedirectError extends UpstreamBlockedError {
@@ -116,6 +120,28 @@ export async function safeFetch(
   init: { method: string; headers?: Record<string, string>; body?: string },
   opts: { timeoutMs?: number; maxBytes?: number } = {},
 ): Promise<UpstreamResult> {
+  return (await fetchGuarded(url, init, opts, false)) as UpstreamResult;
+}
+
+/**
+ * safeFetch that answers with the status and response headers as soon as they arrive, and drops the body
+ * unread, so a large or streaming body cannot hide a header that is there. A 3xx is an answer like any other
+ * and is never followed. Same SSRF rules and timeout (to the headers) as safeFetch.
+ */
+export async function safeFetchWithHeaders(
+  url: string,
+  init: { method: string; headers?: Record<string, string>; body?: string },
+  opts: { timeoutMs?: number } = {},
+): Promise<UpstreamProbe> {
+  return (await fetchGuarded(url, init, opts, true)) as UpstreamProbe;
+}
+
+async function fetchGuarded(
+  url: string,
+  init: { method: string; headers?: Record<string, string>; body?: string },
+  opts: { timeoutMs?: number; maxBytes?: number },
+  headersOnly: boolean,
+): Promise<UpstreamResult | UpstreamProbe> {
   const timeoutMs = opts.timeoutMs ?? UPSTREAM_TIMEOUT_MS;
   const maxBytes = opts.maxBytes ?? MAX_RESPONSE_BYTES;
   let u: URL;
@@ -148,6 +174,10 @@ export async function safeFetch(
       dispatcher: insecureOk ? localAgent : strictAgent,
       signal,
     });
+    if (headersOnly) {
+      discard(res.body);
+      return { status: res.statusCode, headers: { ...res.headers }, latencyMs: Math.round(performance.now() - started) };
+    }
     if (res.statusCode >= 300 && res.statusCode < 400) {
       discard(res.body);
       const loc = res.headers.location;

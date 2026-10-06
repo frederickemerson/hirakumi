@@ -206,7 +206,7 @@ export function describeAuthHint(h: AuthHint): string {
 
 /**
  * Parses an OpenAPI 3.x document (JSON or YAML text). Never fetches anything: external $refs are not resolved.
- * servers[0] is read with the same helper the gateway's ownership check uses (@hirakumi/core firstServerUrl).
+ * servers[0] (the API's base) is read with @hirakumi/core firstServerUrl.
  */
 export async function parseOpenApi(text: string): Promise<ParseResult> {
   let raw: unknown;

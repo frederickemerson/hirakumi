@@ -1,4 +1,4 @@
-import { unsafePathReason } from "./ownership";
+import { AMBIGUOUS_PATH, unsafePathReason } from "./ownership";
 import { isKeyParamName, looksLikeSecret } from "./secrets";
 
 /**
@@ -17,11 +17,8 @@ import { isKeyParamName, looksLikeSecret } from "./secrets";
  * stored as they are. A line with a key parameter (api_key, apikey, key…) or a key-shaped value is refused, and
  * the seller adds the key on the ownership page instead, sealed so only the gateway can read it.
  *
- * Ownership is proven with a small file in the base folder (SAMPLES_PROOF_FILE) holding
- * `{"x-hirakumi-verify": "<code>"}`. It is valid JSON with the field at the root, so the gateway reads it
- * exactly like an OpenAPI file, with the same origin and folder rules (checkSpecBinding).
+ * Ownership is proven like any other API: the X-Hirakumi-Verify response header at the base URL (ownership.ts).
  */
-export const SAMPLES_PROOF_FILE = "hirakumi-verify.json";
 export const MAX_SAMPLE_LINES = 20;
 
 export type SampleMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -41,11 +38,9 @@ const KEY_ADVICE = "Remove it from the example requests. After you prove ownersh
 
 const METHODS = new Set<SampleMethod>(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 const NAME = /^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/;
-// Same characters the gateway's ownership check refuses in a proven path (ownership.ts AMBIGUOUS_PATH).
-const AMBIGUOUS_PATH = /%2f|%5c|%2e|;/i;
 
 /** The base URL as a folder: https only (http on localhost when allowed), no credentials, query or fragment. */
-export function normalizeSamplesBase(raw: unknown, allowInsecure = false): { base: string; origin: string; hostname: string; proofUrl: string } {
+export function normalizeSamplesBase(raw: unknown, allowInsecure = false): { base: string; origin: string; hostname: string } {
   if (typeof raw !== "string" || raw.trim() === "") throw new SampleError("Paste your API's base URL, for example https://api.example.com/v1");
   const s = raw.trim();
   if (s.length > 2048) throw new SampleError("That base URL is too long.");
@@ -60,14 +55,14 @@ export function normalizeSamplesBase(raw: unknown, allowInsecure = false): { bas
   if (u.username || u.password) throw new SampleError("Remove the username and password from the base URL.");
   if (u.search !== "" || /\?/.test(s)) throw new SampleError("Remove the ?query from the base URL. Put query parameters in the example requests.");
   if (u.hash !== "" || /#/.test(s)) throw new SampleError("Remove the #fragment from the base URL.");
-  // The proof is fetched from this exact host, and a trailing dot would make it a second name for the same API.
+  // The ownership check calls this exact host, and a trailing dot would make it a second name for the same API.
   if (u.hostname.endsWith(".")) throw new SampleError("Remove the dot at the end of the host name in the base URL.");
   if (AMBIGUOUS_PATH.test(u.pathname) || u.pathname.includes("\\")) throw new SampleError("The base URL has an encoded slash, dot or a ';' in its path. Use a plain path.");
-  // An empty segment would put the proof file at a path the folder check never matches.
+  // An empty segment is a path some servers read as another folder, so the base would not name one folder.
   if (u.pathname.includes("//")) throw new SampleError("The base URL has two slashes in a row in its path. Use a plain path.");
   const dir = u.pathname.endsWith("/") ? u.pathname : `${u.pathname}/`;
   const base = `${u.origin}${dir === "/" ? "" : dir.slice(0, -1)}`;
-  return { base, origin: u.origin, hostname: u.hostname, proofUrl: `${u.origin}${dir}${SAMPLES_PROOF_FILE}` };
+  return { base, origin: u.origin, hostname: u.hostname };
 }
 
 function parseLine(line: string, n: number): Sample {

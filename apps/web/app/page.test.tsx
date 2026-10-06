@@ -53,10 +53,10 @@ describe("Home", () => {
     expect(screen.queryByText(/mainnet/i, { selector: "dd" })).toBeNull();
   });
 
-  it("describes today's ownership proof: a code in the OpenAPI file or a small file, and one wallet signature", () => {
+  it("describes today's ownership proof: a header with a code, and one wallet signature", () => {
     const { container } = render(<Home />);
-    expect(screen.getByText(/add a code to your OpenAPI file or serve a small file, then sign once with your wallet/)).toBeInTheDocument();
-    expect(container.textContent).not.toMatch(/one file on your domain|download|well-known/i);
+    expect(screen.getByText(/make your API send a header with a code, then sign once with your wallet/)).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/one file on your domain|download|well-known|OpenAPI file or serve|small file/i);
   });
 
   it("keeps the judge panel's cuts: no jargon, earnings or escrow claim in the hero", () => {

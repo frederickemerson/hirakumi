@@ -37,7 +37,7 @@ The pass/fail check runs on our gateway in every mode, against a rule whose hash
 - `agents/buyer/src/payClient.ts`: buyer agent using `@x402/fetch` `wrapFetchWithPayment`, `toClientCardanoSigner`, spend controls for `USDM_PREPROD_ASSET`
 - `agents/buyer/src/packBuyer.ts`, `agents/buyer/src/cli/pack.ts`: the pack-buyer demo agent
 - `apps/web/`: CIP-30 wallet signature for login and ownership (any CIP-30 wallet: Lace, Eternl, …); public status page and the try-it-live page
-  - Ownership proof is folder-scoped: the seller adds `x-hirakumi-verify: "<code>"` at the root of the OpenAPI file at their `openapi_url` (same origin as the API, no `?query` or `#fragment`, no redirects), which covers only APIs in that file's folder or below it. A seller without an OpenAPI file serves `{"x-hirakumi-verify": "<code>"}` as `hirakumi-verify.json` in the base URL's folder, and the gateway checks it the same way, with the same origin and folder rules.
+  - Ownership proof is a response header: the seller makes their API send `X-Hirakumi-Verify: <code>` (the per-API code from the ownership page), and the gateway sends one plain `GET` to the API's base URL (origin plus path prefix, no query, no redirects followed) through the SSRF-safe fetch. Any status counts, a 404 page included. The code proves the base URL's folder and below it, and the URL is refused if it contains the code. The OpenAPI file is no longer part of the proof, so it can be hosted anywhere (for example raw.githubusercontent.com); the API's origin and path prefix come from its `servers[0]`. The CIP-30 wallet signature step is unchanged.
 
 ### Masumi
 - `packages/masumi/`: payment-service and registry client (registration, payment requests, result submission, purchases)

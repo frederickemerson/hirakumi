@@ -1,12 +1,11 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import YAML from "yaml";
 
 /**
- * Ownership proof, part 1: the seller puts a per-API code at the root of the OpenAPI file Hirakumi reads.
- * Writing to that file proves control of the directory it is served from, so the API's base path must lie
- * at or under that directory, on the same origin (see checkSpecBinding).
+ * Ownership proof, part 1: the seller's API sends this response header with the API's code. The gateway reads it
+ * from one plain GET to the API's base URL (origin + path_prefix), on any status. Only someone who controls the
+ * responses under that base can add it, so it proves the folder of the base URL.
  */
-export const VERIFY_FIELD = "x-hirakumi-verify";
+export const VERIFY_HEADER = "X-Hirakumi-Verify";
 
 /** 32 random bytes (256 bits), base64url, with a recognisable prefix. One per API, never reused. */
 export function newVerifyCode(): string {
@@ -20,39 +19,22 @@ export function verifyCodesEqual(expected: string, given: string): boolean {
   return timingSafeEqual(a, b) && expected.length === given.length;
 }
 
+export type HeaderMatch = "match" | "missing" | "mismatch";
+
+/**
+ * Compares the X-Hirakumi-Verify header with this API's code. The header may be repeated (an array) or
+ * comma-joined; it matches when any one value, trimmed, equals the code exactly. Present but wrong is "mismatch".
+ */
+export function matchVerifyHeader(value: string | readonly string[] | null | undefined, expectedCode: string): HeaderMatch {
+  if (value === null || value === undefined) return "missing";
+  const values = (typeof value === "string" ? [value] : value).flatMap((v) => v.split(",")).map((v) => v.trim());
+  let found = false;
+  for (const v of values) found = verifyCodesEqual(expectedCode, v) || found; // compare every value, no early exit
+  return found ? "match" : "mismatch";
+}
+
 type Json = Record<string, unknown>;
 const isRecord = (v: unknown): v is Json => typeof v === "object" && v !== null && !Array.isArray(v);
-
-/** Parses an OpenAPI document as JSON, else YAML. Null when it is neither or its root is not an object. */
-export function readSpec(text: string): Json | null {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(text);
-  } catch {
-    try {
-      raw = YAML.parse(text, { maxAliasCount: 100 });
-    } catch {
-      return null;
-    }
-  }
-  return isRecord(raw) ? raw : null;
-}
-
-export type SpecFieldResult = { kind: "match" } | { kind: "missing" } | { kind: "mismatch" } | { kind: "unreadable" };
-
-/** Reads `x-hirakumi-verify` at the document root only and compares it exactly with this API's code. */
-export function verifySpecField(text: string, expectedCode: string): SpecFieldResult {
-  const doc = readSpec(text);
-  return doc ? verifyDocField(doc, expectedCode) : { kind: "unreadable" };
-}
-
-/** Same as verifySpecField, for a document already parsed with readSpec. */
-export function verifyDocField(doc: Record<string, unknown>, expectedCode: string): Exclude<SpecFieldResult, { kind: "unreadable" }> {
-  if (!Object.hasOwn(doc, VERIFY_FIELD)) return { kind: "missing" };
-  const value = doc[VERIFY_FIELD];
-  if (typeof value !== "string") return { kind: "mismatch" };
-  return verifyCodesEqual(expectedCode, value.trim()) ? { kind: "match" } : { kind: "mismatch" };
-}
 
 /** servers[0].url with {variables} replaced by their defaults (OpenAPI 3 server object), or null when absent. */
 export function firstServerUrl(servers: unknown): string | null {
@@ -65,19 +47,8 @@ export function firstServerUrl(servers: unknown): string | null {
   });
 }
 
-/** The directory a spec URL is served from: its path up to and including the last "/". */
-export function specDirectory(specUrl: URL): string {
-  return specUrl.pathname.slice(0, specUrl.pathname.lastIndexOf("/") + 1);
-}
-
-export type BindingResult =
-  | { ok: true }
-  | { ok: false; reason: "bad_url" | "origin_mismatch" | "outside_directory"; detail: string };
-
-// A server may decode these and walk to another directory, so a path that has them proves nothing.
-const AMBIGUOUS_PATH = /%2f|%5c|%2e|;/i;
-
-const asDir = (path: string) => (path.endsWith("/") ? path : `${path}/`);
+/** A server may decode these and walk to another directory, so a path that has them proves nothing. */
+export const AMBIGUOUS_PATH = /%2f|%5c|%2e|;/i;
 
 /**
  * Why an endpoint path could step outside the folder its base path was proven for, or null when it is plain.
@@ -106,54 +77,82 @@ export function urlWithinBase(url: URL, origin: string, pathPrefix: string): boo
   return prefix === "" || url.pathname === prefix || url.pathname.startsWith(`${prefix}/`);
 }
 
+export type CheckUrl = { ok: true; url: string } | { ok: false; url: string; detail: string };
+
+// Shortest run of the code's characters that counts as the code appearing in a URL.
+const CODE_RUN = 10;
+
+/** Fully percent-decoded (a few rounds, for double encoding) and lowercased. */
+function decodedLower(s: string): string {
+  let out = s;
+  for (let i = 0; i < 3; i++) {
+    try {
+      const next = decodeURIComponent(out);
+      if (next === out) break;
+      out = next;
+    } catch {
+      break;
+    }
+  }
+  return out.toLowerCase();
+}
+
 /**
- * The security binding between the spec the seller edited and the API Hirakumi will sell:
- * 1. the spec is served from the API's origin (scheme, host and port);
- * 2. the API's base path (path_prefix, and the spec's current servers[0] when given) lies at or under
- *    the spec's directory. On a shared host, controlling one path only proves control of that subtree.
+ * True when the code, or any run of CODE_RUN of its characters, appears in the URL: as written, percent-decoded,
+ * any case, or with separators put between its characters. A reflection service (an endpoint that echoes a
+ * header named in its URL back in its answer) could otherwise prove a code the seller never controlled.
  */
-export function checkSpecBinding(a: { openapiUrl: string; origin: string; pathPrefix: string; serverUrl?: string | null }): BindingResult {
-  let spec: URL, origin: URL;
+export function urlCarriesCode(url: string, code: string): boolean {
+  const alnum = (s: string) => s.replace(/[^a-z0-9]/g, "");
+  const secret = alnum(code.toLowerCase().replace(/^hkv_/, ""));
+  if (secret.length < CODE_RUN) return decodedLower(url).includes(code.toLowerCase()); // never a real code
+  const hay = [url.toLowerCase(), decodedLower(url)];
+  hay.push(alnum(hay[1]));
+  for (let i = 0; i + CODE_RUN <= secret.length; i++) {
+    const run = secret.slice(i, i + CODE_RUN);
+    if (hay.some((h) => h.includes(run))) return true;
+  }
+  return false;
+}
+
+/** The API's base URL as written: origin + path_prefix ("/" or "" means the origin's root). Shown to sellers. */
+export function apiBaseUrl(a: { origin: string; pathPrefix: string }): string {
+  return `${a.origin.replace(/\/+$/, "")}${a.pathPrefix === "" ? "/" : a.pathPrefix}`;
+}
+
+/**
+ * The one URL the ownership check requests: the API's base URL (apiBaseUrl), with no query or fragment. Refused
+ * when the base is not a plain path within itself, or when the URL carries the code.
+ */
+export function ownershipCheckUrl(a: { origin: string; pathPrefix: string; code: string }): CheckUrl {
+  const prefix = a.pathPrefix === "" ? "/" : a.pathPrefix;
+  const written = apiBaseUrl(a);
+  const fail = (detail: string, url = written): CheckUrl => ({ ok: false, url, detail });
+  let origin: URL;
   try {
-    spec = new URL(a.openapiUrl);
     origin = new URL(a.origin);
   } catch {
-    return { ok: false, reason: "bad_url", detail: "The OpenAPI link is not a valid URL." };
+    return fail("The API's address is not a valid URL.");
   }
-  if (spec.origin !== origin.origin) {
-    return { ok: false, reason: "origin_mismatch", detail: `The OpenAPI file is on ${spec.origin}, but the API runs on ${origin.origin}. They must be the same.` };
+  if (origin.username || origin.password || origin.search || origin.hash || origin.pathname !== "/" || /[?#]/.test(a.origin)) {
+    return fail("The API's address must be a plain origin, like https://api.example.com.");
   }
-  if (spec.search !== "" || spec.hash !== "" || /[?#]/.test(a.openapiUrl)) {
-    return { ok: false, reason: "bad_url", detail: "The OpenAPI link has a ?query or #fragment. Use the plain path to your OpenAPI file." };
+  if (!prefix.startsWith("/") || /[?#]/.test(prefix)) return fail("The API's base path must be a plain path starting with /.");
+  if (AMBIGUOUS_PATH.test(prefix) || prefix.includes("//") || unsafePathReason(prefix)) {
+    return fail("The API's base path has an encoded slash, dot, a ';' or a backslash. Use a plain path.");
   }
-  if (AMBIGUOUS_PATH.test(spec.pathname)) {
-    return { ok: false, reason: "bad_url", detail: "The OpenAPI link has an encoded slash, dot or a ';' in its path. Use a plain path." };
+  let url: URL;
+  try {
+    url = new URL(`${origin.origin}${prefix}`);
+  } catch {
+    return fail("The API's base URL is not a valid URL.");
   }
-  const dir = specDirectory(spec);
-  const bases: string[] = [a.pathPrefix];
-  if (a.serverUrl) {
-    let server: URL;
-    try {
-      server = new URL(a.serverUrl, spec);
-    } catch {
-      return { ok: false, reason: "bad_url", detail: `servers[0] in your OpenAPI file is not a valid URL: ${a.serverUrl}` };
-    }
-    if (server.origin !== origin.origin) {
-      return { ok: false, reason: "origin_mismatch", detail: `servers[0] in your OpenAPI file points to ${server.origin}, but the API runs on ${origin.origin}. They must be the same.` };
-    }
-    bases.push(server.pathname);
+  const href = url.href;
+  if (url.search !== "" || url.hash !== "" || !urlWithinBase(url, origin.origin, prefix) || AMBIGUOUS_PATH.test(url.pathname)) {
+    return fail("The API's base URL is not a plain path.", href);
   }
-  for (const base of bases) {
-    if (AMBIGUOUS_PATH.test(base)) {
-      return { ok: false, reason: "bad_url", detail: "The API's base path has an encoded slash, dot or a ';'. Use a plain path." };
-    }
-    if (!asDir(base).startsWith(dir)) {
-      return {
-        ok: false,
-        reason: "outside_directory",
-        detail: `The OpenAPI file is in ${dir}, so it can only prove ownership of APIs under ${dir}. The API's base path is ${base}. Serve the file from ${base === "/" ? "/" : asDir(base)} or a parent folder of it.`,
-      };
-    }
+  if (urlCarriesCode(href, a.code)) {
+    return fail("The API's base URL contains the verification code. Hirakumi can't check a URL that carries the code.", href);
   }
-  return { ok: true };
+  return { ok: true, url: href };
 }

@@ -113,6 +113,26 @@ describe("a new task whose brief holds the OpenAPI link", () => {
   });
 });
 
+describe("an OpenAPI file hosted somewhere else (GitHub)", () => {
+  const GH = "https://raw.githubusercontent.com/acme/price/main/openapi.json";
+  async function firstTime(spec: string) {
+    const t = await newTask({ description: GH });
+    const { soko, setEvents } = fakeSoko({ [t.id]: t.task });
+    setEvents([{ id: `evt_${rand()}`, taskId: t.id, createdAt: past, actor: { type: "user", id: t.user } }]);
+    await createInbox({ pool: db.pool, soko, webBaseUrl: WEB, fetchSpec: vi.fn().mockResolvedValue(spec) }).poll();
+    return (await messagesForTask(t.id))[0].body;
+  }
+  it("is read when servers[0] is the API's full base URL", async () => {
+    const body = await firstTime(JSON.stringify({ ...JSON.parse(PRICE_SPEC), servers: [{ url: "https://api.acme.dev/v1" }] }));
+    expect(body).toMatch(/I read Price API and found 3 endpoints/);
+  });
+  it("without a full servers URL, says so before the sign-in", async () => {
+    const body = await firstTime(PRICE_SPEC);
+    expect(body).toMatch(/I couldn't read .*raw\.githubusercontent\.com, which can't be where your API runs\. Set the first servers URL/);
+    expect(body).not.toContain("/setup?t=");
+  });
+});
+
 describe("replies on a task", () => {
   async function setup(state: string, o: { llm?: StructuredCall } = {}) {
     const t = await newTask();
@@ -145,7 +165,7 @@ describe("replies on a task", () => {
     const msgs = (await messagesForTask(t.id)).slice(1);
     expect(msgs).toEqual([
       { body: "Step 3 of 7, Choose endpoints: Selling GET /price. Per-job hires (Masumi escrow) run getPrice.", task_status: "RUNNING", api_id: apiId },
-      { body: `Step 4 of 7, Prove ownership: Prove you own https://price.example.dev: add the x-hirakumi-verify line from this page at the root of your OpenAPI file, then sign once with your Cardano wallet (no payment): ${WEB}/apis/${apiId}/ownership`, task_status: "INPUT_REQUIRED", api_id: apiId },
+      { body: `Step 4 of 7, Prove ownership: Prove you own https://price.example.dev/${apiId}: make your API send the header X-Hirakumi-Verify with the code from this page on responses at your base URL (any status counts, even a 404 page), then sign once with your Cardano wallet (no payment): ${WEB}/apis/${apiId}/ownership`, task_status: "INPUT_REQUIRED", api_id: apiId },
     ]);
   });
 
@@ -215,11 +235,13 @@ describe("replies on a task", () => {
     expect((await messagesForTask(t.id)).at(-1)).toMatchObject({ body: "Test calls are running. I'll post the promise and a suggested price here when they're done.", api_id: apiId });
   });
 
-  it("at the ownership step it says to add the field to the OpenAPI file, never to host a file", async () => {
+  it("at the ownership step it says to send the X-Hirakumi-Verify header at the base URL, never to host a file", async () => {
     const { t, apiId, reply } = await setup("endpoints_confirmed");
     await reply("what now?");
     const body = (await messagesForTask(t.id)).at(-1)?.body ?? "";
-    expect(body).toContain("add the x-hirakumi-verify line from this page at the root of your OpenAPI file, then sign once with your Cardano wallet");
+    expect(body).toContain(`Next, prove you own https://price.example.dev/${apiId}: make your API send the header X-Hirakumi-Verify with the code from this page`);
+    expect(body).toContain("any status counts, even a 404 page), then sign once with your Cardano wallet");
+    expect(body).not.toMatch(/x-hirakumi-verify line|hirakumi-verify\.json|OpenAPI file/);
     expect(body).toContain(`${WEB}/apis/${apiId}/ownership`);
     expect(body).not.toMatch(/well-known|challenge|download|upload/i);
     expect(body).not.toMatch(/[–—]/);

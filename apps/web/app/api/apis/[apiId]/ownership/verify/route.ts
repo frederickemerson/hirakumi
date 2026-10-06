@@ -28,7 +28,7 @@ export async function POST(req: Request, ctx: ApiRouteContext): Promise<Response
   const challenge = await getOpenWalletChallenge(sql, body.challengeId, api.id);
   if (!challenge) return errorJson(409, "This signing request expired or was already used. Start the signing step again.");
   if (!(await hasFreshVerifyPass(sql, api.id))) {
-    return errorJson(409, "Check your OpenAPI file again. A passing check counts for 30 minutes.");
+    return errorJson(409, "Check your X-Hirakumi-Verify header again. A passing check counts for 30 minutes.");
   }
   // Authoritative check: the signature must come from the seller's own payout address.
   const ok = await verifyCip30Signature(challenge.message, { signature: body.signature, key: body.key }, session.addr);

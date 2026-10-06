@@ -16,7 +16,7 @@ import { formatTusdm, MIN_PRICE_MICROS, SUGGESTED_PACK, tusdmToMicros } from "./
  * failedStep: the step that failed for good, when `failed`.
  */
 export type TaskApi = {
-  id: string; name: string; state: string; origin: string; failed: boolean; failedStep: string | null; intakeKind: "openapi" | "samples";
+  id: string; name: string; state: string; origin: string; pathPrefix: string; failed: boolean; failedStep: string | null; intakeKind: "openapi" | "samples";
 };
 export type ListedOp = { ref: string; id: string; opId: string; method: string; path: string; description: string | null; sideEffectsLikely: boolean };
 export type ActionResult = { ok: true; message: string } | { ok: false; error: string };
@@ -24,7 +24,7 @@ export type ActionResult = { ok: true; message: string } | { ok: false; error: s
 /** The task's API: the newest one that isn't retired. `failed` = a step failed for good (a new link may restart). */
 export async function apiForTask(db: Db, taskId: string): Promise<TaskApi | null> {
   const { rows } = await db.query<TaskApi>(
-    `select id, name, state, origin, intake_kind as "intakeKind",
+    `select id, name, state, origin, path_prefix as "pathPrefix", intake_kind as "intakeKind",
             exists (select 1 from onboard_steps s where s.api_id = apis.id and s.status = 'failed') as failed,
             (select s.step from onboard_steps s where s.api_id = apis.id and s.status = 'failed' order by s.updated_at desc limit 1) as "failedStep"
      from apis where sokosumi_task_id = $1 and state <> 'retired' order by created_at desc limit 1`,
@@ -137,11 +137,11 @@ export async function linkedSeller(db: Db, sokosumiUserId: string): Promise<stri
 
 /**
  * Creates the task's API for a linked seller; the driver then reads and describes it. With samples (any API, no
- * OpenAPI file), openapiUrl is the ownership proof file in the base folder (@hirakumi/core normalizeSamplesBase).
+ * OpenAPI file), openapiUrl is null. origin is a placeholder until the parse step reads servers[0].
  */
 export async function createTaskApi(
   db: Db,
-  a: { sellerId: string; taskId: string; name: string; origin: string; openapiUrl: string; samples?: { base: string; lines: string } },
+  a: { sellerId: string; taskId: string; name: string; origin: string; openapiUrl: string | null; samples?: { base: string; lines: string } },
 ): Promise<string> {
   const id = newId("api");
   await db.query(

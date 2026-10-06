@@ -19,9 +19,14 @@ export type Api = {
   id: string;
   sellerId: string;
   name: string;
+  /**
+   * The API's origin. For an OpenAPI link it is provisional (the link's origin) until the parse step sets it from
+   * servers[0]; trust it, and pathPrefix, only from state "parsed" on.
+   */
   origin: string;
-  /** For intakeKind "samples", the ownership proof file (<base folder>/hirakumi-verify.json). */
-  openapiUrl: string;
+  pathPrefix: string;
+  /** The OpenAPI link the seller gave, hosted anywhere. Null for intakeKind "samples". */
+  openapiUrl: string | null;
   intakeKind: "openapi" | "samples";
   state: ApiState;
   health: Health;

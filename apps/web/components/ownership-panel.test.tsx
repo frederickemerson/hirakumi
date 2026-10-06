@@ -3,18 +3,20 @@ import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { jsonResponse } from "@/test/http";
-import { AUTO_CHECK_MS, OwnershipPanel, specSnippets } from "./ownership-panel";
+import { AUTO_CHECK_MS, curlCheck, headerSnippets, OwnershipPanel } from "./ownership-panel";
 
 const nav = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => nav }));
 
-const SPEC_URL = "https://price.example.dev/openapi.json";
+const BASE_URL = "https://price.example.dev/v1";
 const CODE = "hkv_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-const PASS = { ok: true, reason: "verified", triedUrl: SPEC_URL, detail: "Found your code. The OpenAPI file is verified." };
-const MISSING = { ok: false, reason: "missing", triedUrl: SPEC_URL, detail: "We read your OpenAPI file, but it has no x-hirakumi-verify field at the root." };
-const MISMATCH = { ok: false, reason: "mismatch", triedUrl: SPEC_URL, detail: "Found x-hirakumi-verify, but its value does not match this API's code." };
-const NOT_FOUND = { ok: false, reason: "http_status", status: 404, triedUrl: SPEC_URL, detail: "Your server answered 404, not 200." };
-const REDIRECT = { ok: false, reason: "redirect", status: 301, triedUrl: SPEC_URL, detail: "Your server answered 301 (a redirect). Hirakumi does not follow redirects." };
+const PASS = { ok: true, reason: "verified", status: 200, triedUrl: BASE_URL, detail: "Found your code in the X-Hirakumi-Verify header." };
+const MISSING = { ok: false, reason: "missing", status: 404, triedUrl: BASE_URL, detail: "Your API answered 404 without an X-Hirakumi-Verify header." };
+const MISSING_REDIRECT = { ok: false, reason: "missing", status: 301, triedUrl: BASE_URL, detail: "Your server answered 301, but without the X-Hirakumi-Verify header." };
+const MISSING_NO_STATUS = { ok: false, reason: "missing", triedUrl: BASE_URL, detail: "No X-Hirakumi-Verify header." };
+const MISMATCH = { ok: false, reason: "mismatch", status: 200, triedUrl: BASE_URL, detail: "Found X-Hirakumi-Verify, but its value does not match this API's code." };
+const TIMEOUT = { ok: false, reason: "timeout", triedUrl: BASE_URL, detail: "Your API took longer than 10 s to answer." };
+const BAD_URL = { ok: false, reason: "bad_url", triedUrl: BASE_URL, detail: "The base URL contains your code. Use a base URL without it." };
 
 function installWallet(signData = vi.fn(async () => ({ signature: "84a1", key: "a401" }))) {
   window.cardano = {
@@ -37,7 +39,7 @@ function setVisibility(state: "visible" | "hidden") {
   document.dispatchEvent(new Event("visibilitychange"));
 }
 
-const panel = (passed = false) => <OwnershipPanel apiId="api_1" openapiUrl={SPEC_URL} code={CODE} initiallyPassed={passed} />;
+const panel = (passed = false) => <OwnershipPanel apiId="api_1" baseUrl={BASE_URL} code={CODE} initiallyPassed={passed} />;
 const checkCalls = (m: ReturnType<typeof vi.fn>) => m.mock.calls.filter((c) => String(c[0]).endsWith("/ownership/spec-check")).length;
 
 afterEach(() => {
@@ -49,29 +51,60 @@ afterEach(() => {
 });
 
 describe("OwnershipPanel: what, where, why", () => {
-  it("shows the code as YAML and JSON, the file it goes in, and why, with no file download", () => {
+  it("shows the header, the base URL it must be on, why, and a curl check, with no file", () => {
     installWallet();
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(MISSING)));
     render(panel());
-    expect(screen.getByText(SPEC_URL)).toBeInTheDocument();
+    expect(screen.getByText(BASE_URL)).toBeInTheDocument();
     expect(screen.getByText("So nobody can sell an API they don't own.")).toBeInTheDocument();
-    expect(screen.getByText(`x-hirakumi-verify: "${CODE}"`)).toBeInTheDocument();
-    expect(screen.getByText(`"x-hirakumi-verify": "${CODE}",`)).toBeInTheDocument();
+    expect(screen.getByText(`X-Hirakumi-Verify: ${CODE}`)).toBeInTheDocument();
+    expect(screen.getByText(/Any status is fine, a 404 page counts\. The code proves the folder of this URL/)).toBeInTheDocument();
+    expect(screen.getByText(`curl -s -o /dev/null -D - '${BASE_URL}' | grep -i x-hirakumi-verify`)).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /download/i })).toBeNull();
+    expect(document.body.textContent).not.toMatch(/hirakumi-verify\.json|OpenAPI file/);
     expect(document.body.textContent).not.toMatch(/[–—]/);
+  });
+
+  it("shows one snippet per server or host as tabs", async () => {
+    installWallet();
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(MISSING)));
+    const user = userEvent.setup();
+    render(panel());
+    const tabs = screen.getAllByRole("tab").map((t) => t.textContent);
+    expect(tabs).toEqual(["Express", "nginx", "vercel.json", "Netlify _headers", "Cloudflare", "FastAPI", "Flask"]);
+    expect(screen.getByRole("tab", { name: "Express" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel")).toHaveTextContent(`res.set("X-Hirakumi-Verify", "${CODE}");`);
+    await user.click(screen.getByRole("tab", { name: "nginx" }));
+    expect(screen.getByRole("tab", { name: "nginx" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel")).toHaveTextContent(`add_header X-Hirakumi-Verify "${CODE}" always;`);
   });
 
   it("shows the optional key section between adding the code and signing", () => {
     installWallet();
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(MISSING)));
-    render(<OwnershipPanel apiId="api_1" openapiUrl={SPEC_URL} code={CODE} initiallyPassed={false} beforeSigning={<p>Key section</p>} />);
+    render(<OwnershipPanel apiId="api_1" baseUrl={BASE_URL} code={CODE} initiallyPassed={false} beforeSigning={<p>Key section</p>} />);
     const items = screen.getAllByRole("listitem");
     expect(items.map((li) => li.textContent?.includes("Key section"))).toEqual([false, true, false]);
     expect(within(items[2]).getByRole("heading", { name: "Sign with your wallet" })).toBeInTheDocument();
   });
 
-  it("builds the snippets from the code", () => {
-    expect(specSnippets(CODE)).toEqual({ yaml: `x-hirakumi-verify: "${CODE}"`, json: `"x-hirakumi-verify": "${CODE}",` });
+  it("builds the snippets from the code and the base URL", () => {
+    const by = Object.fromEntries(headerSnippets(CODE, BASE_URL).map((x) => [x.id, x.text]));
+    expect(by.nginx).toContain(`add_header X-Hirakumi-Verify "${CODE}" always;`);
+    expect(JSON.parse(by.vercel)).toEqual({ headers: [{ source: "/(.*)", headers: [{ key: "X-Hirakumi-Verify", value: CODE }] }] });
+    expect(by.netlify).toBe(`/*\n  X-Hirakumi-Verify: ${CODE}`);
+    expect(by.cloudflare).toContain("URI Path starts with /v1");
+    expect(headerSnippets(CODE, "https://price.example.dev/").find((x) => x.id === "cloudflare")?.text).toContain("All incoming requests");
+    expect(by.fastapi).toContain(`response.headers["X-Hirakumi-Verify"] = "${CODE}"`);
+    expect(by.flask).toContain("@app.after_request");
+    expect(curlCheck(BASE_URL)).toBe(`curl -s -o /dev/null -D - '${BASE_URL}' | grep -i x-hirakumi-verify`);
+    for (const x of headerSnippets(CODE, BASE_URL)) expect(x.text).not.toMatch(/[–—]/);
+  });
+
+  it("quotes the URL in the curl check, so shell characters in the path stay part of it", () => {
+    // The URL parser keeps & | $ ( ) ! ' as they are in a path, and a shell would act on each of them.
+    expect(curlCheck("https://api.example.com/a&b|c$(id)")).toBe("curl -s -o /dev/null -D - 'https://api.example.com/a&b|c$(id)' | grep -i x-hirakumi-verify");
+    expect(curlCheck("https://api.example.com/it's")).toBe("curl -s -o /dev/null -D - 'https://api.example.com/it'\\''s' | grep -i x-hirakumi-verify");
   });
 
   it("copies a snippet", async () => {
@@ -80,8 +113,8 @@ describe("OwnershipPanel: what, where, why", () => {
     const user = userEvent.setup();
     const writeText = vi.spyOn(navigator.clipboard, "writeText");
     render(panel());
-    await user.click(screen.getByRole("button", { name: "Copy YAML" }));
-    expect(writeText).toHaveBeenCalledWith(`x-hirakumi-verify: "${CODE}"`);
+    await user.click(screen.getByRole("button", { name: "Copy Header" }));
+    expect(writeText).toHaveBeenCalledWith(`X-Hirakumi-Verify: ${CODE}`);
     expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();
   });
 });
@@ -119,7 +152,7 @@ describe("OwnershipPanel: auto-check", () => {
     installWallet();
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(MISSING)));
     render(panel());
-    expect(await screen.findByText(/^Checking https:\/\/price\.example\.dev\/openapi\.json…/)).toBeInTheDocument();
+    expect(await screen.findByText(/^Checking https:\/\/price\.example\.dev\/v1…/)).toBeInTheDocument();
     await act(async () => { await vi.advanceTimersByTimeAsync(4_000); });
     expect(await screen.findByText(/last checked 4 s ago/)).toBeInTheDocument();
   });
@@ -147,19 +180,24 @@ describe("OwnershipPanel: auto-check", () => {
 
 describe("OwnershipPanel: failures say exactly what was found", () => {
   it.each([
-    [NOT_FOUND, "We couldn't fetch the file. Your server answered 404."],
-    [REDIRECT, "We couldn't fetch the file. Your server answered 301, a redirect."],
-    [MISSING, "We read the file, but x-hirakumi-verify is missing at the root."],
-    [MISMATCH, "We found x-hirakumi-verify, but the code doesn't match this API's code."],
-  ])("%#: %s", async (result, headline) => {
+    [MISSING, "Your API answered 404, but without the X-Hirakumi-Verify header.", false],
+    [MISSING_NO_STATUS, "Your API answered, but without the X-Hirakumi-Verify header.", false],
+    // A platform redirect (/v1 to /v1/) runs before the seller's code, so say what to do about it.
+    [MISSING_REDIRECT, "Your API answered 301, a redirect, without the X-Hirakumi-Verify header. We only follow a redirect that adds a slash at the end of this URL. Add the header to the redirect too, or answer at this exact URL without redirecting.", false],
+    [MISMATCH, "We found X-Hirakumi-Verify, but the code doesn't match this API's code.", false],
+    [TIMEOUT, "We couldn't reach your API at this URL.", true],
+    [BAD_URL, "We can't check this base URL.", true],
+  ])("%#: %s", async (result, headline, showsDetail) => {
     installWallet();
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(result)));
     render(panel());
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(headline);
-    expect(alert).toHaveTextContent("Redirects are not followed.");
-    expect(alert).toHaveTextContent("Use HTTPS.");
-    expect(alert).toHaveTextContent("Publish the updated file.");
+    if (showsDetail) expect(alert).toHaveTextContent(result.detail);
+    else expect(alert).not.toHaveTextContent(result.detail);
+    expect(alert).toHaveTextContent("Send the header on responses at this exact URL. Redirects are not followed, except one that only adds a slash at the end.");
+    expect(alert).toHaveTextContent("Any status counts, a 404 page too.");
+    expect(alert).toHaveTextContent("Deploy the change.");
     expect(alert.textContent).not.toMatch(/[–—]/);
     expect(await screen.findByRole("button", { name: "Sign with eternl" })).toBeDisabled();
   });

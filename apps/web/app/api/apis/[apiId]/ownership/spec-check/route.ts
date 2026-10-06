@@ -3,7 +3,10 @@ import { errorJson, json, type ApiRouteContext } from "@/lib/http";
 import { getOrCreateVerifyCode, markVerifyPassed } from "@/lib/repo/challenges";
 import { loadOwnedApi, wrongStep } from "@/lib/route-helpers";
 
-/** Asks the gateway to read this API's OpenAPI file and look for its code at the root (x-hirakumi-verify). */
+/**
+ * Asks the gateway to request this API's base URL once and look for its code in the X-Hirakumi-Verify response
+ * header (any status). The route keeps its old name: the ownership panel calls it.
+ */
 export async function POST(req: Request, ctx: ApiRouteContext): Promise<Response> {
   const loaded = await loadOwnedApi(req, ctx);
   if (loaded instanceof Response) return loaded;

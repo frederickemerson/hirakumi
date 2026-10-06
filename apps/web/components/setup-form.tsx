@@ -66,7 +66,9 @@ export function SetupForm({ initialUrl, setupToken }: { initialUrl: string; setu
           <label htmlFor="openapi-url" className="block text-body font-medium">OpenAPI link</label>
           <Input id="openapi-url" type="text" inputMode="url" placeholder="https://example.com/openapi.json"
             value={url} onChange={(e) => setUrl(e.target.value)} disabled={busy} />
-          <p className="text-caption text-graphite">An https link to an OpenAPI 3 file, JSON or YAML.</p>
+          <p className="text-caption text-graphite">
+            An https link to an OpenAPI 3 file, JSON or YAML. It can be hosted anywhere, GitHub too. If it isn&apos;t on your API&apos;s host, its first servers entry must be your API&apos;s full URL.
+          </p>
         </div>
       ) : (
         <>

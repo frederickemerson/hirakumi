@@ -14,18 +14,50 @@ import { startRouteProgress } from "@/lib/route-progress";
 import { connectWallet, signText, walletErrorMessage } from "@/lib/wallet-client";
 import { cn } from "@/lib/utils";
 
-/** How often the page re-reads the seller's OpenAPI file while it is visible. */
+/** How often the page checks the seller's API for the header while it is visible. */
 export const AUTO_CHECK_MS = 10_000;
-const FIELD = "x-hirakumi-verify";
+export const HEADER = "X-Hirakumi-Verify";
 
-/** The whole proof file for an API without an OpenAPI file (served at its openapi_url). */
-export function proofFile(code: string): string {
-  return `{ "${FIELD}": "${code}" }`;
+export type HeaderSnippet = { id: string; label: string; text: string };
+
+/** Ways to send the header, one per common server or host. Each sends it on every response, 404s included. */
+export function headerSnippets(code: string, baseUrl: string): HeaderSnippet[] {
+  const path = new URL(baseUrl).pathname;
+  return [
+    {
+      id: "express", label: "Express",
+      text: `// Before your routes, so every response gets it, 404s too.\napp.use((req, res, next) => {\n  res.set("${HEADER}", "${code}");\n  next();\n});`,
+    },
+    {
+      id: "nginx", label: "nginx",
+      text: `# In the server or location block that serves your API.\nadd_header ${HEADER} "${code}" always;`,
+    },
+    {
+      id: "vercel", label: "vercel.json",
+      text: `{\n  "headers": [\n    {\n      "source": "/(.*)",\n      "headers": [{ "key": "${HEADER}", "value": "${code}" }]\n    }\n  ]\n}`,
+    },
+    { id: "netlify", label: "Netlify _headers", text: `/*\n  ${HEADER}: ${code}` },
+    {
+      id: "cloudflare", label: "Cloudflare",
+      text: `Rules, Transform Rules, Modify Response Header, Create rule\nIf: ${path === "/" ? "All incoming requests" : `URI Path starts with ${path}`}\nThen: Set static, header name ${HEADER}, value ${code}`,
+    },
+    {
+      id: "fastapi", label: "FastAPI",
+      text: `@app.middleware("http")\nasync def hirakumi_verify(request, call_next):\n    response = await call_next(request)\n    response.headers["${HEADER}"] = "${code}"\n    return response`,
+    },
+    {
+      id: "flask", label: "Flask",
+      text: `@app.after_request\ndef hirakumi_verify(response):\n    response.headers["${HEADER}"] = "${code}"\n    return response`,
+    },
+  ];
 }
 
-/** The line the seller adds at the root of their OpenAPI file, in each format. */
-export function specSnippets(code: string): { yaml: string; json: string } {
-  return { yaml: `${FIELD}: "${code}"`, json: `"${FIELD}": "${code}",` };
+/** A shell word: single quotes, any ' inside closed and escaped, so &, |, $ and the like stay part of the URL. */
+const shellQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+
+/** The command a seller can run to see the header themselves. */
+export function curlCheck(baseUrl: string): string {
+  return `curl -s -o /dev/null -D - ${shellQuote(baseUrl)} | grep -i x-hirakumi-verify`;
 }
 
 type CheckState =
@@ -37,31 +69,28 @@ type SignState = { kind: "idle" } | { kind: "working"; walletId: string; text: s
 /** One sentence naming what the check found. Short, plain, no dashes. */
 function headline(r: ChallengeCheck): string {
   switch (r.reason) {
-    case "http_status":
-      return `We couldn't fetch the file. Your server answered ${r.status ?? "an error"}.`;
-    case "redirect":
-      return `We couldn't fetch the file. Your server answered ${r.status ?? "3xx"}, a redirect.`;
     case "timeout":
     case "unreachable":
     case "blocked":
     case "too_large":
-      return "We couldn't fetch the file.";
-    case "unreadable":
-      return "We fetched the file, but it isn't valid JSON or YAML.";
+      return "We couldn't reach your API at this URL.";
     case "missing":
-      return `We read the file, but ${FIELD} is missing at the root.`;
+      if (r.status && r.status >= 300 && r.status < 400) {
+        return `Your API answered ${r.status}, a redirect, without the ${HEADER} header. We only follow a redirect that adds a slash at the end of this URL. Add the header to the redirect too, or answer at this exact URL without redirecting.`;
+      }
+      return r.status
+        ? `Your API answered ${r.status}, but without the ${HEADER} header.`
+        : `Your API answered, but without the ${HEADER} header.`;
     case "mismatch":
-      return `We found ${FIELD}, but the code doesn't match this API's code.`;
-    case "origin_mismatch":
-    case "outside_directory":
+      return `We found ${HEADER}, but the code doesn't match this API's code.`;
     case "bad_url":
-      return "This file can't prove you own this API.";
+      return "We can't check this base URL.";
     default:
       return "The check didn't pass.";
   }
 }
-/** The gateway's detail adds facts (why a fetch failed, which folder) beyond the headline for these. */
-const SHOW_DETAIL = new Set<ChallengeCheck["reason"]>(["timeout", "unreachable", "blocked", "too_large", "origin_mismatch", "outside_directory", "bad_url", "no_code"]);
+/** The gateway's detail adds facts (why a request failed, what is wrong with the URL) beyond the headline for these. */
+const SHOW_DETAIL = new Set<ChallengeCheck["reason"]>(["timeout", "unreachable", "blocked", "too_large", "bad_url", "no_code"]);
 
 function StepNumber({ n, done }: { n: number; done?: boolean }) {
   return (
@@ -95,11 +124,33 @@ function Snippet({ label, text }: { label: string; text: string }) {
 
 const isVisible = () => typeof document === "undefined" || document.visibilityState !== "hidden";
 
-export function OwnershipPanel({ apiId, openapiUrl, intakeKind = "openapi", code, initiallyPassed, beforeSigning }: {
+/** The snippets as tabs: one server or host at a time. */
+function SnippetTabs({ snippets }: { snippets: HeaderSnippet[] }) {
+  const [active, setActive] = useState(snippets[0].id);
+  const current = snippets.find((x) => x.id === active) ?? snippets[0];
+  return (
+    <div className="space-y-2">
+      <div role="tablist" aria-label="Where your API runs" className="flex flex-wrap gap-2">
+        {snippets.map((x) => (
+          <button key={x.id} type="button" role="tab" id={`snippet-tab-${x.id}`} aria-selected={x.id === current.id}
+            aria-controls="snippet-panel" onClick={() => setActive(x.id)}
+            className={cn("rounded-[2px] border-2 border-ink px-2.5 py-1 text-caption font-semibold",
+              x.id === current.id ? "bg-ink text-cream" : "bg-frost text-ink hover:bg-chalk")}>
+            {x.label}
+          </button>
+        ))}
+      </div>
+      <div role="tabpanel" id="snippet-panel" aria-labelledby={`snippet-tab-${current.id}`}>
+        <Snippet label={current.label} text={current.text} />
+      </div>
+    </div>
+  );
+}
+
+export function OwnershipPanel({ apiId, baseUrl, code, initiallyPassed, beforeSigning }: {
   apiId: string;
-  /** The API's openapi_url: the file the code must be added to (or, for "samples", the proof file to serve). */
-  openapiUrl: string;
-  intakeKind?: "openapi" | "samples";
+  /** The API's base URL (origin + path_prefix): the address the gateway requests, looking for the header. */
+  baseUrl: string;
   /** This API's verification code (server-side, per API). */
   code: string;
   initiallyPassed: boolean;
@@ -117,7 +168,7 @@ export function OwnershipPanel({ apiId, openapiUrl, intakeKind = "openapi", code
   const sinceLast = useElapsed(lastCheckedAt, !passed && lastCheckedAt !== null);
   const busy = useRef(false);
   const lastStarted = useRef(0);
-  const snippets = specSnippets(code);
+  const snippets = headerSnippets(code, baseUrl);
 
   async function runCheck() {
     if (busy.current) return;
@@ -185,24 +236,17 @@ export function OwnershipPanel({ apiId, openapiUrl, intakeKind = "openapi", code
         <div className="min-w-0 flex-1 space-y-3">
           <h2 id="own-step-1" className="text-body-lg font-semibold">Add your code</h2>
           <p className="text-body">So nobody can sell an API they don&apos;t own.</p>
-          {intakeKind === "samples" ? (
-            <>
-              <p className="text-body">Serve this file, as it is, at the address below. It can be a static file or a route that returns it.</p>
-              <Snippet label="hirakumi-verify.json" text={proofFile(code)} />
-              <p className="text-body">Serve it at:</p>
-            </>
-          ) : (
-            <>
-              <p className="text-body">Add this line at the root of your OpenAPI file, next to <code>openapi</code> and <code>info</code>:</p>
-              <div className="grid gap-3 md:grid-cols-2">
-                <Snippet label="YAML" text={snippets.yaml} />
-                <Snippet label="JSON" text={snippets.json} />
-              </div>
-              <p className="text-body">Your OpenAPI file:</p>
-            </>
-          )}
-          <code className="block break-all rounded-[2px] bg-ink p-3 text-body text-cream">{openapiUrl}</code>
-          <p className="text-caption text-graphite">The code proves the folder this file is served from, so your API must run on the same host, in that folder or below it.</p>
+          <p className="text-body">Make your API send this header on its responses:</p>
+          <Snippet label="Header" text={`${HEADER}: ${code}`} />
+          <p className="text-body">For example:</p>
+          <SnippetTabs snippets={snippets} />
+          <p className="text-body">It must be on responses at your API&apos;s base URL:</p>
+          <code className="block break-all rounded-[2px] bg-ink p-3 text-body text-cream">{baseUrl}</code>
+          <p className="text-caption text-graphite">
+            Any status is fine, a 404 page counts. The code proves the folder of this URL, so every endpoint you sell is in it or below it.
+          </p>
+          <p className="text-body">To check it yourself, run:</p>
+          <Snippet label="curl" text={curlCheck(baseUrl)} />
           {passed ? (
             <InlineStatus>Found your code.</InlineStatus>
           ) : (
@@ -210,7 +254,7 @@ export function OwnershipPanel({ apiId, openapiUrl, intakeKind = "openapi", code
               <div className="flex flex-wrap items-center gap-4">
                 <Button variant="outline" pending={inFlight} pendingLabel="Checking…" onClick={() => void runCheck()}>Check now</Button>
                 <p role="status" aria-live="off" className="min-w-0 break-all text-caption text-graphite">
-                  Checking {openapiUrl}…{sinceLast !== null && !inFlight ? ` last checked ${sinceLast} s ago` : ""}
+                  Checking {baseUrl}…{sinceLast !== null && !inFlight ? ` last checked ${sinceLast} s ago` : ""}
                 </p>
               </div>
               {check.kind === "failed" && (
@@ -218,9 +262,9 @@ export function OwnershipPanel({ apiId, openapiUrl, intakeKind = "openapi", code
                   <p className="font-semibold">{headline(check.result)}</p>
                   {SHOW_DETAIL.has(check.result.reason) && <p>{check.result.detail}</p>}
                   <ul className="list-disc space-y-0.5 pl-5 text-caption">
-                    <li>Serve the file at this exact URL. Redirects are not followed.</li>
-                    <li>Use HTTPS.</li>
-                    <li>Publish the updated file. We check again every 10 s.</li>
+                    <li>Send the header on responses at this exact URL. Redirects are not followed, except one that only adds a slash at the end.</li>
+                    <li>Any status counts, a 404 page too.</li>
+                    <li>Deploy the change. We check again every 10 s.</li>
                   </ul>
                 </div>
               )}

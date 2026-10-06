@@ -1,5 +1,3 @@
-import { specDirectory } from "./ownership";
-
 /**
  * One API, one listing, one account. An API's identity is its upstream base: origin + path_prefix (set by the
  * parse step from servers[0]). From the moment ownership is proven, no two active APIs may share a base, and
@@ -31,7 +29,7 @@ export function normalizeOrigin(origin: string): string {
     .replace(/^(https?:\/\/[^/:]*[^/:.])\.+(:[0-9]+)?$/, "$1$2");
 }
 
-/** The base path as a directory with a trailing slash, as checkSpecBinding treats it. */
+/** The base path as a directory with a trailing slash: a base covers its whole folder. */
 export function normalizeBasePath(path: string): string {
   if (path === "") return "/";
   return path.endsWith("/") ? path : `${path}/`;
@@ -71,16 +69,12 @@ export function judgeListingBase(me: Base & { sellerId: string }, others: Listed
 }
 
 /**
- * Advisory check on a submitted link, before the base is known. The base will lie at or under the OpenAPI
- * file's folder (checkSpecBinding), so another account's base at or above that folder is a sure conflict.
+ * Advisory check at intake, only when the base is already known (an API given by base URL and example
+ * requests). An OpenAPI link is not checked here: its base comes from servers[0] at parse time, and the
+ * parse step and the proof decide. True when another account lists this base, or one that overlaps it.
  */
-export function takenEarly(me: { sellerId: string; openapiUrl: string }, others: ListedBase[]): boolean {
-  const spec = new URL(me.openapiUrl);
-  const dir = specDirectory(spec);
-  return others.some((o) =>
-    o.sellerId !== me.sellerId
-    && normalizeOrigin(o.origin) === normalizeOrigin(spec.origin)
-    && dir.startsWith(normalizeBasePath(o.pathPrefix)));
+export function takenEarly(me: Base & { sellerId: string }, others: ListedBase[]): boolean {
+  return others.some((o) => o.sellerId !== me.sellerId && compareBases(me, o) !== null);
 }
 
 /** Runs SQL with $n parameters and returns the rows. Fits pg (`c.query(...).rows`) and postgres.js (`tx.unsafe`). */
