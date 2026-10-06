@@ -122,33 +122,34 @@ describe("runPackDemo", () => {
 });
 
 describe("runPackDemo when settlement times out", () => {
-  const settleFailed = () => new PackPurchaseError(402, '{"error":"settlement_failed"}', "SIGNED_PAYMENT");
+  const settleFailed = () => new PackPurchaseError(402, '{"error":"settlement_failed"}', "SIGNED_PAYMENT", "BUYER_SECRET");
 
   it("saves the signed payment and tells the buyer to run again instead of paying twice", async () => {
     const gw = fakeGateway({ modes: ["pass"] });
     const h = deps(gw);
     h.buyPack.mockRejectedValueOnce(settleFailed());
     await expect(runPackDemo(h.make(), opts())).rejects.toBeInstanceOf(PackPurchaseError);
-    expect(h.pending.get(API)).toMatchObject({ packId: "pk_demo", paymentSignature: "SIGNED_PAYMENT" });
+    expect(h.pending.get(API)).toMatchObject({ packId: "pk_demo", paymentSignature: "SIGNED_PAYMENT", recoverySecret: "BUYER_SECRET" });
     expect(h.lines.join("\n")).toContain("Run the same command again");
   });
 
   it("recovers a saved payment with the same signature on the next run", async () => {
     const gw = fakeGateway({ modes: ["pass"] });
     const h = deps(gw);
-    h.pending.put(API, { packId: "pk_demo", paymentSignature: "SIGNED_PAYMENT", at: "2026-10-06T00:00:00Z" });
-    const recoverCalls: { url: string; sig: string | null }[] = [];
+    h.pending.put(API, { packId: "pk_demo", paymentSignature: "SIGNED_PAYMENT", recoverySecret: "BUYER_SECRET", at: "2026-10-06T00:00:00Z" });
+    const recoverCalls: { url: string; sig: string | null; secret: string | null }[] = [];
     const base = h.make();
     const fetch = async (url: string, init?: RequestInit) => {
       if (url.endsWith("/recover")) {
-        recoverCalls.push({ url, sig: new Headers(init?.headers).get("payment-signature") });
+        const hd = new Headers(init?.headers);
+        recoverCalls.push({ url, sig: hd.get("payment-signature"), secret: hd.get("x-hirakumi-recovery-secret") });
         return new Response(JSON.stringify({ token: TOKEN, credits: 5, status: "active" }), { status: 200 });
       }
       return base.fetch(url, init);
     };
     const s = await runPackDemo({ ...base, fetch }, opts({ calls: 1 }));
     expect(h.buyPack).not.toHaveBeenCalled();
-    expect(recoverCalls).toEqual([{ url: `${GW}/a/${API}/packs/pk_demo/recover`, sig: "SIGNED_PAYMENT" }]);
+    expect(recoverCalls).toEqual([{ url: `${GW}/a/${API}/packs/pk_demo/recover`, sig: "SIGNED_PAYMENT", secret: "BUYER_SECRET" }]);
     expect(s.passed).toBe(1);
     expect(h.tokens.get(API)?.token).toBe(TOKEN);
     expect(h.pending.get(API)).toBeUndefined();
@@ -157,7 +158,7 @@ describe("runPackDemo when settlement times out", () => {
   it("forgets a saved payment the gateway never received and buys normally", async () => {
     const gw = fakeGateway({ modes: ["pass"] });
     const h = deps(gw);
-    h.pending.put(API, { packId: "pk_demo", paymentSignature: "SIGNED_PAYMENT", at: "2026-10-06T00:00:00Z" });
+    h.pending.put(API, { packId: "pk_demo", paymentSignature: "SIGNED_PAYMENT", recoverySecret: "BUYER_SECRET", at: "2026-10-06T00:00:00Z" });
     const base = h.make();
     const fetch = async (url: string, init?: RequestInit) =>
       url.endsWith("/recover") ? new Response('{"error":"payment_not_found"}', { status: 404 }) : base.fetch(url, init);

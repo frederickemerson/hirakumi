@@ -18,7 +18,7 @@ beforeEach(async () => {
 afterEach(async () => { await db.drop(); });
 
 const pending = (over: Partial<Parameters<typeof insertPendingToken>[1]> = {}) => ({
-  id: "ct_1", apiId: "api_a", packId: "pk_a", tokenHash: "th1", remaining: 1, paymentPayloadHash: "pp1", txHash: null, ...over,
+  id: "ct_1", apiId: "api_a", packId: "pk_a", tokenHash: "th1", remaining: 1, paymentPayloadHash: "pp1", txHash: "tx1", recoveryHash: null, ...over,
 });
 
 describe("loadApiBundle", () => {
@@ -35,6 +35,13 @@ describe("credit tokens", () => {
   it("insertPendingToken is idempotent on the payment hash", async () => {
     expect(await insertPendingToken(db.sql, pending())).toEqual({ inserted: true, id: "ct_1" });
     expect(await insertPendingToken(db.sql, pending({ id: "ct_2", tokenHash: "th2" }))).toEqual({ inserted: false, id: "ct_1", status: "pending" });
+  });
+  it("one Cardano transaction buys at most one token, whatever the payload looks like (audit C1)", async () => {
+    expect(await insertPendingToken(db.sql, pending())).toEqual({ inserted: true, id: "ct_1" });
+    expect(await insertPendingToken(db.sql, pending({ id: "ct_2", tokenHash: "th2", paymentPayloadHash: "pp-variant" })))
+      .toEqual({ inserted: false, id: "ct_1", status: "pending" });
+    const [{ n }] = await db.sql<{ n: number }[]>`select count(*)::int as n from credit_tokens where tx_hash = 'tx1'`;
+    expect(n).toBe(1);
   });
   it("a pending token cannot be reserved; activation flips it once", async () => {
     await insertPendingToken(db.sql, pending());

@@ -12,4 +12,6 @@ export type AppDeps = {
   health: HealthTracker;
   facilitator: FacilitatorClient;
   masumi: MasumiPort | null;
+  /** The Cardano transaction hash inside an x402 payment payload, or null if it isn't one. Injected by tests. */
+  paymentTxHash?: (payload: Record<string, unknown>) => string | null;
 };

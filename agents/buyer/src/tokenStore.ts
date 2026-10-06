@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 
 export type StoredToken = { token: string; packId: string; credits: number; txHash: string | null; boughtAt: string };
 /** A signed pack payment whose settlement failed or timed out: presenting it to /recover re-issues the token. */
-export type PendingPayment = { packId: string; paymentSignature: string; at: string };
+export type PendingPayment = { packId: string; paymentSignature: string; recoverySecret: string; at: string };
 
 /** One JSON object per file, keyed by apiId, written atomically with owner-only permissions. */
 class JsonStore<T> {

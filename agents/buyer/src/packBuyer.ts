@@ -34,7 +34,7 @@ export async function runPackDemo(deps: PackDemoDeps, o: PackDemoOptions): Promi
     if (!saved) return null;
     deps.log(`Recovering the pack payment from ${saved.at} (its settlement timed out)...`);
     const url = `${o.gatewayUrl.replace(/\/+$/, "")}/a/${encodeURIComponent(o.apiId)}/packs/${encodeURIComponent(saved.packId)}/recover`;
-    const res = await deps.fetch(url, { method: "POST", headers: { "payment-signature": saved.paymentSignature, accept: "application/json" } });
+    const res = await deps.fetch(url, { method: "POST", headers: { "payment-signature": saved.paymentSignature, "x-hirakumi-recovery-secret": saved.recoverySecret, accept: "application/json" } });
     const body = (await res.json().catch(() => ({}))) as { token?: unknown; credits?: unknown; status?: unknown };
     if (res.status === 404) {
       deps.log("The gateway never received that payment, so nothing was paid. Buying a new pack.");
@@ -62,8 +62,8 @@ export async function runPackDemo(deps: PackDemoDeps, o: PackDemoOptions): Promi
     try {
       p = await deps.buyPack(pack.buyUrl);
     } catch (e) {
-      if (e instanceof PackPurchaseError && e.settlementFailed && e.paymentSignature) {
-        deps.pending.put(o.apiId, { packId: pack.packId, paymentSignature: e.paymentSignature, at: new Date(deps.now()).toISOString() });
+      if (e instanceof PackPurchaseError && e.settlementFailed && e.paymentSignature && e.recoverySecret) {
+        deps.pending.put(o.apiId, { packId: pack.packId, paymentSignature: e.paymentSignature, recoverySecret: e.recoverySecret, at: new Date(deps.now()).toISOString() });
         deps.log("The payment didn't confirm in time, but it may still land on-chain. It is saved: Run the same command again in a minute to recover your credits. You won't pay twice.");
       }
       throw e;

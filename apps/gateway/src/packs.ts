@@ -5,7 +5,8 @@ import { decodePaymentSignatureHeader } from "@x402/core/http";
 import { ExactCardanoScheme } from "@x402/cardano/exact/server";
 import { USDM_PREPROD_ASSET, decodeCardanoTransaction } from "@x402/cardano";
 import { jcs, newBearerToken, newId, sha256Hex } from "@hirakumi/core";
-import { activateTokenByPayment, insertPendingToken, rotateTokenByPayment, type PackRow } from "@hirakumi/db";
+import { timingSafeEqual } from "node:crypto";
+import { activateTokenByPayment, findTokenByTx, insertPendingToken, rotateTokenById, type PackRow } from "@hirakumi/db";
 import type { AppDeps } from "./deps";
 import { downBody, ruleUrl } from "./http";
 import { primaryRule, type LoadedApi } from "./registry";
@@ -16,6 +17,12 @@ const NETWORK = "cardano:preprod" as const;
 
 export function paymentPayloadHash(payload: unknown): string {
   return sha256Hex(jcs(payload));
+}
+
+const RECOVERY_HASH = /^[0-9a-f]{64}$/;
+
+function sameHex(a: string, b: string): boolean {
+  return a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 }
 
 function txHashOf(payload: Record<string, unknown>): string | null {
@@ -84,7 +91,7 @@ export function packRouter(d: AppDeps): Router {
         contentType: "application/json",
         body: { error: "settlement_failed", reason: result.errorReason, message:
           "The payment did not confirm in time, but it may still land on-chain. Do not pay again: POST the same " +
-          "PAYMENT-SIGNATURE to this URL + /recover to get your credit token (it works once the payment settles)." },
+          "PAYMENT-SIGNATURE and your X-Hirakumi-Recovery-Secret to this URL + /recover to get your credit token (it works once the payment settles)." },
       }),
     },
   };
@@ -113,15 +120,22 @@ export function packRouter(d: AppDeps): Router {
       const header = req.header("payment-signature") ?? req.header("x-payment");
       if (!header) { res.status(402).json({ error: "payment_required" }); return; }
       const payload = decodePaymentSignatureHeader(header);
+      // Audit C1: the transaction is the payment. A status >= 400 here cancels settlement.
+      const txHash = (d.paymentTxHash ?? txHashOf)(payload.payload);
+      if (!txHash) { res.status(400).json({ error: "unreadable_payment", message: "The payment is not a readable Cardano transaction." }); return; }
+      const recoveryHash = req.header("x-hirakumi-recovery")?.trim().toLowerCase() ?? null;
+      if (recoveryHash !== null && !RECOVERY_HASH.test(recoveryHash)) {
+        res.status(400).json({ error: "invalid_recovery_hash", message: "X-Hirakumi-Recovery must be the sha256 hex of your recovery secret." }); return;
+      }
       const token = newBearerToken();
       const ins = await insertPendingToken(d.sql, {
         id: newId("ct"), apiId: loaded.api.id, packId: pack.id, tokenHash: sha256Hex(token), remaining: pack.calls,
-        paymentPayloadHash: paymentPayloadHash(payload.payload), txHash: txHashOf(payload.payload),
+        paymentPayloadHash: paymentPayloadHash(payload.payload), txHash, recoveryHash,
       });
       if (!ins.inserted) {
         res.status(409).json({
           error: "payment_already_used", tokenId: ins.id,
-          message: "This payment already bought a credit token. If you never received it, POST the same PAYMENT-SIGNATURE to this URL + /recover.",
+          message: "This payment already bought a credit token. If you never received it, POST the same PAYMENT-SIGNATURE with X-Hirakumi-Recovery-Secret to this URL + /recover.",
         });
         return;
       }
@@ -141,12 +155,24 @@ export function packRouter(d: AppDeps): Router {
       if (!header) { res.status(400).json({ error: "payment_signature_required", message: "Send the same PAYMENT-SIGNATURE header you paid with." }); return; }
       let payload: ReturnType<typeof decodePaymentSignatureHeader>;
       try { payload = decodePaymentSignatureHeader(header); } catch { res.status(400).json({ error: "invalid_payment_signature" }); return; }
-      const token = newBearerToken();
-      const row = await rotateTokenByPayment(d.sql, req.params.apiId, paymentPayloadHash(payload.payload), sha256Hex(token));
+      const txHash = (d.paymentTxHash ?? txHashOf)(payload.payload);
+      const row = txHash ? await findTokenByTx(d.sql, req.params.apiId, txHash) : null;
       if (!row) { res.status(404).json({ error: "payment_not_found", message: "This API never received that payment." }); return; }
+      // Audit C2: the payment is public on-chain, so it proves nothing. Only the buyer's secret does.
+      const secret = req.header("x-hirakumi-recovery-secret") ?? "";
+      if (!row.recoveryHash || !secret || !sameHex(sha256Hex(secret), row.recoveryHash)) {
+        res.status(403).json({
+          error: "recovery_not_allowed",
+          message: "Recovery needs the secret whose sha256 you sent as X-Hirakumi-Recovery when you paid.",
+        });
+        return;
+      }
+      const token = newBearerToken();
+      const rotated = await rotateTokenById(d.sql, row.id, sha256Hex(token));
+      if (!rotated) { res.status(404).json({ error: "payment_not_found" }); return; }
       res.status(200).json({
-        token, status: row.status, credits: row.remaining, apiId: req.params.apiId, tokenId: row.id,
-        message: row.status === "pending"
+        token, status: rotated.status, credits: rotated.remaining, apiId: req.params.apiId, tokenId: rotated.id,
+        message: rotated.status === "pending"
           ? "Your payment is still being confirmed. This token starts working as soon as it settles."
           : "Here is a fresh token for your pack. Any earlier token for this payment no longer works.",
       });

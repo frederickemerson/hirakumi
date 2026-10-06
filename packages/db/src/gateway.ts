@@ -48,26 +48,41 @@ export type CreditStatus = "pending" | "active" | "exhausted" | "revoked";
 
 export async function insertPendingToken(
   sql: Sql,
-  t: { id: string; apiId: string; packId: string; tokenHash: string; remaining: number; paymentPayloadHash: string; txHash: string | null },
+  t: {
+    id: string; apiId: string; packId: string; tokenHash: string; remaining: number; paymentPayloadHash: string;
+    /** The Cardano transaction this payment is: one transaction buys at most one pack. */
+    txHash: string;
+    /** sha256 of a secret only the buyer holds; without it the pack can never be recovered. */
+    recoveryHash: string | null;
+  },
 ): Promise<{ inserted: true; id: string } | { inserted: false; id: string; status: CreditStatus }> {
   const rows = await sql<{ id: string }[]>`
-    insert into credit_tokens (id, api_id, pack_id, token_hash, status, remaining, payment_payload_hash, tx_hash)
-    values (${t.id}, ${t.apiId}, ${t.packId}, ${t.tokenHash}, 'pending', ${t.remaining}, ${t.paymentPayloadHash}, ${t.txHash})
-    on conflict (payment_payload_hash) do nothing
+    insert into credit_tokens (id, api_id, pack_id, token_hash, status, remaining, payment_payload_hash, tx_hash, recovery_hash)
+    values (${t.id}, ${t.apiId}, ${t.packId}, ${t.tokenHash}, 'pending', ${t.remaining}, ${t.paymentPayloadHash}, ${t.txHash}, ${t.recoveryHash})
+    on conflict do nothing
     returning id`;
   if (rows.length) return { inserted: true, id: rows[0].id };
   const [existing] = await sql<{ id: string; status: CreditStatus }[]>`
-    select id, status from credit_tokens where payment_payload_hash = ${t.paymentPayloadHash}`;
+    select id, status from credit_tokens
+    where payment_payload_hash = ${t.paymentPayloadHash} or (tx_hash = ${t.txHash} and status <> 'revoked')
+    order by created_at limit 1`;
   return { inserted: false, id: existing.id, status: existing.status };
 }
 
-/** Pack recovery: re-key the token bought by this exact signed payment. Revoked tokens stay revoked. */
-export async function rotateTokenByPayment(
-  sql: Sql, apiId: string, paymentPayloadHash: string, newTokenHash: string,
-): Promise<{ id: string; status: CreditStatus; remaining: number } | null> {
+export type RecoveryRow = { id: string; status: CreditStatus; remaining: number; recoveryHash: string | null };
+
+/** The live token bought by this Cardano transaction for this API, if any. */
+export async function findTokenByTx(sql: Sql, apiId: string, txHash: string): Promise<RecoveryRow | null> {
+  const [row] = await sql<{ id: string; status: CreditStatus; remaining: number; recovery_hash: string | null }[]>`
+    select id, status, remaining, recovery_hash from credit_tokens
+    where tx_hash = ${txHash} and api_id = ${apiId} and status <> 'revoked'`;
+  return row ? { id: row.id, status: row.status, remaining: row.remaining, recoveryHash: row.recovery_hash } : null;
+}
+
+/** Pack recovery: re-key a token whose owner already proved the recovery secret. */
+export async function rotateTokenById(sql: Sql, id: string, newTokenHash: string): Promise<{ id: string; status: CreditStatus; remaining: number } | null> {
   const [row] = await sql<{ id: string; status: CreditStatus; remaining: number }[]>`
-    update credit_tokens set token_hash = ${newTokenHash}
-    where payment_payload_hash = ${paymentPayloadHash} and api_id = ${apiId} and status <> 'revoked'
+    update credit_tokens set token_hash = ${newTokenHash} where id = ${id} and status <> 'revoked'
     returning id, status, remaining`;
   return row ?? null;
 }
@@ -75,7 +90,7 @@ export async function rotateTokenByPayment(
 export async function activateTokenByPayment(sql: Sql, paymentPayloadHash: string, txHash: string | null, payer: string | null): Promise<boolean> {
   const rows = await sql`
     update credit_tokens
-    set status = 'active', tx_hash = coalesce(${txHash}::text, tx_hash), payer = coalesce(${payer}::text, payer)
+    set status = 'active', tx_hash = coalesce(tx_hash, ${txHash}::text), payer = coalesce(${payer}::text, payer)
     where payment_payload_hash = ${paymentPayloadHash} and status = 'pending'
     returning id`;
   return rows.length === 1;

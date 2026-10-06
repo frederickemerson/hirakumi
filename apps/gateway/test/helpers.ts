@@ -117,6 +117,11 @@ export async function insertActiveToken(sql: Sql, s: Seeded, remaining = 100, st
   return { token, id };
 }
 
+/** Test stand-in for decoding a Cardano transaction: any string is a "transaction" except "unreadable". */
+export function fakeTxHash(transaction: string): string | null {
+  return transaction === "unreadable" ? null : sha256Hex(`tx:${transaction}`);
+}
+
 export class FakeFacilitator implements FacilitatorClient {
   settleMode: "success" | "fail" = "success";
   verifyCalls = 0;
@@ -125,12 +130,12 @@ export class FakeFacilitator implements FacilitatorClient {
     this.verifyCalls += 1;
     return { isValid: true, payer: "addr_test1qbuyer" };
   }
-  async settle(_p: PaymentPayload, r: PaymentRequirements): Promise<SettleResponse> {
+  async settle(p: PaymentPayload, r: PaymentRequirements): Promise<SettleResponse> {
     this.settleCalls += 1;
     if (this.settleMode === "fail") {
       return { success: false, errorReason: "exact_cardano_settlement_failed", transaction: "", network: r.network };
     }
-    return { success: true, transaction: "ab".repeat(32), network: r.network, payer: "addr_test1qbuyer" };
+    return { success: true, transaction: fakeTxHash(String((p.payload as { transaction?: unknown }).transaction)) ?? "", network: r.network, payer: "addr_test1qbuyer" };
   }
   async getSupported(): Promise<SupportedResponse> {
     return {
@@ -183,6 +188,7 @@ import { ApiRegistry } from "../src/registry";
 export type Harness = {
   db: TestDb; sql: Sql; stub: StubUpstream; seeded: Seeded; health: HealthTracker; registry: ApiRegistry;
   facilitator: FakeFacilitator; masumi: FakeMasumi; config: GatewayConfig; deps: AppDeps; app: Express;
+  txHashOf(transaction: string): string | null;
   close(): Promise<void>;
 };
 
@@ -197,10 +203,13 @@ export async function makeHarness(
   const registry = new ApiRegistry(db.sql, health);
   const facilitator = new FakeFacilitator();
   const masumi = new FakeMasumi();
-  const deps: AppDeps = { sql: db.sql, config, registry, health, facilitator, masumi };
+  const deps: AppDeps = {
+    sql: db.sql, config, registry, health, facilitator, masumi,
+    paymentTxHash: (payload) => fakeTxHash(String(payload.transaction)),
+  };
   const app = createApp(deps);
   return {
-    db, sql: db.sql, stub, seeded, health, registry, facilitator, masumi, config, deps, app,
+    db, sql: db.sql, stub, seeded, health, registry, facilitator, masumi, config, deps, app, txHashOf: fakeTxHash,
     async close() { await stub.close(); await db.drop(); },
   };
 }

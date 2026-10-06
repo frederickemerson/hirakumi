@@ -1,5 +1,6 @@
 import { x402Client, wrapFetchWithPayment, x402HTTPClient } from "@x402/fetch";
 import { encodePaymentSignatureHeader } from "@x402/core/http";
+import { createHash, randomBytes } from "node:crypto";
 import { toClientCardanoSigner, USDM_PREPROD_ASSET } from "@x402/cardano";
 import { ExactCardanoScheme } from "@x402/cardano/exact/client";
 import type { SpendControls } from "@x402/core/client";
@@ -24,8 +25,11 @@ export class SerialPayer {
 export type PackPurchase = { token: string; credits: number; apiId: string; txHash: string | null };
 
 export class PackPurchaseError extends Error {
-  /** paymentSignature: the signed payment that was sent, when one was; it can still settle on-chain. */
-  constructor(readonly status: number, readonly body: string, readonly paymentSignature: string | null = null) {
+  /**
+   * paymentSignature: the signed payment that was sent, when one was; it can still settle on-chain.
+   * recoverySecret: proves to /recover that this buyer made the payment (the payment itself is public).
+   */
+  constructor(readonly status: number, readonly body: string, readonly paymentSignature: string | null = null, readonly recoverySecret: string | null = null) {
     super(`Pack purchase failed: HTTP ${status} ${body.slice(0, 300)}`);
   }
   get settlementFailed(): boolean {
@@ -57,13 +61,18 @@ export function createPackPayer(cfg: { mnemonic: string; blockfrostProjectId: st
     buyPack(buyUrl: string): Promise<PackPurchase> {
       return serial.run(async () => {
         lastSignature = null;
+        // Only its hash travels with the payment; the secret stays here until a recovery needs it.
+        const recoverySecret = randomBytes(32).toString("base64url");
         const res = await payFetch(buyUrl, {
           method: "POST",
-          headers: { "content-type": "application/json", accept: "application/json" },
+          headers: {
+            "content-type": "application/json", accept: "application/json",
+            "x-hirakumi-recovery": createHash("sha256").update(recoverySecret).digest("hex"),
+          },
           body: "{}",
         });
         const text = await res.text();
-        if (!res.ok) throw new PackPurchaseError(res.status, text, lastSignature);
+        if (!res.ok) throw new PackPurchaseError(res.status, text, lastSignature, recoverySecret);
         const body = JSON.parse(text) as { token?: unknown; credits?: unknown; apiId?: unknown };
         if (typeof body.token !== "string" || typeof body.credits !== "number" || typeof body.apiId !== "string") {
           throw new PackPurchaseError(res.status, text);

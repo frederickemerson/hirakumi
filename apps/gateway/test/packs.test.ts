@@ -3,6 +3,7 @@ import request from "supertest";
 import { USDM_PREPROD_ASSET } from "@x402/cardano";
 import { decodePaymentRequiredHeader, encodePaymentSignatureHeader } from "@x402/core/http";
 import { activateTokenByPayment } from "@hirakumi/db";
+import { sha256Hex } from "@hirakumi/core";
 import { makeHarness, type Harness } from "./helpers";
 
 let h: Harness;
@@ -17,13 +18,17 @@ async function offer() {
   const required = decodePaymentRequiredHeader(String(unpaid.headers["payment-required"]));
   return { unpaid, required, accepted: required.accepts[0] };
 }
-async function pay(nonce = "nonce-1") {
+const SECRET = "buyer-only-recovery-secret-0123456789";
+async function pay(nonce = "nonce-1", o: { transaction?: string; recoverySecret?: string | null } = {}) {
   const { required, accepted } = await offer();
   const header = encodePaymentSignatureHeader({
     x402Version: required.x402Version, resource: required.resource, accepted,
-    payload: { transaction: "dGVzdA==", nonce },
+    payload: { transaction: o.transaction ?? `tx-for-${nonce}`, nonce },
   });
-  return { header, res: await request(h.app).post(packPath()).set("PAYMENT-SIGNATURE", header) };
+  const req = request(h.app).post(packPath()).set("PAYMENT-SIGNATURE", header);
+  const secret = o.recoverySecret === undefined ? SECRET : o.recoverySecret;
+  if (secret) req.set("x-hirakumi-recovery", sha256Hex(secret));
+  return { header, res: await req };
 }
 const tokens = () => h.sql<{ status: string; remaining: number; tx_hash: string | null; payer: string | null }[]>`
   select status, remaining, tx_hash, payer from credit_tokens`;
@@ -57,7 +62,7 @@ describe("pack purchase", () => {
     expect(res.body).toMatchObject({ credits: 100, apiId: h.seeded.apiId });
     expect(res.body.token).toMatch(/^hk_[A-Za-z0-9_-]{43}$/);
     expect(h.facilitator.settleCalls).toBe(1);
-    expect(await tokens()).toEqual([{ status: "active", remaining: 100, tx_hash: "ab".repeat(32), payer: "addr_test1qbuyer" }]);
+    expect(await tokens()).toEqual([{ status: "active", remaining: 100, tx_hash: h.txHashOf("tx-for-nonce-1"), payer: "addr_test1qbuyer" }]);
     const call = await request(h.app).get(`/a/${h.seeded.apiId}/x/getPrice?symbol=ADA`).set("authorization", `Bearer ${res.body.token}`);
     expect(call.status).toBe(200);
     expect(call.headers["x-credits-remaining"]).toBe("99");
@@ -69,7 +74,8 @@ describe("pack purchase", () => {
     expect(res.body.token).toBeUndefined();
     expect(res.body.message).toContain("/recover");
     expect(res.body.message).not.toContain("No credits were issued");
-    expect(await tokens()).toEqual([{ status: "pending", remaining: 100, tx_hash: null, payer: null }]);
+    // The transaction is known from the payment itself (audit C1), even though settlement failed.
+    expect(await tokens()).toEqual([{ status: "pending", remaining: 100, tx_hash: h.txHashOf("tx-for-nonce-1"), payer: null }]);
   });
   it("a replayed payment gets 409, mints no second token and is not settled twice", async () => {
     const first = await pay("same");
@@ -88,7 +94,7 @@ describe("pack recovery (review I1: settlement failed or unknown, buyer never sa
     h.facilitator.settleMode = "fail";
     const { header, res } = await pay();
     expect(res.status).toBe(402);
-    const rec = await request(h.app).post(recoverPath()).set("PAYMENT-SIGNATURE", header);
+    const rec = await request(h.app).post(recoverPath()).set("PAYMENT-SIGNATURE", header).set("x-hirakumi-recovery-secret", SECRET);
     expect(rec.status).toBe(200);
     expect(rec.body).toMatchObject({ status: "pending", credits: 100, apiId: h.seeded.apiId });
     expect(rec.body.token).toMatch(/^hk_[A-Za-z0-9_-]{43}$/);
@@ -107,7 +113,7 @@ describe("pack recovery (review I1: settlement failed or unknown, buyer never sa
     expect(res.status).toBe(200);
     const used = await request(h.app).get(`/a/${h.seeded.apiId}/x/getPrice?symbol=ADA`).set("authorization", `Bearer ${res.body.token}`);
     expect(used.status).toBe(200);
-    const rec = await request(h.app).post(recoverPath()).set("PAYMENT-SIGNATURE", header);
+    const rec = await request(h.app).post(recoverPath()).set("PAYMENT-SIGNATURE", header).set("x-hirakumi-recovery-secret", SECRET);
     expect(rec.status).toBe(200);
     expect(rec.body).toMatchObject({ status: "active", credits: 99 });
     const old = await request(h.app).get(`/a/${h.seeded.apiId}/x/getPrice?symbol=ADA`).set("authorization", `Bearer ${res.body.token}`);
@@ -116,7 +122,49 @@ describe("pack recovery (review I1: settlement failed or unknown, buyer never sa
   it("answers 404 for a payment it never saw and 400 without a signature", async () => {
     const { required, accepted } = await offer();
     const unknown = encodePaymentSignatureHeader({ x402Version: required.x402Version, resource: required.resource, accepted, payload: { transaction: "bm9wZQ==", nonce: "never" } });
-    expect((await request(h.app).post(recoverPath()).set("PAYMENT-SIGNATURE", unknown)).status).toBe(404);
+    expect((await request(h.app).post(recoverPath()).set("PAYMENT-SIGNATURE", unknown).set("x-hirakumi-recovery-secret", SECRET)).status).toBe(404);
     expect((await request(h.app).post(recoverPath())).status).toBe(400);
+  });
+});
+
+describe("payment identity is the Cardano transaction (audit C1)", () => {
+  it("one transaction buys one pack: a payload variant of the same transaction gets 409 and mints nothing", async () => {
+    expect((await pay("abcd#0", { transaction: "same-tx" })).res.status).toBe(200);
+    const variant = await pay("ABCD#0", { transaction: "same-tx" });
+    expect(variant.res.status).toBe(409);
+    expect(variant.res.body.error).toBe("payment_already_used");
+    expect(await tokens()).toHaveLength(1);
+    expect(h.facilitator.settleCalls).toBe(1);
+  });
+  it("a payment that is not a readable Cardano transaction is refused and never settled", async () => {
+    const r = await pay("n", { transaction: "unreadable" });
+    expect(r.res.status).toBe(400);
+    expect(await tokens()).toHaveLength(0);
+    expect(h.facilitator.settleCalls).toBe(0);
+  });
+});
+
+describe("recovery needs the buyer's secret (audit C2: payment data is public on-chain)", () => {
+  const recoverPath = () => `${packPath()}/recover`;
+  it("refuses recovery without the secret or with a wrong one, and the buyer's token keeps working", async () => {
+    const { header, res } = await pay("n-c2");
+    expect(res.status).toBe(200);
+    expect((await request(h.app).post(recoverPath()).set("PAYMENT-SIGNATURE", header)).status).toBe(403);
+    expect((await request(h.app).post(recoverPath()).set("PAYMENT-SIGNATURE", header).set("x-hirakumi-recovery-secret", "guess")).status).toBe(403);
+    const call = await request(h.app).get(`/a/${h.seeded.apiId}/x/getPrice?symbol=ADA`).set("authorization", `Bearer ${res.body.token}`);
+    expect(call.status).toBe(200);
+  });
+  it("a pack bought without a recovery hash can never be recovered", async () => {
+    const { header, res } = await pay("n-none", { recoverySecret: null });
+    expect(res.status).toBe(200);
+    expect((await request(h.app).post(recoverPath()).set("PAYMENT-SIGNATURE", header).set("x-hirakumi-recovery-secret", SECRET)).status).toBe(403);
+  });
+  it("finds the payment by its transaction, so a re-encoded signature of the same payment still recovers with the secret", async () => {
+    h.facilitator.settleMode = "fail";
+    await pay("abcd#1", { transaction: "tx-variant" });
+    const { required, accepted } = await offer();
+    const variant = encodePaymentSignatureHeader({ x402Version: required.x402Version, resource: required.resource, accepted, payload: { transaction: "tx-variant", nonce: "ABCD#1" } });
+    const rec = await request(h.app).post(recoverPath()).set("PAYMENT-SIGNATURE", variant).set("x-hirakumi-recovery-secret", SECRET);
+    expect(rec.status).toBe(200);
   });
 });
