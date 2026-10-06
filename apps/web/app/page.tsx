@@ -185,16 +185,16 @@ export default function Home() {
         </Reveal>
         <Reveal stagger={0.12} className="mt-10 grid gap-6 lg:grid-cols-[1fr_1.2fr] lg:gap-8">
           <div data-reveal className="min-w-0 rounded-[2px] border-2 border-ink bg-ink p-5 text-body text-cream sm:p-6">
-            <p className="mb-3 text-caption uppercase tracking-[0.06em] text-pencil">promise for GET /price</p>
+            <p className="mb-3 text-caption uppercase tracking-[0.06em] text-pencil">promise for GET /price (excerpt from the demo API)</p>
             <pre className="overflow-x-auto whitespace-pre text-sky">{`{
-  "price": { "type": "number" },
-  "last_updated": {
+  "usd": { "type": "number" },
+  "timestamp": {
     "type": "string",
     "maxAgeSeconds": 900
   }
 }`}</pre>
             <p className="mt-4 border-t border-graphite pt-3 text-silver">
-              In plain English: the response has a number <span className="text-cream">price</span> and a <span className="text-cream">last_updated</span> time under 5 minutes old.
+              In plain English: the response has a number <span className="text-cream">usd</span> and a <span className="text-cream">timestamp</span> no more than 15 minutes old.
             </p>
           </div>
           <div data-reveal className="min-w-0 rounded-[2px] border-2 border-ink bg-frost p-5 sm:p-6">
@@ -205,7 +205,7 @@ export default function Home() {
                 <Badge variant="mint" className="ml-auto">pass</Badge><span className="w-24 text-right tabular-nums">credit −1</span>
               </li>
               <li className="flex flex-wrap items-center gap-x-4 gap-y-1 py-3">
-                <span className="font-medium">GET /price</span><span className="text-graphite">200, 7 min old</span>
+                <span className="font-medium">GET /price</span><span className="text-graphite">200, 1 h old</span>
                 <Badge className="ml-auto">422 stale</Badge><span className="w-24 text-right tabular-nums">credit 0</span>
               </li>
               <li className="flex flex-wrap items-center gap-x-4 gap-y-1 py-3">
@@ -231,7 +231,7 @@ export default function Home() {
             <SectionTitle>Status that tells the truth</SectionTitle>
             <ul className="mt-6 space-y-4 text-body-lg">
               <li className="flex gap-3"><ArrowDoodle className="mt-1 h-4 shrink-0" /><span><span className="font-medium">/availability</span> answers 503 when your API is down, so agents stop before they pay.</span></li>
-              <li className="flex gap-3"><ArrowDoodle className="mt-1 h-4 shrink-0" /><span>You get an alert in Sokosumi the moment a check fails.</span></li>
+              <li className="flex gap-3"><ArrowDoodle className="mt-1 h-4 shrink-0" /><span>You get an alert in Sokosumi when your API goes Down (after repeated failed checks), and again when it recovers.</span></li>
               <li className="flex gap-3"><ArrowDoodle className="mt-1 h-4 shrink-0" /><span>A public status page shows a 24-hour uptime strip, the paid pass rate and typical latency.</span></li>
             </ul>
             <div className="mt-8 flex flex-col gap-4 sm:flex-row">

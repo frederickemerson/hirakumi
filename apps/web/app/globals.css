@@ -40,7 +40,7 @@
   --color-notebook: #f9fbe7;
   --color-ink: #383838;
   --color-pencil: #a1a1a1;
-  --color-graphite: #818181;
+  --color-graphite: #6b6b6b; /* #818181 failed WCAG AA (3.9:1 on white); this is 5.3:1 */
   --color-silver: #c0c0c0;
   --color-sky: #6fc2ff;
   --color-canary: #ffde00;

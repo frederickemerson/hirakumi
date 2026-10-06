@@ -31,8 +31,8 @@ const PANES: { tab: string; title: string; lines: Line[] }[] = [
     title: "review and price",
     lines: [
       { kind: "out", text: "test-calling GET /price, 5 times …" },
-      { kind: "code", text: '"price": { "type": "number" }' },
-      { kind: "code", text: '"last_updated": { "maxAgeSeconds": 900 }' },
+      { kind: "code", text: '"usd": { "type": "number" }' },
+      { kind: "code", text: '"timestamp": { "maxAgeSeconds": 900 }' },
       { kind: "out", text: "you approve: 100 credits for 2.00 tUSDM" },
       { kind: "ok", text: "registered on Masumi, NFT minted on preprod" },
     ],
@@ -43,7 +43,7 @@ const PANES: { tab: string; title: string; lines: Line[] }[] = [
     lines: [
       { kind: "ok", text: "pack bought: 2.00 tUSDM to your wallet, settled in 16.5 s" },
       { kind: "call", method: "GET /price", result: "200, fresh", verdict: "PASS", credit: "−1", creditsAfter: 99 },
-      { kind: "call", method: "GET /price", result: "200, 7 min old", verdict: "422", credit: "0", creditsAfter: 99 },
+      { kind: "call", method: "GET /price", result: "200, 1 h old", verdict: "422", credit: "0", creditsAfter: 99 },
       { kind: "call", method: "GET /price", result: "200, fresh", verdict: "PASS", credit: "−1", creditsAfter: 98 },
     ],
   },
