@@ -172,3 +172,35 @@ export function testConfig(over: Partial<GatewayConfig> = {}): GatewayConfig {
     ...over,
   };
 }
+// ---- appended in Task 8 ----
+import type { Express } from "express";
+import { createTestDb, type TestDb } from "@hirakumi/db/testing";
+import { createApp } from "../src/app";
+import type { AppDeps } from "../src/deps";
+import { HealthTracker } from "../src/health";
+import { ApiRegistry } from "../src/registry";
+
+export type Harness = {
+  db: TestDb; sql: Sql; stub: StubUpstream; seeded: Seeded; health: HealthTracker; registry: ApiRegistry;
+  facilitator: FakeFacilitator; masumi: FakeMasumi; config: GatewayConfig; deps: AppDeps; app: Express;
+  close(): Promise<void>;
+};
+
+export async function makeHarness(
+  opts: { config?: Partial<GatewayConfig>; seed?: Parameters<typeof seedLiveApi>[2] } = {},
+): Promise<Harness> {
+  const db = await createTestDb();
+  const stub = await startStubUpstream();
+  const seeded = await seedLiveApi(db.sql, stub.origin, opts.seed);
+  const config = testConfig(opts.config);
+  const health = new HealthTracker(config.thresholds);
+  const registry = new ApiRegistry(db.sql, health);
+  const facilitator = new FakeFacilitator();
+  const masumi = new FakeMasumi();
+  const deps: AppDeps = { sql: db.sql, config, registry, health, facilitator, masumi };
+  const app = createApp(deps);
+  return {
+    db, sql: db.sql, stub, seeded, health, registry, facilitator, masumi, config, deps, app,
+    async close() { await stub.close(); await db.drop(); },
+  };
+}
