@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { WALLETS_CHANGED } from "@/components/phone-wallet-connect";
 import { isMobileBrowser, listWallets, sameWallets, type WalletInfo } from "@/lib/wallet-client";
 
 const LOOK_EVERY_MS = 300;
@@ -26,7 +27,16 @@ export function useWallets(): WalletInfo[] | null {
       look();
       if (Date.now() - startedAt >= LOOK_FOR_MS) clearInterval(t);
     }, LOOK_EVERY_MS);
-    return () => clearInterval(t);
+    // A phone wallet (CIP-45) can appear long after the initial search window.
+    const onChange = () => {
+      const found = listWallets();
+      setWallets((prev) => (sameWallets(prev, found) ? prev : found));
+    };
+    window.addEventListener(WALLETS_CHANGED, onChange);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener(WALLETS_CHANGED, onChange);
+    };
   }, []);
   return wallets;
 }
@@ -86,7 +96,7 @@ export function GetAWallet() {
 export function MobileNote() {
   return (
     <p className="rounded-[2px] border-2 border-ink bg-canary p-3 text-body">
-      Cardano wallet extensions need a desktop browser for now. Open this page on a computer to sign in.
+      On a phone, open this page in your wallet app's built-in browser (Eternl and Vespr have one). On a computer, you can also scan a QR code with your phone wallet.
     </p>
   );
 }

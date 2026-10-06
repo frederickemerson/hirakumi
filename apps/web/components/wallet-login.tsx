@@ -6,6 +6,7 @@ import { Elapsed } from "@/components/elapsed";
 import { InlineError, InlineStatus } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PhoneWalletConnect } from "@/components/phone-wallet-connect";
 import { GetAWallet, MobileNote, useIsMobile, useWallets, WalletIcon } from "@/components/wallet-picker";
 import { postJson } from "@/lib/client-fetch";
 import { startRouteProgress } from "@/lib/route-progress";
@@ -80,6 +81,7 @@ export function WalletLogin({ next }: { next: string }) {
     return (
       <div className="space-y-4">
         {mobile && <MobileNote />}
+        {!mobile && <PhoneWalletConnect onConnected={(id) => void signIn(id)} />}
         <GetAWallet />
       </div>
     );
@@ -104,6 +106,7 @@ export function WalletLogin({ next }: { next: string }) {
           </li>
         ))}
       </ul>
+      {!mobile && <PhoneWalletConnect onConnected={(id) => void signIn(id)} />}
       {phase.kind === "working" && (
         <InlineStatus busy>
           {phase.text} <Elapsed prefix=" " className="text-graphite" />

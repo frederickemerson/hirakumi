@@ -6,6 +6,7 @@ import { Elapsed } from "@/components/elapsed";
 import { InlineError, InlineStatus } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PhoneWalletConnect } from "@/components/phone-wallet-connect";
 import { GetAWallet, useWallets, WalletIcon } from "@/components/wallet-picker";
 import { postJson, RequestError } from "@/lib/client-fetch";
 import { startRouteProgress } from "@/lib/route-progress";
@@ -163,7 +164,10 @@ export function OwnershipPanel({ apiId, fileUrl, initiallyPassed, challengeExpir
               <Skeleton className="h-11 w-44" />
             </div>
           ) : wallets.length === 0 ? (
-            <GetAWallet />
+            <div className="space-y-3">
+              {passed && !signed && <PhoneWalletConnect onConnected={(id) => runSign(id)} />}
+              <GetAWallet />
+            </div>
           ) : (
             <div className="flex flex-wrap gap-4">
               {wallets.map((w) => (
@@ -172,6 +176,7 @@ export function OwnershipPanel({ apiId, fileUrl, initiallyPassed, challengeExpir
                   Sign with {w.name}
                 </Button>
               ))}
+              {passed && !signed && <PhoneWalletConnect onConnected={(id) => runSign(id)} />}
             </div>
           )}
           {sign.kind === "working" && (

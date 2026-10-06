@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@base-ui/react": "1.8.0",
+    "@fabianbormann/cardano-peer-connect": "1.2.21",
     "@gsap/react": "2.1.2",
     "@hirakumi/core": "workspace:*",
     "@meshsdk/core-cst": "1.9.1",
