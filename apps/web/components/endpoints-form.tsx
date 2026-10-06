@@ -2,11 +2,14 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { InlineError } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { postJson, RequestError } from "@/lib/client-fetch";
 import { needsNoSideEffectConfirmation, validateEndpointSelection, type EndpointSelection } from "@/lib/endpoints";
+import { startRouteProgress } from "@/lib/route-progress";
 import type { Operation } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 function withItem(set: Set<string>, id: string, on: boolean): Set<string> {
   const next = new Set(set);
@@ -47,43 +50,43 @@ export function EndpointsForm({ apiId, operations, initialEscrowOpId }: {
     setError(null);
     try {
       await postJson(`/api/apis/${apiId}/endpoints`, selection);
+      startRouteProgress();
       router.push(`/apis/${apiId}/ownership`);
     } catch (e) {
       setError(e instanceof RequestError ? e.message : "Something went wrong. Try again.");
-    } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div className="space-y-6">
-      <p className="text-sm text-muted-foreground">
+    <div className="space-y-6" aria-busy={busy || undefined}>
+      <p className="text-body-lg">
         Every endpoint starts blocked. Tick the ones agents may buy. Only sell endpoints that read data and change nothing.
       </p>
-      <ul className="divide-y rounded-lg border">
+      <ul className="divide-y-2 divide-ink rounded-[2px] border-2 border-ink bg-frost">
         {operations.map((op) => {
           const label = `${op.method.toUpperCase()} ${op.path}`;
           const isOn = enabled.has(op.id);
           return (
-            <li key={op.id} className="space-y-2 p-4">
-              <label className="flex items-center gap-3">
-                <input type="checkbox" aria-label={`Sell ${label}`} checked={isOn}
+            <li key={op.id} className={cn("space-y-3 p-4 transition-colors sm:p-5", isOn && "bg-notebook")}>
+              <label className="flex cursor-pointer items-center gap-3">
+                <input type="checkbox" aria-label={`Sell ${label}`} checked={isOn} disabled={busy}
                   onChange={(e) => toggleEnabled(op.id, e.target.checked)} />
-                <Badge variant="outline">{op.method.toUpperCase()}</Badge>
-                <code>{op.path}</code>
+                <Badge variant={op.method.toUpperCase() === "GET" ? "sky" : "secondary"}>{op.method.toUpperCase()}</Badge>
+                <code className="text-body-lg">{op.path}</code>
               </label>
-              <p className="text-sm text-muted-foreground">{op.description ?? "No description yet."}</p>
-              {op.sideEffectsLikely && <p className="text-sm text-amber-700">This might change data on your server.</p>}
+              <p className="text-body text-graphite">{op.description ?? "No description yet."}</p>
+              {op.sideEffectsLikely && <p className="border-l-4 border-bill pl-3 text-body">This might change data on your server.</p>}
               {isOn && needsNoSideEffectConfirmation(op) && (
-                <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" aria-label={`${label} changes nothing on my server`} checked={confirmed.has(op.id)}
+                <label className="flex cursor-pointer items-center gap-2 text-body">
+                  <input type="checkbox" aria-label={`${label} changes nothing on my server`} checked={confirmed.has(op.id)} disabled={busy}
                     onChange={(e) => setConfirmed((prev) => withItem(prev, op.id, e.target.checked))} />
                   I confirm this endpoint changes nothing on my server.
                 </label>
               )}
               {isOn && (
-                <label className="flex items-center gap-2 text-sm">
-                  <input type="radio" name="escrow-op" aria-label={`Use ${label} for per-job hires`} checked={escrow === op.id}
+                <label className="flex cursor-pointer items-center gap-2 text-body">
+                  <input type="radio" name="escrow-op" aria-label={`Use ${label} for per-job hires`} checked={escrow === op.id} disabled={busy}
                     onChange={() => setEscrow(op.id)} />
                   Use this endpoint for per-job hires (Masumi escrow).
                 </label>
@@ -92,9 +95,9 @@ export function EndpointsForm({ apiId, operations, initialEscrowOpId }: {
           );
         })}
       </ul>
-      {problem && <p className="text-sm text-muted-foreground">{problem}</p>}
-      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-      <Button disabled={problem !== null || busy} onClick={submit}>{busy ? "Saving…" : "Confirm endpoints"}</Button>
+      {problem && <p className="text-body text-graphite">{problem}</p>}
+      {error && <InlineError>{error}</InlineError>}
+      <Button disabled={problem !== null} pending={busy} pendingLabel="Saving your choice…" onClick={submit}>Confirm endpoints</Button>
     </div>
   );
 }
