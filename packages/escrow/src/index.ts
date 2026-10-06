@@ -1,6 +1,7 @@
 export { PACK_ESCROW } from "./blueprint.js";
 export {
   MAX_CLOSE_FEE_BUDGET,
+  MAX_CLOSE_WINDOW_MS,
   MAX_CONTEST_PERIOD_MS,
   MAX_FEE_BPS,
   MIN_CLOSE_FEE_BUDGET,
@@ -12,7 +13,17 @@ export {
   type PackDatum,
   type Stage,
 } from "./datum.js";
-export { newReceiptKey, parseIouHeader, receiptMessage, signReceipt, verifyReceipt } from "./iou.js";
+export {
+  closeRequestMessage,
+  isValidReceiptKey,
+  newReceiptKey,
+  parseIouHeader,
+  receiptMessage,
+  signCloseRequest,
+  signReceipt,
+  verifyCloseRequest,
+  verifyReceipt,
+} from "./iou.js";
 export { deriveChannelId } from "./channelId.js";
 export { closePayouts, settleObligations, type Obligation, type Payouts } from "./payouts.js";
 export { parseAddress, type Credential, type ParsedAddress } from "./address.js";

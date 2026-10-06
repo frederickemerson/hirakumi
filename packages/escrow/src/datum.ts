@@ -4,6 +4,7 @@ import * as Data from "@evolution-sdk/evolution/Data";
 import { addressFromData, addressToData, parseAddress } from "./address.js";
 import { PACK_ESCROW } from "./blueprint.js";
 import { hexOf, toHex } from "./hex.js";
+import { isValidReceiptKey } from "./iou.js";
 
 export type Stage = { kind: "open" } | { kind: "closing"; accepted: bigint; contestEnd: bigint /* POSIX ms */ };
 
@@ -106,6 +107,8 @@ export const MAX_FEE_BPS = 1000n;
 export const MIN_CLOSE_FEE_BUDGET = 500_000n;
 /** Caps what the buyer can be charged for the Settle fee. */
 export const MAX_CLOSE_FEE_BUDGET = 2_000_000n;
+/** Mirrors the validator's `max_close_window`: a Close tx's validity range may span at most this. */
+export const MAX_CLOSE_WINDOW_MS = 3_600_000n;
 
 function payoutAddress(name: string, bech32: string): void {
   const a = parseAddress(name, bech32);
@@ -126,6 +129,7 @@ function payoutAddress(name: string, bech32: string): void {
 export function validateDatumForLock(d: PackDatum, lock: { priceMicros: bigint }): void {
   hexOf("channelId", d.channelId, 32);
   hexOf("receiptKey", d.receiptKey, 32);
+  if (!isValidReceiptKey(d.receiptKey)) throw new Error("receiptKey is not a usable ed25519 key");
   hexOf("ruleHash", d.ruleHash, 32);
   hexOf("closer", d.closer, 28);
   hexOf("policyId", d.policyId, 28);
