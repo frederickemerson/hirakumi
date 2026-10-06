@@ -3,6 +3,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { isSupportedSymbol, PriceUnavailableError, SUPPORTED_SYMBOLS, type PriceSource } from "./priceSource.js";
 import { isBreakMode, BREAK_MODES, type BreakMode, type ModeStore } from "./modeStore.js";
 import { buildOpenApi } from "./openapi.js";
+import { latestCode } from "./challenge.js";
 
 export const STALE_AGE_MS = 3_600_000;
 
@@ -11,7 +12,8 @@ export type AppDeps = {
   modes: ModeStore;
   now: () => number;
   adminToken: string | undefined;
-  challenges: Record<string, string>;
+  /** Hirakumi ownership codes by API id; the latest one set is served in /openapi.json (see challenge.ts). */
+  verifyCodes: Record<string, string>;
   publicUrl: string;
   log: (msg: string, err?: unknown) => void;
 };
@@ -45,7 +47,8 @@ export function createApp(deps: AppDeps): Express {
   });
 
   app.get("/openapi.json", (_req, res) => {
-    res.json(buildOpenApi(deps.publicUrl));
+    // no-store: Hirakumi must see a newly set code on its next check.
+    res.set("Cache-Control", "no-store").json(buildOpenApi(deps.publicUrl, latestCode(deps.verifyCodes)));
   });
 
   app.get("/price", async (req, res) => {
@@ -87,31 +90,23 @@ export function createApp(deps: AppDeps): Express {
     res.json({ mode });
   });
 
-  // Demo stand-in for "upload the file to your server": the seller (or the demo operator) sets the
-  // ownership challenge without a redeploy. Kept in memory; restarts fall back to HIRAKUMI_CHALLENGE.
+  // Demo stand-in for "add x-hirakumi-verify to your OpenAPI file": the demo operator sets the API's code
+  // (shown on Hirakumi's ownership page) without a redeploy. The latest code set is the one /openapi.json
+  // serves. Kept in memory; restarts fall back to HIRAKUMI_CHALLENGE.
   app.put("/admin/challenge/:apiId", requireAdmin, express.text({ limit: "1kb", type: "*/*" }), (req, res) => {
     const apiId = String(req.params.apiId);
-    const token = typeof req.body === "string" ? req.body.trim() : "";
-    if (!/^api_[A-Za-z0-9]+$/.test(apiId) || !token) {
-      res.status(400).json({ error: "bad_request", message: "PUT /admin/challenge/api_xxx with the file contents as text/plain" });
+    const code = typeof req.body === "string" ? req.body.trim() : "";
+    if (!/^api_[A-Za-z0-9]+$/.test(apiId) || !code) {
+      res.status(400).json({ error: "bad_request", message: "PUT /admin/challenge/api_xxx with the verification code (hkv_...) as text/plain" });
       return;
     }
-    deps.challenges[apiId] = token;
+    delete deps.verifyCodes[apiId]; // re-insert so this code becomes the latest
+    deps.verifyCodes[apiId] = code;
     res.status(204).end();
   });
 
   app.get("/admin/break", requireAdmin, async (_req, res) => {
     res.json({ mode: await deps.modes.get(), store: deps.modes.kind });
-  });
-
-  app.get("/.well-known/hirakumi/:file", (req, res) => {
-    const m = /^(api_[A-Za-z0-9]+)\.txt$/.exec(req.params.file);
-    const apiId = m?.[1];
-    if (!apiId || !Object.hasOwn(deps.challenges, apiId)) {
-      res.status(404).type("text/plain").send("not found");
-      return;
-    }
-    res.set("Cache-Control", "no-store").type("text/plain; charset=utf-8").send(deps.challenges[apiId]);
   });
 
   app.use((_req, res) => {

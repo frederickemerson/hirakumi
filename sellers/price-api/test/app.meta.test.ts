@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import request from "supertest";
 import { ADMIN, makeApp } from "./helpers.js";
 import { buildOpenApi } from "../src/openapi.js";
-import { parseChallenges } from "../src/challenge.js";
+import { latestCode, parseChallenges } from "../src/challenge.js";
 
 describe("openapi.json", () => {
   it("is OpenAPI 3.1 with getPrice, examples and a response schema", async () => {
@@ -32,39 +32,49 @@ describe("openapi.json", () => {
   });
 });
 
-describe("ownership challenge", () => {
-  const challenges = { api_abc123: "hk-challenge-token-xyz" };
+describe("ownership: x-hirakumi-verify in /openapi.json", () => {
+  const auth = { authorization: `Bearer ${ADMIN}` };
 
-  it("serves the token byte-exact as text/plain", async () => {
-    const res = await request(makeApp({ challenges })).get("/.well-known/hirakumi/api_abc123.txt");
-    expect(res.status).toBe(200);
-    expect(res.headers["content-type"]).toMatch(/^text\/plain/);
-    expect(res.text).toBe("hk-challenge-token-xyz");
+  it("has no field until a code is set, and no /.well-known file at all", async () => {
+    const app = makeApp({ verifyCodes: {} });
+    const res = await request(app).get("/openapi.json");
+    expect(res.body).not.toHaveProperty("x-hirakumi-verify");
+    expect((await request(app).get("/.well-known/hirakumi/api_abc123.txt")).status).toBe(404);
+  });
+
+  it("serves the code from HIRAKUMI_CHALLENGE at the root of the spec", async () => {
+    const res = await request(makeApp({ verifyCodes: { api_abc123: "hkv_one" } })).get("/openapi.json");
+    expect(res.body["x-hirakumi-verify"]).toBe("hkv_one");
     expect(res.headers["cache-control"]).toBe("no-store");
   });
 
-  it("the seller can upload a challenge file through the admin API (demo stand-in for uploading it to their server)", async () => {
-    const app = makeApp({ challenges: {} });
-    const auth = { authorization: `Bearer ${ADMIN}` };
-    expect((await request(app).put("/admin/challenge/api_new1").set(auth).type("text/plain").send("tok-123")).status).toBe(204);
-    const got = await request(app).get("/.well-known/hirakumi/api_new1.txt");
-    expect(got.status).toBe(200);
-    expect(got.text).toBe("tok-123");
+  it("the admin route sets a code; the latest one set is served (one spec carries one code)", async () => {
+    const app = makeApp({ verifyCodes: { api_old1: "hkv_old" } });
+    const put = (id: string, code: string) => request(app).put(`/admin/challenge/${id}`).set(auth).type("text/plain").send(code);
+    const served = async () => (await request(app).get("/openapi.json")).body["x-hirakumi-verify"];
+    expect((await put("api_new1", "hkv_new1")).status).toBe(204);
+    expect(await served()).toBe("hkv_new1");
+    expect((await put("api_new2", "hkv_new2")).status).toBe(204);
+    expect(await served()).toBe("hkv_new2");
+    // Setting an older API's code again makes it the latest.
+    expect((await put("api_new1", "hkv_new1")).status).toBe(204);
+    expect(await served()).toBe("hkv_new1");
+  });
+
+  it("the admin route needs the token and a valid api id and code", async () => {
+    const app = makeApp({ verifyCodes: {} });
     expect((await request(app).put("/admin/challenge/api_new1").type("text/plain").send("x")).status).toBe(401);
     expect((await request(app).put("/admin/challenge/__proto__").set(auth).type("text/plain").send("x")).status).toBe(400);
     expect((await request(app).put("/admin/challenge/api_new2").set(auth).type("text/plain").send("")).status).toBe(400);
+    expect((await request(app).get("/openapi.json")).body).not.toHaveProperty("x-hirakumi-verify");
   });
 
-  it("404s for unknown ids and non-api names", async () => {
-    const app = makeApp({ challenges });
-    expect((await request(app).get("/.well-known/hirakumi/api_other.txt")).status).toBe(404);
-    expect((await request(app).get("/.well-known/hirakumi/__proto__.txt")).status).toBe(404);
-    expect((await request(app).get("/.well-known/hirakumi/api_abc123.json")).status).toBe(404);
-  });
-
-  it("parses HIRAKUMI_CHALLENGE JSON and ignores bad entries", () => {
+  it("parses HIRAKUMI_CHALLENGE JSON, ignores bad entries, and the last entry is the latest", () => {
     const log = vi.fn();
-    expect(parseChallenges('{"api_a1":"t1","bad key":"t2","api_b2":5}', log)).toEqual({ api_a1: "t1" });
+    const codes = parseChallenges('{"api_a1":"t1","bad key":"t2","api_b2":5,"api_c3":"t3"}', log);
+    expect(codes).toEqual({ api_a1: "t1", api_c3: "t3" });
+    expect(latestCode(codes)).toBe("t3");
+    expect(latestCode({})).toBeNull();
     expect(parseChallenges(undefined, log)).toEqual({});
   });
 
@@ -74,3 +84,4 @@ describe("ownership challenge", () => {
     expect(log).toHaveBeenCalledOnce();
   });
 });
+

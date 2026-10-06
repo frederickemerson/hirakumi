@@ -18,7 +18,7 @@ const app = createApp({
   modes: modeStoreFromEnv(process.env),
   now: Date.now,
   adminToken: process.env.ADMIN_TOKEN,
-  challenges: parseChallenges(process.env.HIRAKUMI_CHALLENGE, log),
+  verifyCodes: parseChallenges(process.env.HIRAKUMI_CHALLENGE, log),
   publicUrl,
   log,
 });
