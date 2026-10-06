@@ -11,6 +11,8 @@ overrides:
   '@x402/express': 2.26.0
   '@x402/fetch': 2.26.0
 
+packageExtensionsChecksum: sha256-oILRIRRXdyAF3BqanzyeLrWRq7Suwur4pC3t3ews0Dc=
+
 importers:
 
   .:
@@ -1928,6 +1930,7 @@ snapshots:
 
   '@x402/express@2.26.0(express@4.21.2)(typescript@5.9.3)':
     dependencies:
+      '@types/express': 4.17.25
       '@x402/core': 2.26.0
       '@x402/extensions': 2.26.0(typescript@5.9.3)
       express: 4.21.2
