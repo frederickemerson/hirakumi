@@ -5,8 +5,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
-import { offerHeadline, parseOffer, type Offer } from "@/lib/offer";
-import { coerceInput, type TryField, type TryKind, type TryResult } from "@/lib/try";
+import { formatTusdm } from "@/lib/money";
+import { coerceInput, type TryField, type TryKind, type TryReceipt, type TryResult } from "@/lib/try";
+import { cardanoscanTx, readBuyEvents, type BuyEvent } from "@/lib/try-stream";
 import { cn } from "@/lib/utils";
 
 export type TryOp = {
@@ -18,52 +19,76 @@ export type TryOp = {
   fields: TryField[];
 };
 
+/** The pack the page's calls pay with, as the server saw it. The token itself never reaches the browser. */
+export type TryPackView = { credits: number; txHash: string | null; pending: boolean };
+
 type Outcome = {
   status: number;
   latencyMs: number;
   creditsRemaining: number | null;
   result: TryResult;
+  receipt: TryReceipt;
   body: unknown;
   request: { method: string; url: string };
-  paid: boolean;
   at: string;
 };
+
+/** Live progress of "Buy a pack live", from the gateway's stream. Times are Date.now() values. */
+type Purchase =
+  | { phase: "paying"; startedAt: number }
+  | { phase: "settling"; startedAt: number; settlingAt: number }
+  | { phase: "settled"; startedAt: number; ms: number; txHash: string | null; credits: number; recovered: boolean }
+  | { phase: "ready"; txHash: string | null; credits: number }
+  | { phase: "failed"; startedAt: number; message: string; spent: boolean };
 
 /* The outcome card takes the verdict's colour from the house palette: mint kept, canary refused, coral down. */
 const KIND_STYLE: Record<TryKind, string> = {
   kept: "bg-mint/25",
   not_kept: "bg-canary",
-  payment_required: "bg-ice",
+  used_up: "bg-ice",
+  pending: "bg-ice",
   down: "bg-coral/40",
   invalid_input: "bg-canary",
   error: "bg-coral/40",
 };
 
+const VERDICT_LABEL: Record<TryReceipt["verdict"], string> = { kept: "Kept", not_kept: "Not kept", no_charge: "No charge" };
+
 const FIELD =
   "block w-full rounded-[2px] border-2 border-ink bg-frost text-body text-ink outline-none transition-colors duration-100 focus-visible:border-sky";
 
+/** No event from the purchase for this long means the connection is gone (a payment takes 20 to 60 s). */
+const BUY_STALL_MS = 100_000;
+const CALL_TIMEOUT_MS = 35_000;
+
 /** Each block of a fresh result rises in turn, 60 ms apart (CSS animate-rise; still under reduced motion). */
 const stagger = (i: number) => ({ animationDelay: `${i * 60}ms` });
+const seconds = (ms: number) => `${(Math.max(0, ms) / 1000).toFixed(1)} s`;
 
 function prefersReducedMotion(): boolean {
   return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-export function TryConsole({ apiId, ops, hasDemoCredits, initialCredits = null }: {
+export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReason = null }: {
   apiId: string;
   ops: TryOp[];
-  hasDemoCredits: boolean;
-  /** Demo credits left when the page loaded; updated from each answer's creditsRemaining. */
-  initialCredits?: number | null;
+  /** A pack with credits left when the page loaded, or null: then the first step is "Buy a pack live". */
+  initialPack: TryPackView | null;
+  /** What a pack costs, for the buy button's note. */
+  packPrice?: { calls: number; priceMicros: string } | null;
+  /** Set when the API is Down: every action is disabled and this says why. */
+  downReason?: string | null;
 }) {
   const [opIndex, setOpIndex] = useState(0);
   const op = ops[opIndex];
   const [values, setValues] = useState<Record<string, string>>(() => initialValues(op));
-  const [busy, setBusy] = useState<null | { paid: boolean; startedAt: number }>(null);
-  const [elapsed, setElapsed] = useState(0);
+  const [busy, setBusy] = useState<null | "buy" | "call">(null);
+  const [callStartedAt, setCallStartedAt] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<Outcome[]>([]);
-  const [credits, setCredits] = useState<number | null>(initialCredits);
+  const [pack, setPack] = useState<TryPackView | null>(initialPack);
+  const [purchase, setPurchase] = useState<Purchase | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const slot = useRef<HTMLDivElement>(null);
 
@@ -71,53 +96,117 @@ export function TryConsole({ apiId, ops, hasDemoCredits, initialCredits = null }
 
   if (!op) return <p className="text-body text-graphite">This API has no endpoints open for buyers yet.</p>;
 
+  const hasCredits = pack !== null && pack.credits > 0;
+  const down = downReason !== null;
+
   function pickOp(i: number) {
     setOpIndex(i);
     setValues(initialValues(ops[i]));
   }
 
-  /** On a narrow screen the result slot sits under the form: bring it into view when a call starts. */
+  /** On a narrow screen the result slot sits under the form: bring it into view when work starts. */
   function revealSlot() {
     const el = slot.current;
     if (!el || typeof window.matchMedia !== "function" || !window.matchMedia("(max-width: 1023px)").matches) return;
     el.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "start" });
   }
 
-  async function run(paid: boolean) {
+  function startTicker() {
+    if (timer.current) clearInterval(timer.current);
+    setNow(Date.now());
+    timer.current = setInterval(() => setNow(Date.now()), 100);
+  }
+  function stopTicker() {
+    if (timer.current) clearInterval(timer.current);
+    timer.current = null;
+  }
+
+  async function call(input: Record<string, unknown>): Promise<void> {
+    setBusy("call");
+    setCallStartedAt(Date.now());
+    try {
+      const res = await fetch(`/api/try/${encodeURIComponent(apiId)}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ opId: op.opId, method: op.method, input }),
+        signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
+      });
+      const data = (await res.json()) as Omit<Outcome, "at"> & { error?: string; needsPack?: boolean };
+      if (!res.ok) {
+        if (data.needsPack) setPack(null);
+        setError(data.error ?? `Something went wrong (HTTP ${res.status}).`);
+        return;
+      }
+      const left = data.receipt?.creditsLeft;
+      if (data.result.kind === "used_up") setPack(null);
+      else if (typeof left === "number") setPack((p) => (p ? { ...p, credits: left, pending: false } : p));
+      setHistory((h) => [{ ...data, at: new Date().toLocaleTimeString() }, ...h].slice(0, 6));
+    } catch {
+      setError("No answer from Hirakumi. Check your connection and try again.");
+    }
+  }
+
+  /** Real x402 purchase on Cardano preprod from the demo wallet, then the first call with the new pack. */
+  async function buy(input: Record<string, unknown>): Promise<void> {
+    const startedAt = Date.now();
+    setBusy("buy");
+    setPurchase({ phase: "paying", startedAt });
+    const controller = new AbortController();
+    let stall = setTimeout(() => controller.abort(), BUY_STALL_MS);
+    const touch = () => { clearTimeout(stall); stall = setTimeout(() => controller.abort(), BUY_STALL_MS); };
+    let bought: TryPackView | null = null;
+    let finished = false;
+    try {
+      const res = await fetch(`/api/try/${encodeURIComponent(apiId)}/buy`, { method: "POST", signal: controller.signal });
+      if (!res.ok || !res.body) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setPurchase(null);
+        setError(data.error ?? `The purchase failed (HTTP ${res.status}).`);
+        return;
+      }
+      for await (const e of readBuyEvents(res.body)) {
+        touch();
+        const next = applyEvent(e, startedAt);
+        if (next) setPurchase(next);
+        if (e.phase === "settled" || e.phase === "ready") {
+          bought = { credits: e.credits, txHash: e.txHash, pending: e.phase === "ready" ? e.pending : false };
+          finished = true;
+        }
+        if (e.phase === "failed") finished = true;
+      }
+      if (!finished) throw new Error("stream ended early");
+    } catch {
+      setPurchase({ phase: "failed", startedAt, spent: false, message: "Lost the connection to the purchase. If it went through, reload in a minute to use the pack." });
+    } finally {
+      clearTimeout(stall);
+    }
+    if (bought) {
+      setPack(bought);
+      await call(input);
+    }
+  }
+
+  async function run() {
+    if (busy || down) return;
     setError(null);
     const coerced = coerceInput(op.fields, values);
     if (!coerced.ok) {
       setError(coerced.error);
       return;
     }
-    const startedAt = Date.now();
-    setBusy({ paid, startedAt });
-    setElapsed(0);
+    startTicker();
     revealSlot();
-    timer.current = setInterval(() => setElapsed(Date.now() - startedAt), 100);
     try {
-      const res = await fetch(`/api/try/${encodeURIComponent(apiId)}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ opId: op.opId, method: op.method, input: coerced.input, paid }),
-      });
-      const data = (await res.json()) as Omit<Outcome, "paid" | "at"> & { error?: string };
-      if (!res.ok) {
-        setError(data.error ?? `Something went wrong (HTTP ${res.status}).`);
-        return;
-      }
-      if (typeof data.creditsRemaining === "number") setCredits(data.creditsRemaining);
-      setHistory((h) => [{ ...data, paid, at: new Date().toLocaleTimeString() }, ...h].slice(0, 6));
-    } catch {
-      setError("We couldn't reach Hirakumi. Check your connection and try again.");
+      if (hasCredits) await call(coerced.input);
+      else await buy(coerced.input);
     } finally {
-      if (timer.current) clearInterval(timer.current);
+      stopTicker();
       setBusy(null);
     }
   }
 
   const latest = history[0];
-  const offer = latest?.result.kind === "payment_required" ? parseOffer(latest.body) : null;
+  const primaryLabel = hasCredits ? "Call it" : "Buy a pack live";
 
   return (
     <div className="space-y-8">
@@ -146,10 +235,7 @@ export function TryConsole({ apiId, ops, hasDemoCredits, initialCredits = null }
               </p>
             )}
 
-            <form
-              className="mt-6 space-y-5 border-t border-ink pt-6"
-              onSubmit={(e) => { e.preventDefault(); if (!busy) void run(hasDemoCredits); }}
-            >
+            <form className="mt-6 space-y-5 border-t border-ink pt-6" onSubmit={(e) => { e.preventDefault(); void run(); }}>
               {op.fields.length === 0 && <p className="text-body text-graphite">This endpoint takes no input.</p>}
               {op.fields.map((f) => (
                 <label key={f.name} className="block space-y-2">
@@ -183,81 +269,73 @@ export function TryConsole({ apiId, ops, hasDemoCredits, initialCredits = null }
                   {f.description && <span className="block text-caption text-graphite">{f.description}</span>}
                 </label>
               ))}
-              <div className="flex flex-col gap-4 pt-1 sm:flex-row sm:flex-wrap">
-                {hasDemoCredits && (
-                  <Button type="submit" disabled={!!busy}>
-                    {busy?.paid ? "Calling…" : "Call it with a demo credit"}
-                  </Button>
-                )}
-                <Button type="button" variant="outline" disabled={!!busy} onClick={() => void run(false)}>
-                  {busy && !busy.paid ? "Calling…" : "See what an unpaid agent gets"}
+              <div className="space-y-3 pt-1">
+                <Button
+                  type="submit"
+                  size="lg"
+                  disabled={down || (busy !== null)}
+                  aria-busy={busy !== null || undefined}
+                  aria-describedby={down ? "try-down-reason" : "try-pack-note"}
+                  className={cn("w-full sm:w-auto", busy && "translate-x-[2px] translate-y-[2px] shadow-none")}
+                >
+                  {busy && <Spinner className="size-3" />}
+                  {busy === "buy" ? "Buying a pack…" : busy === "call" ? "Calling…" : primaryLabel}
                 </Button>
+                {down ? (
+                  <p id="try-down-reason" role="note" className="text-caption text-graphite">{downReason}</p>
+                ) : (
+                  <p id="try-pack-note" className="text-caption text-graphite">
+                    {hasCredits ? (
+                      <>
+                        <span className="font-semibold tabular-nums text-ink">{pack.credits}</span> credits left in the live pack.
+                        {pack.pending && " Its payment is still settling."}
+                        {" "}A credit is used only when the answer keeps the promise.
+                        {pack.txHash && (
+                          <>
+                            {" "}
+                            <a href={cardanoscanTx(pack.txHash)} target="_blank" rel="noreferrer" className="underline underline-offset-4">Pack payment on Cardanoscan</a>
+                          </>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        A real x402 payment{packPrice ? ` of ${formatTusdm(packPrice.priceMicros)} tUSDM for ${packPrice.calls} calls` : ""} on Cardano preprod,
+                        from Hirakumi&apos;s demo wallet. Settles in 20 to 60 s, then makes your call.
+                      </>
+                    )}
+                  </p>
+                )}
               </div>
-              {hasDemoCredits && credits !== null && (
-                <p className="text-caption text-graphite">
-                  Demo credits left: <span className="font-semibold tabular-nums text-ink">{credits}</span>
-                </p>
-              )}
             </form>
           </div>
         </div>
 
-        {/* The result slot keeps its height, so a result lands in place instead of pushing the page. */}
+        {/* The result slot keeps its height, so progress and results land in place instead of pushing the page. */}
         <div ref={slot} aria-live="polite" className="min-w-0 scroll-mt-6 lg:sticky lg:top-6">
-          <div className="min-h-[22rem]">
-            {busy ? (
-              <div className="flex min-h-[22rem] flex-col items-center justify-center gap-3 rounded-[2px] border-2 border-ink bg-frost p-6 text-center">
+          <div className="flex min-h-[26rem] flex-col gap-4">
+            {purchase && <PurchaseCard purchase={purchase} now={now} />}
+            {busy === "call" ? (
+              <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-[2px] border-2 border-ink bg-frost p-6 text-center">
                 <p className="flex items-center gap-3 text-body-lg font-medium">
                   <Spinner className="size-3.5" />
-                  Calling…
+                  {`Calling ${op.method.toUpperCase()} ${op.path}`}
                 </p>
-                <p className="text-body text-graphite tabular-nums">{(elapsed / 1000).toFixed(1)} s</p>
+                <p className="text-body text-graphite tabular-nums">{seconds(now - callStartedAt)}</p>
               </div>
             ) : error ? (
               <p role="alert" className="rounded-[2px] border-2 border-ink border-l-8 border-l-coral bg-frost p-4 text-body animate-rise">
                 {error}
               </p>
             ) : latest ? (
-              <div key={`${latest.at}-${history.length}`} className={cn("space-y-4 rounded-[2px] border-2 border-ink p-5 shadow-hard sm:p-6", KIND_STYLE[latest.result.kind])}>
-                <p style={stagger(0)} className="animate-rise text-body-lg font-semibold">{latest.result.headline}</p>
-                {offer ? (
-                  <OfferCard offer={offer} body={latest.body} />
-                ) : (
-                  <>
-                    <dl style={stagger(1)} className="animate-rise grid grid-cols-3 gap-3 border-t border-ink pt-4 text-body">
-                      <div>
-                        <dt className="text-caption uppercase tracking-[0.04em] text-graphite">HTTP</dt>
-                        <dd className="text-h-sm font-medium tabular-nums">{latest.status}</dd>
-                      </div>
-                      <div>
-                        <dt className="text-caption uppercase tracking-[0.04em] text-graphite">Time</dt>
-                        <dd className="text-h-sm font-medium tabular-nums">{latest.latencyMs} ms</dd>
-                      </div>
-                      <div>
-                        <dt className="text-caption uppercase tracking-[0.04em] text-graphite">Credits left</dt>
-                        <dd className="text-h-sm font-medium tabular-nums">{latest.creditsRemaining ?? "n/a"}</dd>
-                      </div>
-                    </dl>
-                    {latest.result.reasons.length > 0 && (
-                      <ul style={stagger(2)} className="animate-rise list-disc pl-5 text-body">{latest.result.reasons.map((r) => <li key={r}>{r}</li>)}</ul>
-                    )}
-                    <div style={stagger(3)} className="animate-rise space-y-2">
-                      <p className="break-all text-caption text-graphite">{latest.request.method} {latest.request.url}</p>
-                      <pre className="max-h-72 overflow-auto rounded-[2px] border border-ink bg-frost p-3 text-caption leading-relaxed"><code>{typeof latest.body === "string" ? latest.body : JSON.stringify(latest.body, null, 2)}</code></pre>
-                    </div>
-                  </>
-                )}
-              </div>
-            ) : (
-              <div className="flex min-h-[22rem] flex-col items-center justify-center gap-2 rounded-[2px] border-2 border-dashed border-graphite p-6 text-center">
-                <p className="font-medium">The answer appears here.</p>
+              <ResultCard key={`${latest.at}-${history.length}`} outcome={latest} />
+            ) : !purchase ? (
+              <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-[2px] border-2 border-dashed border-graphite p-6 text-center">
+                <p className="font-medium">The answer and its receipt appear here.</p>
                 <p className="max-w-xs text-body text-graphite">
-                  {hasDemoCredits
-                    ? "A paid try uses one demo credit, only if the answer keeps the promise."
-                    : "An unpaid try shows the offer a buying agent gets."}
+                  {hasCredits ? "Each call goes through the real gateway with a credit from the live pack." : "First buy a pack live, just like an agent would."}
                 </p>
               </div>
-            )}
+            ) : null}
           </div>
         </div>
       </div>
@@ -269,9 +347,9 @@ export function TryConsole({ apiId, ops, hasDemoCredits, initialCredits = null }
             {history.slice(1).map((h, i) => (
               <li key={`${h.at}-${i}`} className="flex flex-wrap gap-x-4 gap-y-1 py-2">
                 <span className="tabular-nums">{h.at}</span>
-                <span>{h.paid ? "paid" : "unpaid"}</span>
                 <span>HTTP {h.status}</span>
                 <span className="tabular-nums">{h.latencyMs} ms</span>
+                <span>{VERDICT_LABEL[h.receipt.verdict]}</span>
                 <span className="text-ink">{h.result.headline}</span>
               </li>
             ))}
@@ -282,31 +360,113 @@ export function TryConsole({ apiId, ops, hasDemoCredits, initialCredits = null }
   );
 }
 
-/** The 402 offer as an agent would read it: what a pack costs and what it buys, with the raw answer on request. */
-function OfferCard({ offer, body }: { offer: Offer; body: unknown }) {
+function applyEvent(e: BuyEvent, startedAt: number): Purchase | null {
+  switch (e.phase) {
+    case "paying": return { phase: "paying", startedAt };
+    case "settling": return { phase: "settling", startedAt, settlingAt: Date.now() };
+    case "settled": return { phase: "settled", startedAt, ms: e.ms > 0 ? e.ms : Date.now() - startedAt, txHash: e.txHash, credits: e.credits, recovered: e.recovered };
+    case "ready": return { phase: "ready", txHash: e.txHash, credits: e.credits };
+    case "failed": return { phase: "failed", startedAt, message: e.message, spent: e.spent };
+    default: return null;
+  }
+}
+
+type StepState = "todo" | "active" | "done" | "failed";
+
+function Step({ state, label, time }: { state: StepState; label: React.ReactNode; time?: string }) {
   return (
-    <>
-      <ul style={stagger(1)} className="animate-rise space-y-3 border-t border-ink pt-4">
-        {offer.packs.map((p) => (
-          <li key={p.packId} className="rounded-[2px] border-2 border-ink bg-frost p-4">
-            <p className="text-sub font-medium tabular-nums sm:text-h-sm">{offerHeadline(p)}</p>
-            <p className="mt-1 text-body text-graphite">
-              Paid once on Cardano preprod. A credit is used only when the answer keeps the promise.
-            </p>
-            {p.buyUrl && <p className="mt-3 break-all text-caption text-graphite">Buy at {p.buyUrl}</p>}
-          </li>
-        ))}
-      </ul>
-      {offer.ruleUrl && (
-        <a style={stagger(2)} href={offer.ruleUrl} target="_blank" rel="noreferrer" className="animate-rise inline-block text-body underline underline-offset-4">
-          The promise the answer is checked against (JSON)
-        </a>
+    <li className={cn("flex min-h-8 items-center gap-3 text-body", state === "todo" && "text-graphite")} data-state={state}>
+      <span className="flex size-4 shrink-0 items-center justify-center" aria-hidden>
+        {state === "active" ? <Spinner className="size-3" />
+          : state === "done" ? <span className="size-3 bg-ink" />
+          : state === "failed" ? <span className="size-3 bg-coral" />
+          : <span className="size-3 border-2 border-graphite" />}
+      </span>
+      <span className="flex-1">{label}</span>
+      {time && <span className="tabular-nums text-caption text-graphite">{time}</span>}
+    </li>
+  );
+}
+
+/** Paying, Settling on Cardano, Settled in N s: three fixed rows that change in place. */
+function PurchaseCard({ purchase: p, now }: { purchase: Purchase; now: number }) {
+  if (p.phase === "ready") {
+    return (
+      <div className="rounded-[2px] border-2 border-ink bg-ice p-5 animate-rise">
+        <p className="text-body-lg font-semibold">Using the live pack: {p.credits} credits left.</p>
+        <p className="mt-1 text-body text-graphite">It still has credits, so nothing new was bought.</p>
+        {p.txHash && <TxLink txHash={p.txHash} />}
+      </div>
+    );
+  }
+  const elapsed = p.phase === "settled" ? p.ms : now - p.startedAt;
+  const paying: StepState = p.phase === "paying" ? "active" : p.phase === "failed" && !p.spent ? "failed" : "done";
+  const settling: StepState = p.phase === "settling" ? "active" : p.phase === "settled" ? "done" : p.phase === "failed" && p.spent ? "failed" : "todo";
+  const settled: StepState = p.phase === "settled" ? "done" : "todo";
+  return (
+    <div className="rounded-[2px] border-2 border-ink bg-frost p-5" data-testid="purchase">
+      <div className="flex items-baseline justify-between gap-4">
+        <p className="text-body-lg font-semibold">Buying a pack live</p>
+        <p className="tabular-nums text-body text-graphite" aria-label="Elapsed">{seconds(elapsed)}</p>
+      </div>
+      <ol className="mt-3 space-y-1">
+        <Step state={paying} label="Paying from the demo wallet" />
+        <Step state={settling} label="Settling on Cardano" time={p.phase === "settling" ? seconds(now - p.settlingAt) : undefined} />
+        <Step state={settled} label={p.phase === "settled" ? `Settled in ${seconds(p.ms)}${p.recovered ? " (recovered)" : ""}` : "Settled"} />
+      </ol>
+      {p.phase === "settled" && (
+        <div className="mt-3 border-t border-ink pt-3 animate-rise">
+          <p className="text-body">{p.credits} credits bought.</p>
+          {p.txHash && <TxLink txHash={p.txHash} />}
+        </div>
       )}
-      <details style={stagger(3)} className="animate-rise">
-        <summary className="cursor-pointer py-1 text-body underline underline-offset-4">Show the raw 402 answer</summary>
-        <pre className="mt-2 max-h-72 overflow-auto rounded-[2px] border border-ink bg-frost p-3 text-caption leading-relaxed"><code>{JSON.stringify(body, null, 2)}</code></pre>
-      </details>
-    </>
+      {p.phase === "failed" && <p role="alert" className="mt-3 border-t border-ink pt-3 text-body">{p.message}</p>}
+    </div>
+  );
+}
+
+function TxLink({ txHash }: { txHash: string }) {
+  return (
+    <a href={cardanoscanTx(txHash)} target="_blank" rel="noreferrer" className="mt-2 inline-block break-all text-body underline underline-offset-4">
+      {`Tx ${txHash.slice(0, 10)}…${txHash.slice(-6)} on Cardanoscan`}
+    </a>
+  );
+}
+
+/** One call's answer and its receipt: verdict, credits left, output hash and the full receipts. */
+function ResultCard({ outcome: o }: { outcome: Outcome }) {
+  return (
+    <div className={cn("space-y-4 rounded-[2px] border-2 border-ink p-5 shadow-hard sm:p-6", KIND_STYLE[o.result.kind])}>
+      <p style={stagger(0)} className="animate-rise text-body-lg font-semibold">{o.result.headline}</p>
+      <dl style={stagger(1)} className="animate-rise grid grid-cols-3 gap-3 border-t border-ink pt-4 text-body">
+        <div>
+          <dt className="text-caption uppercase tracking-[0.04em] text-graphite">Verdict</dt>
+          <dd className="text-h-sm font-medium">{VERDICT_LABEL[o.receipt.verdict]}</dd>
+        </div>
+        <div>
+          <dt className="text-caption uppercase tracking-[0.04em] text-graphite">Credits left</dt>
+          <dd className="text-h-sm font-medium tabular-nums">{o.receipt.creditsLeft ?? "n/a"}</dd>
+        </div>
+        <div>
+          <dt className="text-caption uppercase tracking-[0.04em] text-graphite">Time</dt>
+          <dd className="text-h-sm font-medium tabular-nums">{o.latencyMs} ms</dd>
+        </div>
+      </dl>
+      <div style={stagger(2)} className="animate-rise space-y-1 text-caption">
+        <p className="uppercase tracking-[0.04em] text-graphite">Output hash</p>
+        <p className="break-all font-mono" data-testid="output-hash">{o.receipt.outputHash ?? "None: no answer was paid for."}</p>
+        <a href={o.receipt.receiptsUrl} target="_blank" rel="noreferrer" className="inline-block text-body underline underline-offset-4">
+          See this pack&apos;s receipts
+        </a>
+      </div>
+      {o.result.reasons.length > 0 && (
+        <ul style={stagger(3)} className="animate-rise list-disc pl-5 text-body">{o.result.reasons.map((r) => <li key={r}>{r}</li>)}</ul>
+      )}
+      <div style={stagger(4)} className="animate-rise space-y-2">
+        <p className="break-all text-caption text-graphite">{o.request.method} {o.request.url}</p>
+        <pre className="max-h-60 overflow-auto rounded-[2px] border border-ink bg-frost p-3 text-caption leading-relaxed"><code>{typeof o.body === "string" ? o.body : JSON.stringify(o.body, null, 2)}</code></pre>
+      </div>
+    </div>
   );
 }
 

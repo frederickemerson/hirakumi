@@ -17,4 +17,17 @@ export type AppDeps = {
   paymentTxHash?: (payload: Record<string, unknown>) => string | null;
   /** PACK_MODE=escrow: reads (and, with an operator key, writes) the chain. Null → locks are verified later. */
   escrowChain?: EscrowChain | null;
+  /** "Try it live" purchases from Hirakumi's demo buyer wallet. Unset or null: the demo buy route answers 503. */
+  demoBuyer?: DemoBuyer | null;
+};
+
+/** Hirakumi's demo buyer wallet, built from BUYER_MNEMONIC with the buyer library (agents/buyer). */
+export type DemoBuyer = {
+  address: string;
+  /** Direct-pack x402 purchase that pays exactly `expected.amount`. `onSigned` fires when settlement starts. */
+  buyPack(buyUrl: string, expected: { amount: bigint }, hooks?: { onSigned?: () => void }): Promise<{ token: string; credits: number; txHash: string | null }>;
+  /** What the wallet holds on-chain right now. */
+  balance(): Promise<{ lovelace: bigint; usdmMicros: bigint }>;
+  /** Used for /recover against the gateway's own public URL. */
+  fetch: (input: string, init?: RequestInit) => Promise<Response>;
 };

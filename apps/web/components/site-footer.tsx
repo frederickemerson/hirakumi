@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { Mascot } from "@/components/brand/mascot";
 import { ListApiLink } from "@/components/list-api-link";
+import { tryHref } from "@/components/try-live-link";
+import { DEMO_API_ID } from "@/lib/demo";
 
-const DEMO_API = "/p/api_eejiaioyqt";
+const DEMO_API = `/p/${DEMO_API_ID}`;
 
 const columns = [
   {
@@ -11,7 +13,7 @@ const columns = [
       { href: "/#how", label: "How it works" },
       { href: "/#trust", label: "How the money is protected" },
       { href: DEMO_API, label: "Live status page" },
-      { href: `${DEMO_API}/try`, label: "Try a live API" },
+      { href: tryHref(DEMO_API_ID), label: "Try a live API" },
       { href: "/login", label: "List your API", listApi: true },
     ],
   },

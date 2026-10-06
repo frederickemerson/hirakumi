@@ -1,10 +1,9 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { BuyerSnippet } from "@/components/buyer-snippet";
 import { HealthBadge } from "@/components/health-badge";
 import { StatusPanel } from "@/components/status-panel";
+import { TryLiveLink } from "@/components/try-live-link";
 import { Badge } from "@/components/ui/badge";
-import { buttonVariants } from "@/components/ui/button";
 import { getSql } from "@/lib/db";
 import { env } from "@/lib/env";
 import { formatTusdm } from "@/lib/money";
@@ -36,7 +35,7 @@ export default async function PublicApiPage({ params }: { params: Promise<{ apiI
           </div>
           <p className="max-w-2xl text-body-lg text-graphite">What Hirakumi&apos;s monitor saw in the last 24 hours, and the promise every paid answer is checked against.</p>
         </div>
-        <Link href={`/p/${apiId}/try`} className={buttonVariants()}>Try it live</Link>
+        <TryLiveLink apiId={apiId} state={api.state} health={api.health} />
       </div>
       <StatusPanel status={status} incidents={incidents} />
       {pack && (

@@ -5,6 +5,7 @@ import {
   UpstreamTimeoutError, UpstreamTooLargeError, verifyDocField, VERIFY_FIELD,
 } from "@hirakumi/core";
 import { getOpenVerifyCode, getOwnershipTarget, insertCall } from "@hirakumi/db";
+import { demoBuyPack } from "./demoBuy";
 import type { AppDeps } from "./deps";
 import { runOperation } from "./upstream";
 
@@ -98,6 +99,8 @@ export function internalRouter(d: AppDeps): Router {
       res.json(await checkOwnership(d, target));
     } catch (e) { next(e); }
   });
+
+  r.post("/internal/demo/buy-pack/:apiId", demoBuyPack(d));
 
   r.post("/internal/apis/:apiId/reload", (req, res) => {
     d.registry.invalidate(req.params.apiId);

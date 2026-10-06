@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { HealthBadge } from "@/components/health-badge";
 import { EmptyState } from "@/components/states";
+import { TryLiveLink } from "@/components/try-live-link";
 import { buttonVariants } from "@/components/ui/button";
 import { shortAddress } from "@/lib/copy";
 import { getSql } from "@/lib/db";
@@ -27,7 +28,10 @@ export default async function ApisPage() {
           {apis.map((a) => (
             <li key={a.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
               <Link href={`/apis/${a.id}`} className="text-body-lg font-medium underline-offset-4 hover:underline">{a.name}</Link>
-              <HealthBadge state={a.state} health={a.health} checkedAt={a.healthCheckedAt} />
+              <div className="flex flex-wrap items-center gap-3">
+                <HealthBadge state={a.state} health={a.health} checkedAt={a.healthCheckedAt} />
+                <TryLiveLink apiId={a.id} state={a.state} health={a.health} variant="outline" size="sm" />
+              </div>
             </li>
           ))}
         </ul>

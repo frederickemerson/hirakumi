@@ -1,9 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Mascot } from "@/components/brand/mascot";
+import { TryLiveLink } from "@/components/try-live-link";
 import { buttonVariants } from "@/components/ui/button";
+import type { Health } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /** Show the celebration only for an API that went live recently, once per browser. */
@@ -35,7 +36,12 @@ function markSeen(apiId: string) {
  * The one-time "you're live" moment on the overview: Kumo, the registry token on Cardanoscan and a
  * way to try the API. `liveSince` is when the register step finished.
  */
-export function LiveMoment({ apiId, liveSince, registryUrl }: { apiId: string; liveSince: string | null; registryUrl: string | null }) {
+export function LiveMoment({ apiId, liveSince, registryUrl, health = "healthy" }: {
+  apiId: string;
+  liveSince: string | null;
+  registryUrl: string | null;
+  health?: Health;
+}) {
   const [show, setShow] = useState(false);
   useEffect(() => {
     if (shouldCelebrate(liveSince, readSeen(apiId))) {
@@ -68,7 +74,7 @@ export function LiveMoment({ apiId, liveSince, registryUrl }: { apiId: string; l
             It is registered on Masumi, and agents can buy call packs now. Each pack payment settles to your wallet.
           </p>
           <div className="flex flex-col gap-4 animate-rise [animation-delay:200ms] sm:flex-row sm:items-center">
-            <Link href={`/p/${apiId}/try`} className={buttonVariants()}>Try it live</Link>
+            <TryLiveLink apiId={apiId} state="live" health={health} />
             {registryUrl && (
               <a href={registryUrl} target="_blank" rel="noreferrer" className={cn(buttonVariants({ variant: "link" }), "text-body")}>
                 See the registry token on Cardanoscan

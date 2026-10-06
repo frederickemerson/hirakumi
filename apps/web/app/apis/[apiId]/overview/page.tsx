@@ -8,6 +8,7 @@ import { LiveProgress } from "@/components/live-progress";
 import { RetireButton } from "@/components/retire-button";
 import { PackSalesTable } from "@/components/sales-tables";
 import { EmptyState, WaitingState } from "@/components/states";
+import { TryLiveLink } from "@/components/try-live-link";
 import { OverviewStatGrid } from "@/components/stat";
 import { formatTime } from "@/lib/copy";
 import { getSql } from "@/lib/db";
@@ -47,13 +48,16 @@ export default async function OverviewPage({ params }: { params: Promise<{ apiId
   return (
     <section className="space-y-8">
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-h font-medium uppercase">{api.name}</h1>
-        <HealthBadge state={api.state} health={api.health} checkedAt={api.healthCheckedAt} />
+        <div className="flex flex-wrap items-center gap-4">
+          <h1 className="text-h font-medium uppercase">{api.name}</h1>
+          <HealthBadge state={api.state} health={api.health} checkedAt={api.healthCheckedAt} />
+        </div>
+        <TryLiveLink apiId={apiId} state={api.state} health={api.health} />
       </div>
 
       {api.state === "live" && (
         <LiveMoment apiId={apiId} liveSince={registerStep ? new Date(registerStep.updatedAt).toISOString() : null}
-          registryUrl={registryLinks(api.agentIdentifier)?.explorerUrl ?? null} />
+          registryUrl={registryLinks(api.agentIdentifier)?.explorerUrl ?? null} health={api.health} />
       )}
       {api.state === "registering" && (
         <WaitingState title="Registering on the Masumi network. This takes about a minute."

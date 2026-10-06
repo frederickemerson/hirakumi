@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@evolution-sdk/evolution": "0.5.17",
+    "@hirakumi/buyer": "workspace:*",
     "@hirakumi/core": "workspace:*",
     "@hirakumi/db": "workspace:*",
     "@hirakumi/escrow": "workspace:*",

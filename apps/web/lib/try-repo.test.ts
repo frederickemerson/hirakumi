@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { getSql } from "@/lib/db";
 import { resetDb } from "@/test/db";
 import { seedApi, seedOperation, seedSeller } from "@/test/factories";
-import { demoBudgetProblem, demoCreditsLeft, listTryOperations } from "./try-repo";
+import { demoBudgetProblem, findTryPack, listTryOperations } from "./try-repo";
 import { sha256Hex } from "@hirakumi/core";
 import { seedPack } from "@/test/factories";
 
@@ -46,12 +46,45 @@ describe("demo pack budget", () => {
     insert into calls (id, kind, credit_token_id, api_id, op_id, execution, verdict)
     values (${`call_${tokenId}_${i}`}, 'credit', ${tokenId}, ${apiId}, 'getPrice', 'upstream_ok', 'pass')`;
 
-  it("reads the credits left on the demo token, or null when it is unusable", async () => {
-    const { token } = await demo(42);
-    expect(await demoCreditsLeft(getSql(), token.raw)).toBe(42);
-    expect(await demoCreditsLeft(getSql(), "hk_unknown")).toBeNull();
-    const empty = await demo(0, "exhausted");
-    expect(await demoCreditsLeft(getSql(), empty.token.raw)).toBeNull();
+  /** A pack the gateway bought live for this API, as POST /internal/demo/buy-pack stores it. */
+  const liveRow = (apiId: string, raw: string, ago: string, status = "active") => getSql()`
+    insert into try_tokens (id, api_id, status, token, token_hash, tx_hash, credits, created_at)
+    values (${`try_${raw}`}, ${apiId}, ${status}, ${raw}, ${sha256Hex(raw)}, ${"live_" + raw}, 100, now() - ${ago}::interval)`;
+
+  it("uses the newest live pack with credits from try_tokens, ahead of the TRY_CREDIT_TOKENS one", async () => {
+    const { api, token } = await demo(42);
+    await liveRow(api.id, token.raw, "1 minute");
+    const pack = await findTryPack(getSql(), api.id, "hk_env_fallback");
+    expect(pack).toMatchObject({ token: token.raw, creditTokenId: token.id, remaining: 42, pending: false, txHash: `live_${token.raw}`, source: "live" });
+  });
+
+  it("skips a live pack that is used up and falls back to the env token", async () => {
+    const { api, token } = await demo(0, "exhausted");
+    await liveRow(api.id, token.raw, "1 minute");
+    expect(await findTryPack(getSql(), api.id, undefined)).toBeNull();
+    const envToken = "hk_env_token";
+    await getSql()`
+      insert into credit_tokens (id, api_id, pack_id, token_hash, status, remaining, payment_payload_hash, tx_hash)
+      select 'ct_env', ${api.id}, pack_id, ${sha256Hex(envToken)}, 'active', 7, 'pp_env', 'tx_env' from credit_tokens where id = ${token.id}`;
+    expect(await findTryPack(getSql(), api.id, envToken)).toMatchObject({ token: envToken, remaining: 7, source: "env" });
+    // Receipts stay readable after the credits run out.
+    expect(await findTryPack(getSql(), api.id, undefined, { withCredits: false })).toMatchObject({ token: token.raw, remaining: 0 });
+  });
+
+  it("a settling pack is usable and says so; a buying or unsettled attempt is not a pack", async () => {
+    const { api, token } = await demo(100, "pending");
+    await liveRow(api.id, token.raw, "1 minute");
+    expect(await findTryPack(getSql(), api.id, undefined)).toMatchObject({ pending: true, remaining: 100 });
+    const other = await demo(100);
+    await getSql()`insert into try_tokens (id, api_id, status) values ('try_buying', ${other.api.id}, 'buying')`;
+    expect(await findTryPack(getSql(), other.api.id, undefined)).toBeNull();
+  });
+
+  it("never returns another API's pack or token", async () => {
+    const a = await demo(10);
+    const b = await demo(10);
+    await liveRow(a.api.id, a.token.raw, "1 minute");
+    expect(await findTryPack(getSql(), b.api.id, a.token.raw)).toBeNull();
   });
 
   it("allows paid tries until the hourly cap of calls made with the demo token", async () => {

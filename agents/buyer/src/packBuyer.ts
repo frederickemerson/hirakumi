@@ -1,6 +1,6 @@
 import { callOperation, choosePack, formatMicros, type CallOutcome, type CreditsRequired, type FetchLike } from "./gatewayClient.js";
 import { PackPurchaseError, type PackPurchase } from "./payClient.js";
-import type { PendingStore, TokenStore } from "./tokenStore.js";
+import type { PendingPayment, PendingStore, TokenStore } from "./tokenStore.js";
 
 export type PackDemoDeps = {
   fetch: FetchLike;
@@ -20,6 +20,37 @@ export type PackDemoSummary = {
   down: number; lastRemaining: number | null; creditAccountingOk: boolean;
 };
 
+export type RecoverResult =
+  | { kind: "recovered"; token: string; credits: number; pending: boolean }
+  /** 404: the gateway never received the payment, so nothing was paid. */
+  | { kind: "not_received" }
+  /** 403: final, the gateway will never accept this saved payment. */
+  | { kind: "refused" }
+  /** Anything else: keep the saved payment and try again later. */
+  | { kind: "failed"; status: number };
+
+/**
+ * Presents a signed pack payment whose settlement failed or timed out to the gateway's /recover, with the
+ * recovery secret whose sha256 travelled as X-Hirakumi-Recovery, and gets the pack's token re-keyed.
+ */
+export async function recoverPack(
+  fetchImpl: FetchLike,
+  gatewayUrl: string,
+  apiId: string,
+  saved: Pick<PendingPayment, "packId" | "paymentSignature" | "recoverySecret">,
+): Promise<RecoverResult> {
+  const url = `${gatewayUrl.replace(/\/+$/, "")}/a/${encodeURIComponent(apiId)}/packs/${encodeURIComponent(saved.packId)}/recover`;
+  const res = await fetchImpl(url, {
+    method: "POST",
+    headers: { "payment-signature": saved.paymentSignature, "x-hirakumi-recovery-secret": saved.recoverySecret, accept: "application/json" },
+  });
+  const body = (await res.json().catch(() => ({}))) as { token?: unknown; credits?: unknown; status?: unknown };
+  if (res.status === 404) return { kind: "not_received" };
+  if (res.status === 403) return { kind: "refused" };
+  if (!res.ok || typeof body.token !== "string" || typeof body.credits !== "number") return { kind: "failed", status: res.status };
+  return { kind: "recovered", token: body.token, credits: body.credits, pending: body.status === "pending" };
+}
+
 function describe(o: CallOutcome): string {
   return o.kind === "unexpected" ? `HTTP ${o.status}` : o.kind;
 }
@@ -33,29 +64,27 @@ export async function runPackDemo(deps: PackDemoDeps, o: PackDemoOptions): Promi
     const saved = deps.pending.get(o.apiId);
     if (!saved) return null;
     deps.log(`Recovering the pack payment from ${saved.at} (its settlement timed out)...`);
-    const url = `${o.gatewayUrl.replace(/\/+$/, "")}/a/${encodeURIComponent(o.apiId)}/packs/${encodeURIComponent(saved.packId)}/recover`;
-    const res = await deps.fetch(url, { method: "POST", headers: { "payment-signature": saved.paymentSignature, "x-hirakumi-recovery-secret": saved.recoverySecret, accept: "application/json" } });
-    const body = (await res.json().catch(() => ({}))) as { token?: unknown; credits?: unknown; status?: unknown };
-    if (res.status === 404) {
+    const r = await recoverPack(deps.fetch, o.gatewayUrl, o.apiId, saved);
+    if (r.kind === "not_received") {
       deps.log("The gateway never received that payment, so nothing was paid. Buying a new pack.");
       deps.pending.delete(o.apiId);
       return null;
     }
-    if (res.status === 403) {
+    if (r.kind === "refused") {
       // Final: the gateway will never accept this saved payment (e.g. saved before recovery secrets existed).
       deps.pending.delete(o.apiId);
       throw new Error(
         `The pack payment from ${saved.at} can't be recovered (the gateway refused it). It was cleared; run again to buy a new pack.`,
       );
     }
-    if (!res.ok || typeof body.token !== "string" || typeof body.credits !== "number") {
-      throw new Error(`Recovery failed: HTTP ${res.status}. Your saved payment is kept; try again later.`);
+    if (r.kind === "failed") {
+      throw new Error(`Recovery failed: HTTP ${r.status}. Your saved payment is kept; try again later.`);
     }
-    deps.log(`Recovered: ${body.credits} credits${body.status === "pending" ? " (still confirming on-chain)" : ""}.`);
-    deps.tokens.put(o.apiId, { token: body.token, packId: saved.packId, credits: body.credits, txHash: null, boughtAt: saved.at });
+    deps.log(`Recovered: ${r.credits} credits${r.pending ? " (still confirming on-chain)" : ""}.`);
+    deps.tokens.put(o.apiId, { token: r.token, packId: saved.packId, credits: r.credits, txHash: null, boughtAt: saved.at });
     deps.pending.delete(o.apiId);
-    s.lastRemaining = body.credits;
-    return body.token;
+    s.lastRemaining = r.credits;
+    return r.token;
   };
 
   const buy = async (offer: CreditsRequired): Promise<string> => {
