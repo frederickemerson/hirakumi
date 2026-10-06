@@ -2,6 +2,7 @@ import { HTTPFacilitatorClient } from "@x402/core/server";
 import { createDb, migrate } from "@hirakumi/db";
 import { createApp } from "./app";
 import { ChannelWatcher } from "./channelWatcher";
+import { demoBuyerFromEnv } from "./demoBuy";
 import { blockfrostEscrowChain } from "./escrowChain";
 import { loadConfig } from "./config";
 import { HealthTracker } from "./health";
@@ -27,7 +28,9 @@ const escrowChain = config.packEscrow && config.blockfrostProjectId
   : null;
 if (config.packEscrow && !escrowChain) console.warn("[gateway] PACK_MODE=escrow without BLOCKFROST_PROJECT_ID: escrow locks are never verified");
 if (config.packEscrow && !config.packEscrow.operatorMnemonic) console.warn("[gateway] OPERATOR_MNEMONIC not set: the ChannelWatcher only observes (no Close / Raise / Settle)");
-const app = createApp({ sql, config, registry, health, facilitator, masumi, escrowChain });
+const demoBuyer = demoBuyerFromEnv(process.env);
+if (!demoBuyer) console.warn("[gateway] BUYER_MNEMONIC or BLOCKFROST_PROJECT_ID not set: \"Buy a pack live\" answers 503");
+const app = createApp({ sql, config, registry, health, facilitator, masumi, escrowChain, demoBuyer });
 const monitor = new Monitor({ sql, registry, health, config });
 monitor.start();
 const jobs = masumi ? new JobRunner({ sql, registry, masumi, config }) : null;

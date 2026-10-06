@@ -80,8 +80,11 @@ export function createPackPayer(cfg: { mnemonic: string; blockfrostProjectId: st
   });
   // Keep the signed payment: if settlement times out it may still land on-chain, and /recover needs it.
   let lastSignature: string | null = null;
+  // The current purchase's "payment signed, now settling" listener (set per purchase, like offerCheck).
+  let onSigned: (() => void) | null = null;
   client.onAfterPaymentCreation(async ({ paymentPayload }) => {
     lastSignature = encodePaymentSignatureHeader(paymentPayload);
+    try { onSigned?.(); } catch { /* a progress listener must never break a payment */ }
   });
   // Look the global fetch up per request (not once at creation), so a replaced/instrumented fetch is honoured.
   const payFetch = wrapFetchWithPayment((input, init) => globalThis.fetch(input, init), client);
@@ -130,14 +133,18 @@ export function createPackPayer(cfg: { mnemonic: string; blockfrostProjectId: st
         }
       });
     },
-    /** Direct pack: pays only `expected.amount` (the chosen pack's price), never just "anything under the cap". */
-    buyPack(buyUrl: string, expected: { amount: bigint }): Promise<PackPurchase> {
+    /**
+     * Direct pack: pays only `expected.amount` (the chosen pack's price), never just "anything under the cap".
+     * `hooks.onSigned` fires once the payment is signed and sent, i.e. when settlement on Cardano starts.
+     */
+    buyPack(buyUrl: string, expected: { amount: bigint }, hooks: { onSigned?: () => void } = {}): Promise<PackPurchase> {
       return serial.run(async () => {
         lastSignature = null;
         offerCheck = directPackCheck(expected);
+        onSigned = hooks.onSigned ?? null;
+        // Only its hash travels with the payment; the secret stays here until a recovery needs it.
+        const recoverySecret = randomBytes(32).toString("base64url");
         try {
-          // Only its hash travels with the payment; the secret stays here until a recovery needs it.
-          const recoverySecret = randomBytes(32).toString("base64url");
           const res = await payFetch(buyUrl, {
             method: "POST",
             headers: {
@@ -159,8 +166,15 @@ export function createPackPayer(cfg: { mnemonic: string; blockfrostProjectId: st
             txHash = null;
           }
           return { token: body.token, credits: body.credits, apiId: body.apiId, txHash };
+        } catch (e) {
+          // A signed payment can still land on-chain even when the answer was lost: keep what /recover needs.
+          if (!(e instanceof PackPurchaseError) && lastSignature !== null) {
+            throw new PackPurchaseError(0, (e as Error)?.message ?? String(e), lastSignature, recoverySecret);
+          }
+          throw e;
         } finally {
           offerCheck = null;
+          onSigned = null;
         }
       });
     },

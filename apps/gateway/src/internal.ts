@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { Router, type RequestHandler } from "express";
 import { httpChallengePath, safeFetch, UpstreamBlockedError, UpstreamTimeoutError } from "@hirakumi/core";
 import { getActiveHttpChallenge, insertCall } from "@hirakumi/db";
+import { demoBuyPack } from "./demoBuy";
 import type { AppDeps } from "./deps";
 import { runOperation } from "./upstream";
 
@@ -71,6 +72,8 @@ export function internalRouter(d: AppDeps): Router {
       res.json({ ok: false, triedUrl, detail });
     } catch (e) { next(e); }
   });
+
+  r.post("/internal/demo/buy-pack/:apiId", demoBuyPack(d));
 
   r.post("/internal/apis/:apiId/reload", (req, res) => {
     d.registry.invalidate(req.params.apiId);

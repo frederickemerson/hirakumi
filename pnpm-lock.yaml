@@ -115,6 +115,9 @@ importers:
       '@evolution-sdk/evolution':
         specifier: 0.5.17
         version: 0.5.17
+      '@hirakumi/buyer':
+        specifier: workspace:*
+        version: link:../../agents/buyer
       '@hirakumi/core':
         specifier: workspace:*
         version: link:../../packages/core
