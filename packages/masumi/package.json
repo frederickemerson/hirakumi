@@ -1,0 +1,21 @@
+{
+  "name": "@hirakumi/masumi",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json",
+    "smoke": "tsx scripts/smoke.ts",
+    "register-e2e": "tsx scripts/register-e2e.ts",
+    "measure-health": "tsx scripts/measure-health.ts",
+    "escrow-e2e": "tsx scripts/escrow-e2e.ts"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "tsx": "4.23.15",
+    "vite": "7.3.7",
+    "vitest": "5.0.3"
+  }
+}
