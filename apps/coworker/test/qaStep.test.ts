@@ -1,3 +1,5 @@
+import { fallbackRuleText } from "../src/llm/ruleText.js";
+import { qaSummaryLine } from "../src/onboarding/qaStep.js";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { GatewayClient, PreviewResult } from "../src/gateway.js";
 import type { StructuredCall } from "../src/llm/claude.js";
@@ -32,7 +34,8 @@ describe("qaStep (ownership_verified → rule_built)", () => {
     const { rows: [rule] } = await db.pool.query(`select version, hash, plain_english, definition from rules where operation_id = $1`, [opRowId]);
     expect(rule.version).toBe(1);
     expect(rule.hash).toMatch(/^sha256:/);
-    expect(rule.plain_english).toBe("A response counts as good when it has the symbol and a numeric price.");
+    // The buyer-facing promise is derived from the rule, never written by the model (audit I3).
+    expect(rule.plain_english).toBe(fallbackRuleText(rule.definition));
     const { rows: inputs } = await db.pool.query(`select input from test_inputs where operation_id = $1 order by input->>'symbol'`, [opRowId]);
     expect(inputs.map((r) => r.input)).toEqual([{ symbol: "ADA" }, { symbol: "BTC" }]);
     expect((await db.pool.query(`select state from apis where id = $1`, [apiId])).rows[0].state).toBe("rule_built");
@@ -60,5 +63,14 @@ describe("qaStep (ownership_verified → rule_built)", () => {
     expect(await qaStep({ pool: db.pool, gateway: { preview } as GatewayClient, llm, webBaseUrl: "https://web.test" }, apiId)).toBe("failed");
     expect((await db.pool.query(`select state from apis where id = $1`, [apiId])).rows[0].state).toBe("ownership_verified");
     expect((await messagesFor(db.pool, apiId)).at(-1)?.body).toMatch(/can't tell them apart/);
+  });
+});
+
+describe("qaSummaryLine", () => {
+  it("claims a rejected wrong request only for endpoints where one was actually tried", () => {
+    expect(qaSummaryLine([{ opId: "a", calls: 6, badInput: "rejected" }])).toBe("Test calls done: 6 calls across 1 endpoint(s) all passed and a wrong request was correctly rejected.");
+    expect(qaSummaryLine([{ opId: "a", calls: 5, badInput: "skipped" }])).toBe("Test calls done: 5 calls across 1 endpoint(s) all passed.");
+    expect(qaSummaryLine([{ opId: "a", calls: 6, badInput: "rejected" }, { opId: "b", calls: 0, badInput: "reused" }]))
+      .toBe("Test calls done: 6 calls across 2 endpoint(s) all passed, and a wrong request was correctly rejected on 1 of 2 endpoints.");
   });
 });

@@ -79,13 +79,24 @@ export async function qaStep(deps: QaDeps, apiId: string): Promise<StepOutcome> 
         exampleOutput: exampleOutput ?? (previous?.output?.exampleOutput as string | undefined) ?? null,
         usedFallbackText: text.usedFallback,
       });
-      const totalCalls = summaries.reduce((n, s) => n + s.calls, 0);
       await enqueueMessage(c, {
         apiId,
-        body: `Test calls done: ${totalCalls} calls across ${ops.length} endpoint(s) all passed, and a wrong request was correctly rejected. Your promise to buyers: ${[...text.texts.values()].join(" ")} Review the price and publish: ${apiLink(deps.webBaseUrl, apiId)}`,
+        body: `${qaSummaryLine(summaries)} Your promise to buyers: ${[...text.texts.values()].join(" ")} Review the price and publish: ${apiLink(deps.webBaseUrl, apiId)}`,
         taskStatus: "INPUT_REQUIRED",
         dedupeKey: `rule_built:${apiId}`,
       });
     });
   }, deps.now?.());
+}
+
+/** Audit M3: say only what the QA run actually checked. */
+export function qaSummaryLine(summaries: OpQaSummary[]): string {
+  const totalCalls = summaries.reduce((n, s) => n + s.calls, 0);
+  const rejected = summaries.filter((s) => s.badInput === "rejected").length;
+  const bad = rejected === 0
+    ? ""
+    : rejected === summaries.length
+      ? " and a wrong request was correctly rejected"
+      : `, and a wrong request was correctly rejected on ${rejected} of ${summaries.length} endpoints`;
+  return `Test calls done: ${totalCalls} calls across ${summaries.length} endpoint(s) all passed${bad}.`;
 }

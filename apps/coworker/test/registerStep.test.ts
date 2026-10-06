@@ -40,6 +40,32 @@ const fakeMasumi = (status: RegistryStatus = "Online") => ({
 });
 
 describe("registerStep (registering → live)", () => {
+  it("never mints twice: if recording a successful registration fails, the step stops instead of retrying (audit I2)", async () => {
+    const apiId = await seedPublished();
+    // Make the write of the registration id fail for this API only, as a DB blip would.
+    await db.pool.query(`
+      create or replace function fail_register_save() returns trigger language plpgsql as $$
+      begin
+        if new.api_id = '${apiId}' and new.step = 'register' and new.output ? 'registrationId' then
+          raise exception 'connection reset';
+        end if;
+        return new;
+      end $$;
+      create trigger fail_register_save before update on onboard_steps for each row execute function fail_register_save();`);
+    try {
+      const masumi = fakeMasumi();
+      await registerStep(deps(masumi), apiId);
+      await registerStep(deps(masumi, 120_000), apiId);
+      await registerStep(deps(masumi, 600_000), apiId);
+      expect(masumi.registerAgent).toHaveBeenCalledTimes(1);
+      const step = await getStep(db.pool, apiId, "register");
+      expect(step?.status).toBe("failed");
+      expect(JSON.stringify(step?.output)).toContain("reg_1");
+    } finally {
+      await db.pool.query(`drop trigger fail_register_save on onboard_steps; drop function fail_register_save();`);
+    }
+  });
+
   it("registers once with the wrapper URL and escrow price, then goes Live when the registry says Online", async () => {
     const apiId = await seedPublished();
     const masumi = fakeMasumi();

@@ -132,6 +132,15 @@ export async function registerStep(deps: RegisterDeps, apiId: string): Promise<v
         "the registration request didn't get a clear answer, so we can't tell whether it reached Masumi. The Hirakumi team will check the payment service before retrying, so you are never charged twice.",
       );
     }
-    await saveStepOutput(deps.pool, apiId, "register", { registrationId: id, registeredAt: now.toISOString() }, "pending");
+    try {
+      await saveStepOutput(deps.pool, apiId, "register", { registrationId: id, registeredAt: now.toISOString() }, "pending");
+    } catch (e) {
+      // The mint already happened. A normal (retryable) error here would run registerAgent again and mint a
+      // second NFT, so stop and keep the registration id in the failure for the operator.
+      throw new PermanentError(
+        `the API was registered on Masumi (registration ${id}) but saving that failed: ${(e as Error).message}. ` +
+          "The Hirakumi team will finish it from that registration id; nothing will be minted again.",
+      );
+    }
   }, now);
 }
