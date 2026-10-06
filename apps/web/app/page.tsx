@@ -60,7 +60,7 @@ const PROOF: { value: string; label: string }[] = [
   { value: "0.3 s", label: "per paid call, end to end" },
   { value: "HTTP 422", label: "for a stale answer, with no credit used" },
   { value: "Refunded", label: "escrow job whose answer broke the promise, on-chain and automatic" },
-  { value: "2,244 req/s", label: "on the paid path in a load test, with exact credit accounting" },
+  { value: "2,244 req/s", label: "on the paid path in a local load test (not preprod), with exact credit accounting" },
 ];
 
 const FAQ: { q: string; a: string }[] = [
@@ -207,7 +207,7 @@ export default function Home() {
       <section id="proof" className="scroll-mt-10 border-t-2 border-ink py-20 sm:py-28">
         <Reveal className="max-w-2xl">
           <H2>Measured on preprod</H2>
-          <p className="mt-4 text-body-lg">Cardano preprod, 6 October 2026. Test funds, real transactions.</p>
+          <p className="mt-4 text-body-lg">Cardano preprod, 6 October 2026. Test funds, real transactions. The load test ran on a local copy of the stack.</p>
         </Reveal>
         <Reveal as="dl" stagger={0.07} className="mt-12 grid gap-x-8 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
           {PROOF.map((p) => (
