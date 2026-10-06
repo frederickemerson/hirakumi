@@ -21,6 +21,11 @@ describe("loadConfig", () => {
     expect(c).toMatchObject({ port: 5000, demoMode: true, probeIntervalMs: 10_000, thresholds: { failsToDown: 2, passesToHeal: 2 } });
     expect(estimatedDowntimeSeconds(c)).toBe(20);
   });
+  it("TRY_LIVE_APIS: the featured demo API by default, else the comma list (audit I2)", () => {
+    expect(loadConfig(env).tryLiveApis).toEqual(["api_eejiaioyqt"]);
+    expect(loadConfig({ ...env, TRY_LIVE_APIS: " api_a, api_b ,api_a" }).tryLiveApis).toEqual(["api_a", "api_b"]);
+    expect(loadConfig({ ...env, TRY_LIVE_APIS: "" }).tryLiveApis).toEqual([]);
+  });
   it("START_JOB_TRUSTED_CIDRS: empty by default, a comma list of IPv4/IPv6 CIDRs, rejects anything else", () => {
     expect(loadConfig(env).startJobTrustedCidrs).toEqual([]);
     expect(loadConfig({ ...env, START_JOB_TRUSTED_CIDRS: " 203.0.113.0/24 , 2001:DB8::/32,192.0.2.7 " }).startJobTrustedCidrs)

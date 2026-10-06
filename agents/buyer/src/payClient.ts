@@ -28,6 +28,9 @@ export type EscrowPurchase = PackPurchase & { channelId: string; channelUrl: str
 /** Called with the offer x402 is about to pay; throw to refuse (the payment is never signed). */
 export type OfferCheck = (requirements: { scheme: string; network: string; asset: string; amount: string; payTo: string; extra?: Record<string, unknown> }) => void;
 
+/** Called with the signed payment and the recovery secret, before the payment is sent. */
+export type SignedHook = (saved: { paymentSignature: string; recoverySecret: string }) => void | Promise<void>;
+
 export class PackPurchaseError extends Error {
   /**
    * paymentSignature: the signed payment that was sent, when one was; it can still settle on-chain.
@@ -81,10 +84,11 @@ export function createPackPayer(cfg: { mnemonic: string; blockfrostProjectId: st
   // Keep the signed payment: if settlement times out it may still land on-chain, and /recover needs it.
   let lastSignature: string | null = null;
   // The current purchase's "payment signed, now settling" listener (set per purchase, like offerCheck).
-  let onSigned: (() => void) | null = null;
+  let onSigned: ((paymentSignature: string) => void | Promise<void>) | null = null;
   client.onAfterPaymentCreation(async ({ paymentPayload }) => {
     lastSignature = encodePaymentSignatureHeader(paymentPayload);
-    try { onSigned?.(); } catch { /* a progress listener must never break a payment */ }
+    // Awaited before the payment is sent, so a caller can store what /recover needs first.
+    try { await onSigned?.(lastSignature); } catch { /* a progress listener must never break a payment */ }
   });
   // Look the global fetch up per request (not once at creation), so a replaced/instrumented fetch is honoured.
   const payFetch = wrapFetchWithPayment((input, init) => globalThis.fetch(input, init), client);
@@ -135,15 +139,17 @@ export function createPackPayer(cfg: { mnemonic: string; blockfrostProjectId: st
     },
     /**
      * Direct pack: pays only `expected.amount` (the chosen pack's price), never just "anything under the cap".
-     * `hooks.onSigned` fires once the payment is signed and sent, i.e. when settlement on Cardano starts.
+     * `hooks.onSigned` fires once the payment is signed, just before it is sent (settlement on Cardano starts),
+     * with what /recover needs. It is awaited, so the caller can persist both before any money moves.
      */
-    buyPack(buyUrl: string, expected: { amount: bigint }, hooks: { onSigned?: () => void } = {}): Promise<PackPurchase> {
+    buyPack(buyUrl: string, expected: { amount: bigint }, hooks: { onSigned?: SignedHook } = {}): Promise<PackPurchase> {
       return serial.run(async () => {
         lastSignature = null;
         offerCheck = directPackCheck(expected);
-        onSigned = hooks.onSigned ?? null;
         // Only its hash travels with the payment; the secret stays here until a recovery needs it.
         const recoverySecret = randomBytes(32).toString("base64url");
+        const hook = hooks.onSigned;
+        onSigned = hook ? (paymentSignature) => hook({ paymentSignature, recoverySecret }) : null;
         try {
           const res = await payFetch(buyUrl, {
             method: "POST",

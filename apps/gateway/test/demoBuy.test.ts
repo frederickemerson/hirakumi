@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import request from "supertest";
 import { PackPurchaseError } from "@hirakumi/buyer";
-import { newId } from "@hirakumi/core";
+import { newId, sha256Hex } from "@hirakumi/core";
 import type { DemoBuyer } from "../src/deps";
 import { createApp } from "../src/app";
 import { insertActiveToken, makeHarness, type Harness } from "./helpers";
@@ -18,19 +18,24 @@ class FakeBuyer implements DemoBuyer {
   settleDelayMs = 0;
   constructor(private readonly h: () => Harness) {}
 
-  async buyPack(url: string, expected: { amount: bigint }, hooks?: { onSigned?: () => void }) {
+  afterSigned: (() => Promise<void>) | null = null;
+  balanceCalls = 0;
+  recoverDelayMs = 0;
+  async buyPack(url: string, expected: { amount: bigint }, hooks?: { onSigned?: (s: { paymentSignature: string; recoverySecret: string }) => void | Promise<void> }) {
     this.purchases.push({ url, amount: expected.amount });
     if (this.next === "refused_before_signing") throw new Error("refusing to pay: amount mismatch");
-    hooks?.onSigned?.();
+    await hooks?.onSigned?.({ paymentSignature: "SIGNED_PAYMENT", recoverySecret: "BUYER_SECRET" });
+    if (this.afterSigned) await this.afterSigned();
     if (this.settleDelayMs) await new Promise((r) => setTimeout(r, this.settleDelayMs));
     if (this.next === "settlement_failed") throw new PackPurchaseError(402, '{"error":"settlement_failed"}', "SIGNED_PAYMENT", "BUYER_SECRET");
     const { token } = await insertActiveToken(this.h().sql, this.h().seeded, 100);
     return { token, credits: 100, txHash: "ab".repeat(32) };
   }
-  async balance() { return this.funds; }
+  async balance() { this.balanceCalls += 1; return this.funds; }
   fetch = async (url: string, init?: RequestInit): Promise<Response> => {
     const hd = new Headers(init?.headers);
     this.recoverCalls.push({ url, signature: hd.get("payment-signature"), secret: hd.get("x-hirakumi-recovery-secret") });
+    if (this.recoverDelayMs) await new Promise((r) => setTimeout(r, this.recoverDelayMs));
     const a = this.recoverAnswer ?? { status: 404, body: { error: "payment_not_found" } };
     return new Response(JSON.stringify(a.body), { status: a.status, headers: { "content-type": "application/json" } });
   };
@@ -42,6 +47,7 @@ beforeEach(async () => {
   h = await makeHarness();
   buyer = new FakeBuyer(() => h);
   h.deps.demoBuyer = buyer;
+  h.config.tryLiveApis = [h.seeded.apiId];
   h.app = createApp(h.deps);
 });
 afterEach(async () => { await h.close(); });
@@ -182,5 +188,105 @@ describe("POST /internal/demo/buy-pack/:apiId", () => {
     expect(buyer.purchases).toHaveLength(1);
     const [row] = await h.sql<{ status: string; recovery_secret: string | null }[]>`select status, recovery_secret from try_tokens`;
     expect(row).toEqual({ status: "active", recovery_secret: null });
+  });
+
+  it("403 not_featured for an API outside TRY_LIVE_APIS, before any wallet work (audit I2)", async () => {
+    h.config.tryLiveApis = ["api_eejiaioyqt"];
+    const r = await buy();
+    expect(r.status).toBe(403);
+    expect(r.body.error).toBe("not_featured");
+    expect(buyer.purchases).toEqual([]);
+    expect(buyer.balanceCalls).toBe(0);
+    expect(buyer.recoverCalls).toEqual([]);
+    expect(await rows()).toEqual([]);
+  });
+
+  it("allows 24 purchases per day across all APIs (audit I2)", async () => {
+    for (let i = 0; i < 24; i++) {
+      await h.sql`insert into try_tokens (id, api_id, status, created_at) values (${newId("try")}, ${h.seeded.apiId}, 'failed', now() - make_interval(hours => ${2 + (i % 20)}))`;
+    }
+    const r = await buy();
+    expect(r.status).toBe(429);
+    expect(r.body.error).toBe("global_daily");
+    expect(r.body.message).toMatch(/24 purchases today/);
+    expect(buyer.purchases).toEqual([]);
+  });
+});
+
+describe("demo buy: concurrency, crashes and DB errors (audit I3)", () => {
+  const seedUnsettled = async (o: { status?: string; minutesAgo?: number; signed?: boolean } = {}) => {
+    const id = newId("try");
+    await h.sql`
+      insert into try_tokens (id, api_id, status, pack_id, price_micros, payment_signature, recovery_secret, created_at)
+      values (${id}, ${h.seeded.apiId}, ${o.status ?? "unsettled"}, ${h.seeded.packId}, 2000000,
+              ${o.signed === false ? null : "SIGNED_PAYMENT"}, ${o.signed === false ? null : "BUYER_SECRET"},
+              now() - make_interval(mins => ${o.minutesAgo ?? 20}))`;
+    return id;
+  };
+
+  it("two concurrent requests recover an unsettled payment once; the other reuses the pack", async () => {
+    await seedUnsettled();
+    const { token } = await insertActiveToken(h.sql, h.seeded, 100);
+    buyer.recoverAnswer = { status: 200, body: { token, status: "active", credits: 100 } };
+    buyer.recoverDelayMs = 200;
+    const [a, b] = await Promise.all([buy(), buy()]);
+    expect([a.status, b.status]).toEqual([200, 200]);
+    const phases = [events(a.text), events(b.text)].map((e) => e.map((x) => x.phase).join(",")).sort();
+    expect(phases).toEqual(["ready", "settled"]);
+    expect(buyer.recoverCalls).toHaveLength(1);
+    expect(buyer.purchases).toEqual([]);
+    expect((await rows()).map((x) => x.status)).toEqual(["active"]);
+  });
+
+  it("a row stuck in buying after a crash becomes unsettled and is recovered, not paid twice", async () => {
+    const id = await seedUnsettled({ status: "buying", minutesAgo: 20 });
+    const { token } = await insertActiveToken(h.sql, h.seeded, 100);
+    buyer.recoverAnswer = { status: 200, body: { token, status: "active", credits: 100 } };
+    const r = await buy();
+    expect(events(r.text)).toEqual([expect.objectContaining({ phase: "settled", recovered: true })]);
+    expect(buyer.recoverCalls).toHaveLength(1);
+    expect(buyer.purchases).toEqual([]);
+    const [row] = await h.sql<{ id: string; status: string }[]>`select id, status from try_tokens`;
+    expect(row).toEqual({ id, status: "active" });
+  });
+
+  it("a recent buying row is left alone (the purchase may still be running)", async () => {
+    await seedUnsettled({ status: "buying", minutesAgo: 1 });
+    const r = await buy();
+    expect(r.status).toBe(429);
+    expect(buyer.recoverCalls).toEqual([]);
+    expect((await rows()).map((x) => x.status)).toEqual(["buying"]);
+  });
+
+  it("the payment is saved for recovery the moment it is signed", async () => {
+    let seen: { status: string; payment_signature: string | null; recovery_secret: string | null } | undefined;
+    buyer.afterSigned = async () => {
+      [seen] = await h.sql<{ status: string; payment_signature: string | null; recovery_secret: string | null }[]>`
+        select status, payment_signature, recovery_secret from try_tokens`;
+    };
+    await buy();
+    expect(seen).toEqual({ status: "buying", payment_signature: "SIGNED_PAYMENT", recovery_secret: "BUYER_SECRET" });
+  });
+
+  it("a DB error after a successful payment keeps the attempt unsettled with its recovery secret, then recovers it", async () => {
+    buyer.afterSigned = async () => {
+      // The database refuses the final write (as an outage would), after the money has moved.
+      await h.sql.unsafe(`alter table try_tokens add constraint no_active_for_test check (status <> 'active') not valid`);
+    };
+    const first = await buy();
+    expect(events(first.text).at(-1)).toMatchObject({ phase: "failed", spent: true });
+    const [row] = await h.sql<{ status: string; payment_signature: string | null; recovery_secret: string | null }[]>`
+      select status, payment_signature, recovery_secret from try_tokens`;
+    expect(row).toEqual({ status: "unsettled", payment_signature: "SIGNED_PAYMENT", recovery_secret: "BUYER_SECRET" });
+
+    await h.sql.unsafe(`alter table try_tokens drop constraint no_active_for_test`);
+    buyer.afterSigned = null;
+    const { token } = await insertActiveToken(h.sql, h.seeded, 100);
+    buyer.recoverAnswer = { status: 200, body: { token, status: "active", credits: 100 } };
+    // The pack minted by the first purchase still has credits, but no try row points at it: recovery re-keys it.
+    await h.sql`update credit_tokens set remaining = 0, status = 'exhausted' where token_hash <> ${sha256Hex(token)}`;
+    const second = await buy();
+    expect(events(second.text)).toEqual([expect.objectContaining({ phase: "settled", recovered: true })]);
+    expect(buyer.purchases).toHaveLength(1);
   });
 });

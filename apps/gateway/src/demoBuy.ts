@@ -5,23 +5,27 @@ import {
 } from "@hirakumi/buyer";
 import { newId } from "@hirakumi/core";
 import {
-  findUnsettledTryPurchase, findUsableTryPack, markTryActive, markTryEnded, markTryUnsettled, reserveTryPurchase,
-  type TryPurchaseLimits,
+  expireStaleTryPurchases, findUnsettledTryPurchase, findUsableTryPack, markTryActive, markTryEnded, markTryUnsettled,
+  reserveTryPurchase, saveTrySignature, withTryApiLock, type TryPurchaseLimits, type UsableTryPack,
 } from "@hirakumi/db";
 import type { AppDeps, DemoBuyer } from "./deps";
 import { creditsRequiredBody } from "./http";
 import { primaryRule } from "./registry";
 
 /** Hard limits on live purchases from the demo wallet. Enforced here, in the database, across instances. */
-export const TRY_LIMITS: TryPurchaseLimits = { perApiWindowSeconds: 10 * 60, globalPerHour: 6 };
+export const TRY_LIMITS: TryPurchaseLimits = { perApiWindowSeconds: 10 * 60, globalPerHour: 6, globalPerDay: 24 };
 /** Never pay more than this for one pack (5 tUSDM). Also the buyer library's spend cap. */
 export const MAX_PACK_MICROS = 5_000_000n;
 /** Below this the wallet can't be trusted to cover fees and the min-ADA of the payment output. */
 export const MIN_LOVELACE = 3_000_000n;
+/** A purchase still `buying` after this crashed (the web gives up after 110 s). */
+export const BUYING_STALE_MINUTES = 10;
+/** /recover is our own gateway; past this the lock is released and the next try asks again. */
+const RECOVER_TIMEOUT_MS = 20_000;
 
 /**
  * One line of the NDJSON progress stream:
- * paying → settling (the payment is signed and sent) → settled | failed. `ready` = an existing pack is reused.
+ * paying, settling (the payment is signed and sent), then settled or failed. `ready` = an existing pack is reused.
  */
 export type BuyEvent =
   | { phase: "paying"; packId: string; calls: number; priceMicros: string; wallet: string }
@@ -46,16 +50,29 @@ function stream(res: Response): (e: BuyEvent) => void {
   return (e) => { if (!res.writableEnded && !res.destroyed) res.write(`${JSON.stringify(e)}\n`); };
 }
 
+type Refusal = { status: number; error: string; message: string; extra?: Record<string, unknown>; retryAfter?: number };
+type Plan =
+  | { kind: "ready"; pack: UsableTryPack }
+  | { kind: "recovered"; credits: number; txHash: string | null }
+  | { kind: "refuse"; refusal: Refusal }
+  | { kind: "reserved"; id: string; pack: PackOffer };
+
 /**
  * POST /internal/demo/buy-pack/:apiId: a real x402 pack purchase on Cardano preprod from Hirakumi's demo
  * buyer wallet, through the gateway's own public URL, exactly as an outside agent buys. The token is stored
- * in try_tokens for the web's "Try it live". Order: reuse a pack with credits, recover an unsettled payment,
- * price cap, limits, wallet funds, then pay.
+ * in try_tokens for the web's "Try it live". Only featured APIs (TRY_LIVE_APIS) are bought for: the payment
+ * goes to the seller, so an open endpoint would let anyone list an API and drain the demo wallet.
+ * Order, under one per-API lock: reuse a pack with credits, recover an unsettled payment, price cap, limits.
+ * Then, outside the lock: wallet funds and the payment.
  */
 export function demoBuyPack(d: AppDeps): RequestHandler {
   return async (req, res, next) => {
     try {
       const apiId = req.params.apiId;
+      if (!d.config.tryLiveApis.includes(apiId)) {
+        refuse(res, 403, "not_featured", "Live purchases are funded by Hirakumi's demo wallet, so they're on featured APIs only.");
+        return;
+      }
       const loaded = await d.registry.get(apiId, { fresh: true });
       if (!loaded || loaded.api.state !== "live") { refuse(res, 404, "api_not_found", "This API is not live."); return; }
       if (d.health.get(loaded.api.id)?.health === "down") {
@@ -67,109 +84,154 @@ export function demoBuyPack(d: AppDeps): RequestHandler {
       const buyer = d.demoBuyer;
       if (!buyer) { refuse(res, 503, "buyer_not_configured", "The demo wallet is not set up on this gateway."); return; }
 
-      const usable = await findUsableTryPack(d.sql, apiId);
-      if (usable) {
+      const plan = await withTryApiLock<Plan>(d.sql, apiId, async (tx) => {
+        await expireStaleTryPurchases(tx, apiId, BUYING_STALE_MINUTES);
+        const usable = await findUsableTryPack(tx, apiId);
+        if (usable) return { kind: "ready", pack: usable };
+
+        const unsettled = await findUnsettledTryPurchase(tx, apiId);
+        if (unsettled) {
+          const timedFetch = (u: string, init?: RequestInit) => buyer.fetch(u, { ...init, signal: AbortSignal.timeout(RECOVER_TIMEOUT_MS) });
+          const r = await recoverPack(timedFetch, d.config.publicBaseUrl, apiId, unsettled);
+          if (r.kind === "recovered") {
+            // A DB error here rolls back and leaves the row unsettled: the next try re-keys it again.
+            await markTryActive(tx, unsettled.id, "unsettled", { token: r.token, txHash: null, credits: r.credits });
+            const pack = await findUsableTryPack(tx, apiId);
+            return { kind: "recovered", credits: r.credits, txHash: pack?.txHash ?? null };
+          }
+          if (r.kind === "failed") {
+            return { kind: "refuse", refusal: { status: 503, error: "recovery_pending", message: "An earlier payment is still settling. Try again in a minute." } };
+          }
+          // 404: never received, nothing paid. 403: final. Either way that attempt is over.
+          await markTryEnded(tx, unsettled.id, "unsettled", r.kind === "not_received" ? "void" : "failed", `recovery: ${r.kind}`);
+        }
+
+        const rule = primaryRule(loaded);
+        if (!rule) return { kind: "refuse", refusal: { status: 503, error: "promise_not_published", message: "This API has no published promise yet." } };
+        // The same 402 offer an agent reads, chosen with the buyer library's own rule and cap.
+        const offer = parseCreditsRequired(creditsRequiredBody(d.config, loaded, rule), d.config.publicBaseUrl);
+        let pack: PackOffer;
+        try {
+          pack = choosePack(offer, MAX_PACK_MICROS);
+        } catch (e) {
+          if (e instanceof NoAffordablePackError) {
+            return { kind: "refuse", refusal: { status: 409, error: "price_over_cap", message: `A pack for this API costs more than ${formatMicros(MAX_PACK_MICROS)} tUSDM, the live demo's cap.` } };
+          }
+          throw e;
+        }
+        const id = newId("try");
+        const slot = await reserveTryPurchase(tx, { id, apiId, packId: pack.packId, priceMicros: pack.price, limits: TRY_LIMITS });
+        if (!slot.ok) {
+          const message = slot.reason === "api_cooldown"
+            ? `This API had a live purchase in the last 10 minutes. Try again in ${minutes(slot.retryAfterSeconds)}.`
+            : slot.reason === "global_hourly"
+              ? `The live demo made ${TRY_LIMITS.globalPerHour} purchases this hour. Try again in ${minutes(slot.retryAfterSeconds)}.`
+              : `The live demo made ${TRY_LIMITS.globalPerDay} purchases today. Try again in ${minutes(slot.retryAfterSeconds)}.`;
+          return {
+            kind: "refuse",
+            refusal: { status: 429, error: slot.reason, message, extra: { retryAfterSeconds: slot.retryAfterSeconds }, retryAfter: slot.retryAfterSeconds },
+          };
+        }
+        return { kind: "reserved", id, pack };
+      });
+
+      if (plan.kind === "ready") {
         const send = stream(res);
-        send({ phase: "ready", txHash: usable.txHash, credits: usable.remaining, pending: usable.pending, boughtAt: usable.boughtAt.toISOString() });
+        send({ phase: "ready", txHash: plan.pack.txHash, credits: plan.pack.remaining, pending: plan.pack.pending, boughtAt: plan.pack.boughtAt.toISOString() });
         res.end();
         return;
       }
-
-      const unsettled = await findUnsettledTryPurchase(d.sql, apiId);
-      if (unsettled) {
-        const r = await recoverPack(buyer.fetch, d.config.publicBaseUrl, apiId, unsettled);
-        if (r.kind === "recovered") {
-          await markTryActive(d.sql, unsettled.id, { token: r.token, txHash: null, credits: r.credits });
-          const pack = await findUsableTryPack(d.sql, apiId);
-          const send = stream(res);
-          send({ phase: "settled", txHash: pack?.txHash ?? null, credits: r.credits, ms: 0, recovered: true });
-          res.end();
-          return;
-        }
-        if (r.kind === "failed") {
-          refuse(res, 503, "recovery_pending", "An earlier payment is still settling. Try again in a minute."); return;
-        }
-        // 404: never received, nothing paid. 403: final. Either way that attempt is over.
-        await markTryEnded(d.sql, unsettled.id, r.kind === "not_received" ? "void" : "failed", `recovery: ${r.kind}`);
-      }
-
-      const rule = primaryRule(loaded);
-      if (!rule) { refuse(res, 503, "promise_not_published", "This API has no published promise yet."); return; }
-      // The same 402 offer an agent reads, chosen with the buyer library's own rule and cap.
-      const offer = parseCreditsRequired(creditsRequiredBody(d.config, loaded, rule), d.config.publicBaseUrl);
-      let pack: PackOffer;
-      try {
-        pack = choosePack(offer, MAX_PACK_MICROS);
-      } catch (e) {
-        if (e instanceof NoAffordablePackError) {
-          refuse(res, 409, "price_over_cap", `A pack for this API costs more than ${formatMicros(MAX_PACK_MICROS)} tUSDM, the live demo's cap.`);
-          return;
-        }
-        throw e;
-      }
-
-      const id = newId("try");
-      const slot = await reserveTryPurchase(d.sql, { id, apiId, packId: pack.packId, priceMicros: pack.price, limits: TRY_LIMITS });
-      if (!slot.ok) {
-        const message = slot.reason === "api_cooldown"
-          ? `This API had a live purchase in the last 10 minutes. Try again in ${minutes(slot.retryAfterSeconds)}.`
-          : `The live demo made ${TRY_LIMITS.globalPerHour} purchases this hour. Try again in ${minutes(slot.retryAfterSeconds)}.`;
-        res.set("retry-after", String(slot.retryAfterSeconds));
-        refuse(res, 429, slot.reason, message, { retryAfterSeconds: slot.retryAfterSeconds });
+      if (plan.kind === "recovered") {
+        const send = stream(res);
+        send({ phase: "settled", txHash: plan.txHash, credits: plan.credits, ms: 0, recovered: true });
+        res.end();
         return;
       }
-
-      let funds: { lovelace: bigint; usdmMicros: bigint };
-      try {
-        funds = await buyer.balance();
-      } catch (e) {
-        await markTryEnded(d.sql, id, "void", `balance: ${(e as Error).message}`);
-        refuse(res, 503, "balance_unavailable", "Couldn't read the demo wallet's balance. Try again in a minute.");
+      if (plan.kind === "refuse") {
+        if (plan.refusal.retryAfter !== undefined) res.set("retry-after", String(plan.refusal.retryAfter));
+        refuse(res, plan.refusal.status, plan.refusal.error, plan.refusal.message, plan.refusal.extra);
         return;
       }
-      if (funds.lovelace < MIN_LOVELACE) {
-        await markTryEnded(d.sql, id, "void", "low tADA");
-        refuse(res, 409, "low_funds",
-          `The demo wallet has ${formatMicros(funds.lovelace)} tADA. It needs at least ${formatMicros(MIN_LOVELACE)} tADA for fees, so nothing was bought.`);
-        return;
-      }
-      if (funds.usdmMicros < BigInt(pack.price)) {
-        await markTryEnded(d.sql, id, "void", "low tUSDM");
-        refuse(res, 409, "low_funds",
-          `The demo wallet has ${formatMicros(funds.usdmMicros)} tUSDM and the pack costs ${formatMicros(pack.price)}, so nothing was bought.`);
-        return;
-      }
-
-      const send = stream(res);
-      const started = Date.now();
-      let signed = false;
-      send({ phase: "paying", packId: pack.packId, calls: pack.calls, priceMicros: pack.price, wallet: buyer.address });
-      try {
-        const p = await buyer.buyPack(pack.buyUrl, { amount: BigInt(pack.price) }, {
-          onSigned: () => { signed = true; send({ phase: "settling" }); },
-        });
-        await markTryActive(d.sql, id, { token: p.token, txHash: p.txHash, credits: p.credits });
-        send({ phase: "settled", txHash: p.txHash, credits: p.credits, ms: Date.now() - started, recovered: false });
-      } catch (e) {
-        const detail = (e as Error)?.message ?? String(e);
-        if (e instanceof PackPurchaseError && e.paymentSignature && e.recoverySecret) {
-          await markTryUnsettled(d.sql, id, { paymentSignature: e.paymentSignature, recoverySecret: e.recoverySecret, error: detail });
-          send({ phase: "failed", spent: true, message: "The payment was sent but not confirmed yet. It is saved, and the next try picks it up without paying twice." });
-        } else if (!signed) {
-          await markTryEnded(d.sql, id, "void", detail);
-          send({ phase: "failed", spent: false, message: "The payment did not go through. Nothing was paid." });
-        } else {
-          await markTryEnded(d.sql, id, "failed", detail);
-          send({ phase: "failed", spent: true, message: "The payment was sent but the purchase failed. Check the wallet on Cardanoscan." });
-        }
-        console.error(`[demo-buy] ${apiId}: ${detail}`);
-      }
-      res.end();
+      await pay(d, res, buyer, apiId, plan.id, plan.pack);
     } catch (e) {
       if (res.headersSent) { res.end(); return; }
       next(e);
     }
   };
+}
+
+async function pay(d: AppDeps, res: Response, buyer: DemoBuyer, apiId: string, id: string, pack: PackOffer): Promise<void> {
+  let funds: { lovelace: bigint; usdmMicros: bigint };
+  try {
+    funds = await buyer.balance();
+  } catch (e) {
+    await markTryEnded(d.sql, id, "buying", "void", `balance: ${(e as Error).message}`);
+    refuse(res, 503, "balance_unavailable", "Couldn't read the demo wallet's balance. Try again in a minute.");
+    return;
+  }
+  if (funds.lovelace < MIN_LOVELACE) {
+    await markTryEnded(d.sql, id, "buying", "void", "low tADA");
+    refuse(res, 409, "low_funds",
+      `The demo wallet has ${formatMicros(funds.lovelace)} tADA. It needs at least ${formatMicros(MIN_LOVELACE)} tADA for fees, so nothing was bought.`);
+    return;
+  }
+  if (funds.usdmMicros < BigInt(pack.price)) {
+    await markTryEnded(d.sql, id, "buying", "void", "low tUSDM");
+    refuse(res, 409, "low_funds",
+      `The demo wallet has ${formatMicros(funds.usdmMicros)} tUSDM and the pack costs ${formatMicros(pack.price)}, so nothing was bought.`);
+    return;
+  }
+
+  const send = stream(res);
+  const started = Date.now();
+  // What /recover needs, saved on the row before the payment is sent (see SignedHook).
+  let saved: { paymentSignature: string; recoverySecret: string } | null = null;
+  send({ phase: "paying", packId: pack.packId, calls: pack.calls, priceMicros: pack.price, wallet: buyer.address });
+  let purchase: { token: string; credits: number; txHash: string | null };
+  try {
+    purchase = await buyer.buyPack(pack.buyUrl, { amount: BigInt(pack.price) }, {
+      onSigned: async (s) => {
+        saved = s;
+        send({ phase: "settling" });
+        try {
+          await saveTrySignature(d.sql, id, s);
+        } catch (e) {
+          console.error(`[demo-buy] ${apiId}: saving the signed payment failed: ${(e as Error).message}`);
+        }
+      },
+    });
+  } catch (e) {
+    const detail = (e as Error)?.message ?? String(e);
+    const keep = e instanceof PackPurchaseError && e.paymentSignature && e.recoverySecret
+      ? { paymentSignature: e.paymentSignature, recoverySecret: e.recoverySecret }
+      : saved;
+    if (keep) {
+      await markTryUnsettled(d.sql, id, { ...keep, error: detail });
+      send({ phase: "failed", spent: true, message: "The payment was sent but not confirmed yet. It is saved, and the next try picks it up without paying twice." });
+    } else {
+      await markTryEnded(d.sql, id, "buying", "void", detail);
+      send({ phase: "failed", spent: false, message: "The payment did not go through. Nothing was paid." });
+    }
+    console.error(`[demo-buy] ${apiId}: ${detail}`);
+    res.end();
+    return;
+  }
+
+  // The money has moved. A DB error from here on must not lose the token: keep the attempt recoverable.
+  try {
+    await markTryActive(d.sql, id, "buying", purchase);
+    send({ phase: "settled", txHash: purchase.txHash, credits: purchase.credits, ms: Date.now() - started, recovered: false });
+  } catch (e) {
+    const detail = `paid, but saving the pack failed: ${(e as Error)?.message ?? String(e)}`;
+    console.error(`[demo-buy] ${apiId}: ${detail}`);
+    if (saved) {
+      // If this write fails too, the row stays `buying` with its saved payment and expires to `unsettled`.
+      await markTryUnsettled(d.sql, id, { ...(saved as { paymentSignature: string; recoverySecret: string }), error: detail })
+        .catch((e2: unknown) => console.error(`[demo-buy] ${apiId}: ${(e2 as Error).message}`));
+    }
+    send({ phase: "failed", spent: true, message: "The payment went through but saving the pack failed. It is kept, and the next try picks it up without paying twice." });
+  }
+  res.end();
 }
 
 /** The demo buyer from BUYER_MNEMONIC + BLOCKFROST_PROJECT_ID, or null when either is missing. */

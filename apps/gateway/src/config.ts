@@ -26,7 +26,20 @@ export type GatewayConfig = {
    * these ranges get START_JOB_TRUSTED_LIMIT per minute per address instead of 10. Normalised, empty by default.
    */
   startJobTrustedCidrs: string[];
+  /**
+   * TRY_LIVE_APIS: the featured APIs the demo wallet may buy live packs for (comma list). A live purchase pays
+   * the seller from Hirakumi's wallet, so any other API is refused; otherwise anyone could list an API and drain it.
+   */
+  tryLiveApis: string[];
 };
+
+export const DEFAULT_TRY_LIVE_APIS = ["api_eejiaioyqt"];
+
+/** "a, b" to ["a", "b"]; unset gives the default featured list; an empty string gives none. */
+export function parseTryLiveApis(raw: string | undefined): string[] {
+  if (raw === undefined) return [...DEFAULT_TRY_LIVE_APIS];
+  return [...new Set(raw.split(",").map((s) => s.trim()).filter(Boolean))];
+}
 
 export type PackEscrowConfig = {
   feeAddress: string;
@@ -80,6 +93,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     masumi: psUrl && psToken ? { baseUrl: psUrl, token: psToken } : null,
     ...packEscrowFrom(env, demoMode),
     startJobTrustedCidrs: parseTrustedCidrs(env.START_JOB_TRUSTED_CIDRS),
+    tryLiveApis: parseTryLiveApis(env.TRY_LIVE_APIS),
   };
 }
 

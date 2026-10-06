@@ -1,5 +1,9 @@
 import { sha256Hex } from "@hirakumi/core";
+import type postgres from "postgres";
 import type { Sql } from "./client";
+
+/** A pool or a transaction: the purchase steps below run inside withTryApiLock's transaction. */
+type Q = Sql | postgres.TransactionSql;
 
 /** A live-demo pack that can still pay for calls: its credit token is active (or settling) with credits left. */
 export type UsableTryPack = {
@@ -8,7 +12,7 @@ export type UsableTryPack = {
 };
 
 /** The newest live-demo pack for this API whose credit token still has credits. */
-export async function findUsableTryPack(sql: Sql, apiId: string): Promise<UsableTryPack | null> {
+export async function findUsableTryPack(sql: Q, apiId: string): Promise<UsableTryPack | null> {
   const [row] = await sql<{
     id: string; token: string; credit_token_id: string; pack_id: string | null; tx_hash: string | null;
     remaining: number; status: string; created_at: Date;
@@ -28,7 +32,7 @@ export async function findUsableTryPack(sql: Sql, apiId: string): Promise<Usable
 export type UnsettledTryPurchase = { id: string; packId: string; paymentSignature: string; recoverySecret: string; createdAt: Date };
 
 /** The newest purchase whose payment was signed but whose answer was lost: /recover can still re-key it. */
-export async function findUnsettledTryPurchase(sql: Sql, apiId: string): Promise<UnsettledTryPurchase | null> {
+export async function findUnsettledTryPurchase(sql: Q, apiId: string): Promise<UnsettledTryPurchase | null> {
   const [row] = await sql<{ id: string; pack_id: string; payment_signature: string; recovery_secret: string; created_at: Date }[]>`
     select id, pack_id, payment_signature, recovery_secret, created_at from try_tokens
     where api_id = ${apiId} and status = 'unsettled' and pack_id is not null
@@ -39,66 +43,119 @@ export async function findUnsettledTryPurchase(sql: Sql, apiId: string): Promise
     : null;
 }
 
-export type TryPurchaseLimits = { perApiWindowSeconds: number; globalPerHour: number };
+export type TryPurchaseLimits = { perApiWindowSeconds: number; globalPerHour: number; globalPerDay: number };
 export type TryPurchaseSlot =
   | { ok: true }
-  | { ok: false; reason: "api_cooldown" | "global_hourly"; retryAfterSeconds: number };
+  | { ok: false; reason: "api_cooldown" | "global_hourly" | "global_daily"; retryAfterSeconds: number };
 
 const TRY_LOCK_KEY = 727275; // serialises the limit check and the insert across gateway instances
+const TRY_API_LOCK_NS = 727276; // with hashtext(api_id): one purchase sequence per API at a time
+
+/**
+ * Runs fn in one transaction holding a per-API advisory lock, so reuse, recovery and reservation for one API
+ * never interleave across requests or gateway instances. The lock is released at commit or rollback, also
+ * when the process dies. A waiter gives up after lockTimeoutSeconds instead of hanging.
+ */
+export async function withTryApiLock<T>(
+  sql: Sql, apiId: string, fn: (tx: postgres.TransactionSql) => Promise<T>, lockTimeoutSeconds = 30,
+): Promise<T> {
+  return sql.begin(async (tx) => {
+    await tx.unsafe(`set local lock_timeout = '${Math.max(1, Math.floor(lockTimeoutSeconds))}s'`);
+    await tx`select pg_advisory_xact_lock(${TRY_API_LOCK_NS}, hashtext(${apiId}))`;
+    return fn(tx);
+  }) as Promise<T>;
+}
+
+/**
+ * A `buying` row older than staleMinutes belongs to a purchase that crashed. With its saved payment it becomes
+ * `unsettled` (recoverable through /recover); without one nothing can be recovered, so it is `failed`
+ * (it still counts toward the limits, since it may have spent).
+ */
+export async function expireStaleTryPurchases(sql: Q, apiId: string, staleMinutes: number): Promise<void> {
+  await sql`
+    update try_tokens set
+      status = case when payment_signature is not null and recovery_secret is not null then 'unsettled' else 'failed' end,
+      error = coalesce(error, 'stuck in buying: the purchase did not finish')
+    where api_id = ${apiId} and status = 'buying' and created_at < now() - make_interval(mins => ${staleMinutes})`;
+}
+
+type ReserveInput = { id: string; apiId: string; packId: string; priceMicros: string; limits: TryPurchaseLimits };
 
 /**
  * Claims a purchase slot, or says which limit refuses it. Every attempt that may have spent counts: only
  * `void` rows (nothing was signed) are left out. Check and insert happen under one advisory lock, so two
- * clicks at once can never both pass.
+ * clicks at once can never both pass. Pass a transaction to join it, or a pool to run in its own.
  */
-export async function reserveTryPurchase(
-  sql: Sql,
-  p: { id: string; apiId: string; packId: string; priceMicros: string; limits: TryPurchaseLimits },
-): Promise<TryPurchaseSlot> {
-  return sql.begin(async (tx) => {
-    await tx.unsafe(`select pg_advisory_xact_lock(${TRY_LOCK_KEY})`);
-    const [api] = await tx<{ last: Date | null }[]>`
-      select max(created_at) as last from try_tokens
-      where api_id = ${p.apiId} and status <> 'void' and created_at > now() - make_interval(secs => ${p.limits.perApiWindowSeconds})`;
-    if (api.last) {
-      const left = p.limits.perApiWindowSeconds - Math.floor((Date.now() - api.last.getTime()) / 1000);
-      return { ok: false as const, reason: "api_cooldown" as const, retryAfterSeconds: Math.max(1, left) };
-    }
-    const recent = await tx<{ created_at: Date }[]>`
-      select created_at from try_tokens
-      where status <> 'void' and created_at > now() - interval '1 hour'
-      order by created_at asc`;
-    if (recent.length >= p.limits.globalPerHour) {
-      // A slot frees up when the oldest attempt that still counts leaves the hour.
-      const oldest = recent[recent.length - p.limits.globalPerHour].created_at;
-      const left = 3600 - Math.floor((Date.now() - oldest.getTime()) / 1000);
-      return { ok: false as const, reason: "global_hourly" as const, retryAfterSeconds: Math.max(1, left) };
-    }
-    await tx`
-      insert into try_tokens (id, api_id, status, pack_id, price_micros)
-      values (${p.id}, ${p.apiId}, 'buying', ${p.packId}, ${p.priceMicros})`;
-    return { ok: true as const };
-  });
+export async function reserveTryPurchase(sql: Q, p: ReserveInput): Promise<TryPurchaseSlot> {
+  if ("begin" in sql) return sql.begin((tx) => reserveIn(tx, p)) as Promise<TryPurchaseSlot>;
+  return reserveIn(sql, p);
 }
 
-export async function markTryActive(sql: Sql, id: string, r: { token: string; txHash: string | null; credits: number }): Promise<void> {
-  await sql`
+async function reserveIn(tx: postgres.TransactionSql, p: ReserveInput): Promise<TryPurchaseSlot> {
+  await tx.unsafe(`select pg_advisory_xact_lock(${TRY_LOCK_KEY})`);
+  const [api] = await tx<{ last: Date | null }[]>`
+    select max(created_at) as last from try_tokens
+    where api_id = ${p.apiId} and status <> 'void' and created_at > now() - make_interval(secs => ${p.limits.perApiWindowSeconds})`;
+  if (api.last) {
+    const left = p.limits.perApiWindowSeconds - Math.floor((Date.now() - api.last.getTime()) / 1000);
+    return { ok: false, reason: "api_cooldown", retryAfterSeconds: Math.max(1, left) };
+  }
+  const windows = [
+    { reason: "global_hourly" as const, seconds: 3600, max: p.limits.globalPerHour },
+    { reason: "global_daily" as const, seconds: 86_400, max: p.limits.globalPerDay },
+  ];
+  for (const w of windows) {
+    const recent = await tx<{ created_at: Date }[]>`
+      select created_at from try_tokens
+      where status <> 'void' and created_at > now() - make_interval(secs => ${w.seconds})
+      order by created_at asc`;
+    if (recent.length >= w.max) {
+      // A slot frees up when the oldest attempt that still counts leaves the window.
+      const oldest = recent[recent.length - w.max].created_at;
+      const left = w.seconds - Math.floor((Date.now() - oldest.getTime()) / 1000);
+      return { ok: false, reason: w.reason, retryAfterSeconds: Math.max(1, left) };
+    }
+  }
+  await tx`
+    insert into try_tokens (id, api_id, status, pack_id, price_micros)
+    values (${p.id}, ${p.apiId}, 'buying', ${p.packId}, ${p.priceMicros})`;
+  return { ok: true };
+}
+
+export type TryStatus = "buying" | "active" | "unsettled" | "void" | "failed";
+
+/** Compare-and-set: each mark changes the row only while it still has the expected status. True when it did. */
+export async function markTryActive(
+  sql: Q, id: string, expected: TryStatus, r: { token: string; txHash: string | null; credits: number },
+): Promise<boolean> {
+  const done = await sql`
     update try_tokens set status = 'active', token = ${r.token}, token_hash = ${sha256Hex(r.token)},
       tx_hash = coalesce(${r.txHash}, tx_hash), credits = ${r.credits}, settled_at = now(),
       payment_signature = null, recovery_secret = null, error = null
-    where id = ${id}`;
+    where id = ${id} and status = ${expected}`;
+  return done.count === 1;
 }
 
-export async function markTryUnsettled(sql: Sql, id: string, r: { paymentSignature: string; recoverySecret: string; error: string }): Promise<void> {
-  await sql`
+/** Saved the moment the payment is signed, before it is sent: a crash after this stays recoverable. */
+export async function saveTrySignature(sql: Q, id: string, r: { paymentSignature: string; recoverySecret: string }): Promise<boolean> {
+  const done = await sql`
+    update try_tokens set payment_signature = ${r.paymentSignature}, recovery_secret = ${r.recoverySecret}
+    where id = ${id} and status = 'buying'`;
+  return done.count === 1;
+}
+
+export async function markTryUnsettled(sql: Q, id: string, r: { paymentSignature: string; recoverySecret: string; error: string }): Promise<boolean> {
+  const done = await sql`
     update try_tokens set status = 'unsettled', payment_signature = ${r.paymentSignature},
       recovery_secret = ${r.recoverySecret}, error = ${r.error.slice(0, 500)}
-    where id = ${id}`;
+    where id = ${id} and status = 'buying'`;
+  return done.count === 1;
 }
 
 /** void: nothing was signed, so nothing was spent and the attempt does not count toward the limits. */
-export async function markTryEnded(sql: Sql, id: string, status: "void" | "failed", error: string): Promise<void> {
-  await sql`
+export async function markTryEnded(sql: Q, id: string, expected: TryStatus, status: "void" | "failed", error: string): Promise<boolean> {
+  const done = await sql`
     update try_tokens set status = ${status}, error = ${error.slice(0, 500)}, payment_signature = null, recovery_secret = null
-    where id = ${id}`;
+    where id = ${id} and status = ${expected}`;
+  return done.count === 1;
 }
