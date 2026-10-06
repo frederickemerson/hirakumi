@@ -37,8 +37,12 @@ describe("describeTryResult", () => {
     expect(r.kind).toBe("not_kept");
     expect(r.reasons).toEqual(["price is too old"]);
   });
-  it("402 is the payment offer an agent sees", () => {
-    expect(describeTryResult(402, { accepts: [] }).kind).toBe("payment_required");
+  it("402 with a token means the pack is used up", () => {
+    expect(describeTryResult(402, { error: "credits_required" })).toMatchObject({ kind: "used_up", headline: "This pack is used up. Buy a new one live." });
+  });
+  it("401 token_pending means the pack payment is still settling; any other 401 is an error", () => {
+    expect(describeTryResult(401, { error: "token_pending" }).kind).toBe("pending");
+    expect(describeTryResult(401, { error: "invalid_token" }).kind).toBe("error");
   });
   it("503 is down", () => {
     expect(describeTryResult(503, { error: "down" }).kind).toBe("down");

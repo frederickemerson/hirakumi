@@ -3,12 +3,14 @@ import { notFound } from "next/navigation";
 import { HealthBadge } from "@/components/health-badge";
 import { RegistryCard } from "@/components/registry-card";
 import { TryConsole, type TryOp } from "@/components/try-console";
+import { TRY_DOWN_REASON } from "@/components/try-live-link";
 import { getSql } from "@/lib/db";
 import { env } from "@/lib/env";
 import { getLiveApi } from "@/lib/repo/apis";
+import { getPack } from "@/lib/repo/packs";
 import { listLatestRules } from "@/lib/repo/rules";
-import { fieldsFromSchema, parseTryTokens } from "@/lib/try";
-import { demoCreditsLeft, listTryOperations } from "@/lib/try-repo";
+import { envTryToken, fieldsFromSchema } from "@/lib/try";
+import { findTryPack, listTryOperations } from "@/lib/try-repo";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +19,9 @@ export default async function TryApiPage({ params }: { params: Promise<{ apiId: 
   const sql = getSql();
   const api = await getLiveApi(sql, apiId);
   if (!api) notFound();
-  const [rows, rules] = await Promise.all([listTryOperations(sql, apiId), listLatestRules(sql, apiId)]);
+  const [rows, rules, pack, offer] = await Promise.all([
+    listTryOperations(sql, apiId), listLatestRules(sql, apiId), findTryPack(sql, apiId, envTryToken(apiId)), getPack(sql, apiId),
+  ]);
   const ops: TryOp[] = rows.map((r) => ({
     opId: r.opId,
     method: r.method,
@@ -26,9 +30,6 @@ export default async function TryApiPage({ params }: { params: Promise<{ apiId: 
     promise: rules.find((p) => p.opId === r.opId)?.plainEnglish ?? null,
     fields: fieldsFromSchema(r.inputSchema),
   }));
-  const demoToken = parseTryTokens(process.env.TRY_CREDIT_TOKENS)[apiId];
-  const creditsLeft = demoToken ? await demoCreditsLeft(sql, demoToken) : null;
-  const hasDemoCredits = creditsLeft !== null;
   return (
     <section className="space-y-8">
       <div className="space-y-3">
@@ -40,12 +41,17 @@ export default async function TryApiPage({ params }: { params: Promise<{ apiId: 
           <HealthBadge state={api.state} health={api.health} checkedAt={api.healthCheckedAt} />
         </div>
         <p className="max-w-2xl text-body-lg text-graphite">
-          {hasDemoCredits
-            ? "Each paid try uses one real credit from a demo pack bought on Cardano preprod. The credit is only used when the answer keeps the promise."
-            : "This API has no demo credits left, so you can see the payment offer an agent gets, but not a paid answer."}
+          Use it like a real agent: buy a credit pack with a real payment on Cardano preprod, then call the API through Hirakumi.
+          A credit is used only when the answer keeps the promise.
         </p>
       </div>
-      <TryConsole apiId={apiId} ops={ops} hasDemoCredits={hasDemoCredits} initialCredits={creditsLeft} />
+      <TryConsole
+        apiId={apiId}
+        ops={ops}
+        initialPack={pack ? { credits: pack.remaining, txHash: pack.txHash, pending: pack.pending } : null}
+        packPrice={offer ? { calls: offer.calls, priceMicros: offer.priceMicros } : null}
+        downReason={api.health === "down" ? TRY_DOWN_REASON : null}
+      />
       <RegistryCard agentIdentifier={api.agentIdentifier} agentBaseUrl={`${env.publicBaseUrl()}/a/${apiId}`} />
     </section>
   );

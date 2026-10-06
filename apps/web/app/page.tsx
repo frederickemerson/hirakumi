@@ -11,10 +11,12 @@ import { ScrubText, type Paragraph } from "@/components/landing/scrub-text";
 import { SmoothScroll } from "@/components/landing/smooth-scroll";
 import { StepLine } from "@/components/landing/step-line";
 import { ListApiLink } from "@/components/list-api-link";
+import { tryHref } from "@/components/try-live-link";
+import { DEMO_API_ID } from "@/lib/demo";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-const DEMO_API = "/p/api_eejiaioyqt";
+const DEMO_API = `/p/${DEMO_API_ID}`;
 const PRIMARY_CTA = "List your API";
 const SECONDARY_CTA = "Try a live API";
 
@@ -118,7 +120,7 @@ export default function Home() {
             </p>
             <div className="mt-8 flex flex-col items-stretch gap-4 animate-rise [animation-delay:140ms] sm:flex-row sm:items-center">
               <ListApiLink className={buttonVariants({ size: "lg" })}>{PRIMARY_CTA}</ListApiLink>
-              <Link href={`${DEMO_API}/try`} className={buttonVariants({ variant: "outline", size: "lg" })}>
+              <Link href={tryHref(DEMO_API_ID)} className={buttonVariants({ variant: "outline", size: "lg" })}>
                 {SECONDARY_CTA}
               </Link>
             </div>
@@ -263,7 +265,7 @@ export default function Home() {
           </p>
           <div className="mt-8 flex w-full flex-col items-stretch gap-4 sm:w-auto sm:flex-row">
             <ListApiLink className={buttonVariants({ size: "lg" })}>{PRIMARY_CTA}</ListApiLink>
-            <Link href={`${DEMO_API}/try`} className={buttonVariants({ variant: "outline", size: "lg" })}>{SECONDARY_CTA}</Link>
+            <Link href={tryHref(DEMO_API_ID)} className={buttonVariants({ variant: "outline", size: "lg" })}>{SECONDARY_CTA}</Link>
           </div>
         </Reveal>
       </section>

@@ -6,6 +6,7 @@ import { ListApiLink } from "@/components/list-api-link";
 import { RegistryCard } from "@/components/registry-card";
 import { OverviewStatGrid } from "@/components/stat";
 import { StatusPanel } from "@/components/status-panel";
+import { TryLiveLink } from "@/components/try-live-link";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { getSql } from "@/lib/db";
@@ -50,7 +51,7 @@ export default async function DemoSellerPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-4">
-          <Link href={`/p/${api.id}/try`} className={buttonVariants()}>Try it live</Link>
+          <TryLiveLink apiId={api.id} state={api.state} health={api.health} />
           <Link href={`/p/${api.id}`} className={buttonVariants({ variant: "outline" })}>Public status page</Link>
         </div>
       </div>

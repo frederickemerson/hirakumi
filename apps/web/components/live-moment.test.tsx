@@ -25,4 +25,11 @@ describe("LiveMoment", () => {
     render(<LiveMoment apiId="api_1" liveSince={liveSince} registryUrl={url} />);
     expect(screen.queryByRole("heading", { name: "Your API is live" })).toBeNull();
   });
+
+  it("if the API is already Down, the try button is disabled and says why", async () => {
+    render(<LiveMoment apiId="api_2" liveSince={new Date(Date.now() - 60_000).toISOString()} registryUrl={null} health="down" />);
+    expect(await screen.findByRole("heading", { name: "Your API is live" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Try it live" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Try it live" })).toBeDisabled();
+  });
 });

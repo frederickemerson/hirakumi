@@ -1,8 +1,16 @@
 /** "Try it live": a visitor calls a live API through the real gateway, paid with a demo credit pack. */
 
 export type TryOperation = { opId: string; method: string };
-export type TryKind = "kept" | "not_kept" | "payment_required" | "down" | "invalid_input" | "error";
+export type TryKind = "kept" | "not_kept" | "used_up" | "pending" | "down" | "invalid_input" | "error";
 export type TryResult = { kind: TryKind; headline: string; reasons: string[] };
+/** What a paid call left behind: the same fields the buyer's /receipts shows. */
+export type TryReceipt = {
+  verdict: "kept" | "not_kept" | "no_charge";
+  creditsLeft: number | null;
+  /** MIP-004 output hash of a paid answer: sha256(token id + ";" + exact body). Null when no answer was paid for. */
+  outputHash: string | null;
+  receiptsUrl: string;
+};
 
 /** Gateway credit route: GET input goes in the query string, any other method sends it as the JSON body. */
 export function buildGatewayCall(
@@ -39,8 +47,11 @@ export function describeTryResult(status: number, body: unknown): TryResult {
   const reasons = reasonsOf(body);
   if (status === 200) return { kind: "kept", headline: "Promise kept. One credit used.", reasons };
   if (status === 422) return { kind: "not_kept", headline: "Promise not kept. No credit used.", reasons };
-  if (status === 402) return { kind: "payment_required", headline: "Payment required. This is the offer a buying agent sees.", reasons };
-  if (status === 503) return { kind: "down", headline: "The API is Down right now, so nobody is charged.", reasons };
+  if (status === 402) return { kind: "used_up", headline: "This pack is used up. Buy a new one live.", reasons };
+  if (status === 401 && (body as { error?: unknown } | null)?.error === "token_pending") {
+    return { kind: "pending", headline: "The pack payment is still settling. Try again in a few seconds.", reasons };
+  }
+  if (status === 503) return { kind: "down", headline: "The API is Down right now. No credit used.", reasons };
   if (status === 400) return { kind: "invalid_input", headline: "That input doesn't fit this endpoint.", reasons };
   return { kind: "error", headline: `Something went wrong (HTTP ${status}). No credit used.`, reasons };
 }
@@ -56,6 +67,11 @@ export function parseTryTokens(raw: string | undefined): Record<string, string> 
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
   return Object.fromEntries(Object.entries(parsed).filter((e): e is [string, string] => typeof e[1] === "string" && e[1] !== ""));
+}
+
+/** This API's TRY_CREDIT_TOKENS fallback token, if any. Server-side only. */
+export function envTryToken(apiId: string): string | undefined {
+  return parseTryTokens(process.env.TRY_CREDIT_TOKENS)[apiId];
 }
 
 /** Best-effort, per-instance limit so one visitor can't drain the demo pack. */
