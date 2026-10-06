@@ -1,4 +1,5 @@
 import { isIP } from "node:net";
+import { DEFAULT_SETTLEMENT_POLICY, type SettlementPolicy } from "@hirakumi/core";
 import { walletKeys } from "@hirakumi/escrow/txs";
 import type { HealthThresholds } from "./health";
 
@@ -17,9 +18,14 @@ export type GatewayConfig = {
   escrow: { payByMs: number; submitResultMs: number; unit: string };
   blockfrostProjectId: string | null;
   masumi: { baseUrl: string; token: string } | null;
-  /** `direct` (default): packs pay the seller. `escrow`: packs lock at the pack_escrow script. */
-  packMode: "direct" | "escrow";
+  /**
+   * `hybrid` (default): the settlement policy picks per purchase (packages/core settlement.ts); without
+   * packEscrow it settles direct. `direct`: packs pay the seller. `escrow`: packs lock at the pack_escrow script.
+   */
+  packMode: PackMode;
   packEscrow: PackEscrowConfig | null;
+  /** PACK_MODE=hybrid thresholds: SETTLEMENT_ESCROW_FROM_MICROS, SETTLEMENT_MIN_UPTIME_PCT, SETTLEMENT_MIN_LISTING_DAYS. */
+  settlement: SettlementPolicy;
   /**
    * START_JOB_TRUSTED_CIDRS: source ranges of Sokosumi's backend / Masumi purchaser nodes. MIP-003 start_job carries
    * no signature or key (Sokosumi sends only Content-Type), so the address Caddy saw is the only signal. Callers in
@@ -32,6 +38,8 @@ export type GatewayConfig = {
    */
   tryLiveApis: string[];
 };
+
+export type PackMode = "direct" | "escrow" | "hybrid";
 
 export const DEFAULT_TRY_LIVE_APIS = ["api_eejiaioyqt"];
 
@@ -92,6 +100,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     blockfrostProjectId: env.BLOCKFROST_PROJECT_ID?.trim() || null,
     masumi: psUrl && psToken ? { baseUrl: psUrl, token: psToken } : null,
     ...packEscrowFrom(env, demoMode),
+    settlement: settlementFrom(env),
     startJobTrustedCidrs: parseTrustedCidrs(env.START_JOB_TRUSTED_CIDRS),
     tryLiveApis: parseTryLiveApis(env.TRY_LIVE_APIS),
   };
@@ -114,16 +123,21 @@ export function parseTrustedCidrs(raw: string | undefined): string[] {
 }
 
 function packEscrowFrom(env: NodeJS.ProcessEnv, demoMode: boolean): Pick<GatewayConfig, "packMode" | "packEscrow"> {
-  // Escrow is the default: pack money sits in the pack_escrow contract and the seller is paid per signed call.
-  // PACK_MODE=direct (packs pay the seller at purchase) stays as an explicit fallback.
-  const mode = env.PACK_MODE?.trim() || "escrow";
-  if (mode !== "direct" && mode !== "escrow") throw new Error("PACK_MODE must be direct or escrow");
+  // Hybrid is the default: the settlement policy picks direct or escrow per purchase. direct and escrow stay explicit.
+  const mode = env.PACK_MODE?.trim() || "hybrid";
+  if (mode !== "direct" && mode !== "escrow" && mode !== "hybrid") throw new Error("PACK_MODE must be direct, escrow or hybrid");
   if (mode === "direct") return { packMode: "direct", packEscrow: null };
   const feeAddress = env.HIRAKUMI_FEE_ADDRESS?.trim();
-  if (!feeAddress?.startsWith("addr_test1")) throw new Error("PACK_MODE=escrow needs HIRAKUMI_FEE_ADDRESS (a preprod address)");
   const operatorMnemonic = env.OPERATOR_MNEMONIC?.trim() || null;
-  const closerVkh = (operatorMnemonic ? walletKeys(operatorMnemonic).vkh : env.ESCROW_CLOSER_VKH?.trim().toLowerCase()) ?? "";
-  if (!/^[0-9a-f]{56}$/.test(closerVkh)) throw new Error("PACK_MODE=escrow needs OPERATOR_MNEMONIC or ESCROW_CLOSER_VKH (28-byte hex)");
+  const closerHex = env.ESCROW_CLOSER_VKH?.trim().toLowerCase();
+  // Hybrid without escrow settings still runs: every pack settles direct and the 402 says what the policy recommended.
+  if (mode === "hybrid" && (!feeAddress || (!operatorMnemonic && !closerHex))) {
+    console.warn("[config] PACK_MODE=hybrid without HIRAKUMI_FEE_ADDRESS and OPERATOR_MNEMONIC or ESCROW_CLOSER_VKH: every pack settles direct");
+    return { packMode: "hybrid", packEscrow: null };
+  }
+  if (!feeAddress?.startsWith("addr_test1")) throw new Error(`PACK_MODE=${mode} needs HIRAKUMI_FEE_ADDRESS (a preprod address)`);
+  const closerVkh = (operatorMnemonic ? walletKeys(operatorMnemonic).vkh : closerHex) ?? "";
+  if (!/^[0-9a-f]{56}$/.test(closerVkh)) throw new Error(`PACK_MODE=${mode} needs OPERATOR_MNEMONIC or ESCROW_CLOSER_VKH (28-byte hex)`);
   const int = (k: string, dflt: number) => {
     const v = env[k]?.trim();
     if (!v) return dflt;
@@ -131,7 +145,7 @@ function packEscrowFrom(env: NodeJS.ProcessEnv, demoMode: boolean): Pick<Gateway
     return Number(v);
   };
   return {
-    packMode: "escrow",
+    packMode: mode,
     packEscrow: {
       feeAddress, closerVkh, operatorMnemonic,
       feeBps: int("HIRAKUMI_FEE_BPS", 300),
@@ -140,6 +154,24 @@ function packEscrowFrom(env: NodeJS.ProcessEnv, demoMode: boolean): Pick<Gateway
       leaseSeconds: 30,
       raiseMarginMs: 60_000,
     },
+  };
+}
+
+function settlementFrom(env: NodeJS.ProcessEnv): SettlementPolicy {
+  const d = DEFAULT_SETTLEMENT_POLICY;
+  const num = (k: string, ok: (n: number) => boolean, what: string): number | null => {
+    const v = env[k]?.trim();
+    if (!v) return null;
+    const n = Number(v);
+    if (!/^\d+(\.\d+)?$/.test(v) || !ok(n)) throw new Error(`${k} must be ${what}`);
+    return n;
+  };
+  const micros = env.SETTLEMENT_ESCROW_FROM_MICROS?.trim();
+  if (micros && !/^\d+$/.test(micros)) throw new Error("SETTLEMENT_ESCROW_FROM_MICROS must be a whole number of micros");
+  return {
+    escrowFromMicros: micros ? BigInt(micros) : d.escrowFromMicros,
+    minUptimePct: num("SETTLEMENT_MIN_UPTIME_PCT", (n) => n <= 100, "a percentage from 0 to 100") ?? d.minUptimePct,
+    minListingDays: num("SETTLEMENT_MIN_LISTING_DAYS", () => true, "a number of days") ?? d.minListingDays,
   };
 }
 

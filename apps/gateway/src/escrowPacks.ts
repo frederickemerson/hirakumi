@@ -36,6 +36,16 @@ export function buyerKeys(
   return { receiptKey, refundAddress };
 }
 
+/**
+ * PACK_MODE=hybrid: null when the buyer sent neither header (a plain x402 buyer: direct). Either header present
+ * means the buyer wants escrow, so both are then checked exactly as in escrow mode.
+ */
+export function hybridBuyerKeys(header: (name: string) => string | undefined): ReturnType<typeof buyerKeys> | null {
+  const blank = (n: string) => !header(n)?.trim();
+  if (blank("x-hirakumi-receipt-key") && blank("x-hirakumi-refund-address")) return null;
+  return buyerKeys(header);
+}
+
 export const quoteKey = (apiId: string, packId: string, b: BuyerKeys) =>
   sha256Hex(`${apiId}|${packId}|${b.receiptKey}|${b.refundAddress}`);
 
