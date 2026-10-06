@@ -418,33 +418,45 @@ html.lenis, html.lenis body {
 }
 
 /*
- * Seller guide (components/seller-guide.tsx). Below lg it is a bottom sheet: hidden off-screen until
- * opened, and `visibility` flips only after the slide so it also leaves the tab order. From lg up it is
- * a plain sticky column, always shown. Enter is a little slower than exit.
+ * "Ask Hirakumi" panel (components/ask-hirakumi.tsx): a bottom sheet below md, a right-hand drawer from md up.
+ * Only transform and opacity animate. `visibility` flips after the exit, so the closed panel also leaves the
+ * tab order. Enter 240ms, exit 180ms. With reduced motion it appears and disappears without moving.
  */
-@media (max-width: 1023.98px) {
-  .guide-sheet {
-    transform: translateY(100%);
-    visibility: hidden;
-    transition: transform 220ms cubic-bezier(0.3, 0, 1, 1), visibility 0s linear 220ms;
-  }
-  .guide-sheet[data-open] {
-    transform: translateY(0);
-    visibility: visible;
-    transition: transform 300ms var(--ease-snap), visibility 0s linear 0s;
-  }
-  .guide-scrim {
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 200ms ease-out;
-  }
-  .guide-scrim[data-open] {
-    opacity: 1;
-    pointer-events: auto;
+.ask-panel {
+  transform: translateY(100%);
+  opacity: 0;
+  visibility: hidden;
+  transition: transform 180ms cubic-bezier(0.3, 0, 1, 1), opacity 180ms ease-in, visibility 0s linear 180ms;
+}
+.ask-panel[data-open] {
+  transform: none;
+  opacity: 1;
+  visibility: visible;
+  transition: transform 240ms var(--ease-snap), opacity 160ms ease-out, visibility 0s linear 0s;
+}
+@media (min-width: 48rem) {
+  .ask-panel:not([data-open]) {
+    transform: translateX(100%);
   }
 }
+.ask-scrim {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease-out;
+}
+.ask-scrim[data-open] {
+  opacity: 1;
+  pointer-events: auto;
+}
 @media (prefers-reduced-motion: reduce) {
-  .guide-sheet, .guide-sheet[data-open], .guide-scrim {
-    transition: none !important;
+  .ask-panel, .ask-panel[data-open] {
+    transform: none;
+    transition: visibility 0s;
+  }
+  .ask-panel:not([data-open]) {
+    transform: none;
+  }
+  .ask-scrim {
+    transition: none;
   }
 }

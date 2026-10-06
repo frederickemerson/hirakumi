@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
 import { JetBrains_Mono } from "next/font/google";
+import { AskHirakumi } from "@/components/ask-hirakumi";
 import { RouteProgress } from "@/components/route-progress";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
@@ -35,6 +36,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <main className="mx-auto w-full max-w-[1200px] flex-1 px-4 py-10">{children}</main>
         <SiteFooter />
         <Toaster />
+        {/* A client island: the general help chat, on every page, kept across navigations. */}
+        <AskHirakumi />
       </body>
     </html>
   );
