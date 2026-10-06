@@ -34,6 +34,7 @@ export async function POST(req: Request, ctx: ApiRouteContext): Promise<Response
   const ok = await verifyCip30Signature(challenge.message, { signature: body.signature, key: body.key }, session.addr);
   if (!ok) return errorJson(401, "The signature didn't match this message and your wallet. Start the signing step again.");
   const done = await finalizeOwnership(sql, { apiId: api.id, walletChallengeId: challenge.id, signature: body.signature, key: body.key });
-  if (!done) return errorJson(409, "This signing request expired or was already used. Start the signing step again.");
-  return json({ state: "ownership_verified" });
+  if (!done.ok && done.reason === "base_taken") return errorJson(409, done.message);
+  if (!done.ok) return errorJson(409, "This signing request expired or was already used. Start the signing step again.");
+  return json({ state: "ownership_verified", warnings: done.warnings });
 }

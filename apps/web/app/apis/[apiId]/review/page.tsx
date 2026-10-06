@@ -2,10 +2,11 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { ReviewPanel } from "@/components/review-panel";
 import { LiveProgress } from "@/components/live-progress";
-import { ErrorState, WaitingState } from "@/components/states";
+import { ErrorState, NoticeList, WaitingState } from "@/components/states";
 import { getSql } from "@/lib/db";
 import { stepForState } from "@/lib/flow";
 import { loadApiPage } from "@/lib/page-auth";
+import { listingBaseNotes } from "@/lib/repo/apis";
 import { loadProgress } from "@/lib/repo/progress";
 import { getPack } from "@/lib/repo/packs";
 import { listLatestRules } from "@/lib/repo/rules";
@@ -17,6 +18,7 @@ export default async function ReviewPage({ params }: { params: Promise<{ apiId: 
   const { api } = await loadApiPage(apiId, `/apis/${apiId}/review`);
   const sql = getSql();
   const heading = <h1 className="text-h font-medium uppercase">Review and publish</h1>;
+  const overlaps = <NoticeList items={(await listingBaseNotes(sql, apiId)).warnings} />;
 
   if (api.state === "ownership_verified") {
     const progress = await loadProgress(sql, api);
@@ -24,6 +26,7 @@ export default async function ReviewPage({ params }: { params: Promise<{ apiId: 
     return (
       <section className="space-y-6">
         {heading}
+        {overlaps}
         {failure ? (
           <ErrorState title="Your test calls didn't pass" detail={failure} />
         ) : (
@@ -42,6 +45,7 @@ export default async function ReviewPage({ params }: { params: Promise<{ apiId: 
   return (
     <section className="space-y-6">
       {heading}
+      {overlaps}
       {promises.length === 0 ? (
         <WaitingState title="Writing your promise" detail="The test calls finished; the promise appears here in a moment." />
       ) : (

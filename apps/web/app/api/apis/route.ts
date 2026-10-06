@@ -1,7 +1,7 @@
 import { getSql } from "@/lib/db";
 import { env } from "@/lib/env";
 import { errorJson, json, readJson, requireSeller } from "@/lib/http";
-import { createApi, createApiForTask, findCoworkerTask } from "@/lib/repo/apis";
+import { createApi, createApiForTask, findCoworkerTask, LISTED_BY_OTHER } from "@/lib/repo/apis";
 import { validateApiName, validateOpenApiUrl, ValidationError } from "@/lib/validate";
 
 export async function POST(req: Request): Promise<Response> {
@@ -25,6 +25,7 @@ export async function POST(req: Request): Promise<Response> {
     } else {
       result = await createApi(getSql(), input);
     }
+    if ("takenByOther" in result) return errorJson(409, LISTED_BY_OTHER);
     const { api, created } = result;
     return json({ apiId: api.id, state: api.state, created }, created ? 201 : 200);
   } catch (e) {

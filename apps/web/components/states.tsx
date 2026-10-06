@@ -51,6 +51,16 @@ export function InlineError({ children, className }: { children: ReactNode; clas
   );
 }
 
+/** Something the seller should know that doesn't stop them, such as an overlap with their own listing. */
+export function NoticeList({ items, className }: { items: string[]; className?: string }) {
+  if (items.length === 0) return null;
+  return (
+    <ul role="note" className={cn("space-y-1 border-l-4 border-sky pl-3 text-body", className)}>
+      {items.map((t) => <li key={t}>{t}</li>)}
+    </ul>
+  );
+}
+
 /** Inline "it worked" or "working on it" line under a form control. */
 export function InlineStatus({ children, className, busy = false }: { children: ReactNode; className?: string; busy?: boolean }) {
   return (

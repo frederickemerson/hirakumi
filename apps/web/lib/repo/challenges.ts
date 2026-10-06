@@ -1,6 +1,7 @@
 import type postgres from "postgres";
-import { newId, newVerifyCode } from "@hirakumi/core";
+import { ACTIVE_BASE_INDEX, checkListingBase, newId, newVerifyCode } from "@hirakumi/core";
 import type { Sql } from "../db";
+import { queryOn } from "./apis";
 
 /** A passing OpenAPI check counts for this long; after that the seller checks again before signing. */
 export const VERIFY_PASS_TTL_MINUTES = 30;
@@ -71,14 +72,28 @@ export async function getOpenWalletChallenge(sql: Sql, challengeId: string, apiI
 }
 
 class OwnershipRace extends Error {}
+class BaseTaken extends Error {}
 
-/** One transaction: consume the wallet challenge, advance the state, consume the verification code. */
+export type FinalizeResult =
+  | { ok: true; warnings: string[] }
+  | { ok: false; reason: "race" }
+  | { ok: false; reason: "base_taken"; message: string };
+
+/** The step a refused proof is reported under on a Sokosumi task (the coworker's "Step N of 7, <name>: "). */
+const OWNERSHIP_STEP_PREFIX = "Step 4 of 7, Prove ownership: ";
+
+/**
+ * One transaction: consume the wallet challenge, check the API's base (one API, one listing, one account),
+ * advance the state, consume the verification code. The base check holds an advisory lock on the normalized
+ * origin until commit, so two proofs on one origin run one after the other and only one can take a base.
+ * A refusal rolls everything back: the seller can sign again once the other listing is retired.
+ */
 export async function finalizeOwnership(
   sql: Sql,
   a: { apiId: string; walletChallengeId: string; signature: string; key: string },
-): Promise<boolean> {
+): Promise<FinalizeResult> {
   try {
-    return await sql.begin(async (tx) => {
+    return await sql.begin(async (tx): Promise<FinalizeResult> => {
       const consumed = await tx`
         update challenges
         set consumed_at = now(),
@@ -86,14 +101,39 @@ export async function finalizeOwnership(
         where id = ${a.walletChallengeId} and api_id = ${a.apiId} and kind = 'wallet' and consumed_at is null and expires_at > now()
         returning id`;
       if (consumed.length !== 1) throw new OwnershipRace();
+      const [api] = await tx<{ sellerId: string; origin: string; pathPrefix: string }[]>`
+        select seller_id, origin, path_prefix from apis where id = ${a.apiId} and state = 'endpoints_confirmed'`;
+      if (!api) throw new OwnershipRace();
+      const verdict = await checkListingBase(queryOn(tx), { apiId: a.apiId, ...api });
+      if (!verdict.ok) throw new BaseTaken(verdict.message);
       const moved = await tx`
         update apis set state = 'ownership_verified' where id = ${a.apiId} and state = 'endpoints_confirmed' returning id`;
       if (moved.length !== 1) throw new OwnershipRace();
       await tx`update challenges set consumed_at = now() where api_id = ${a.apiId} and kind in ('openapi', 'http') and consumed_at is null`;
-      return true;
+      return { ok: true, warnings: verdict.warnings };
     });
   } catch (e) {
-    if (e instanceof OwnershipRace) return false;
-    throw e;
+    if (e instanceof OwnershipRace) return { ok: false, reason: "race" };
+    const message = e instanceof BaseTaken ? e.message : isActiveBaseViolation(e) ? BASE_ALREADY_LISTED : null;
+    if (message === null) throw e;
+    await tellTask(sql, a.apiId, `${OWNERSHIP_STEP_PREFIX}${message}`, `base_taken:${a.apiId}:${a.walletChallengeId}`);
+    return { ok: false, reason: "base_taken", message };
   }
+}
+
+/** The database backstop (migration 0010) fired: the lock makes this unreachable unless a write skipped the check. */
+const BASE_ALREADY_LISTED = "This API is already listed. Retire that listing first.";
+
+function isActiveBaseViolation(e: unknown): boolean {
+  const err = e as { code?: string; constraint_name?: string };
+  return err?.code === "23505" && err.constraint_name === ACTIVE_BASE_INDEX;
+}
+
+/** Posts to the API's Sokosumi task, if it has one (the coworker's outbox delivers it). */
+async function tellTask(sql: Sql, apiId: string, body: string, dedupeKey: string): Promise<void> {
+  await sql`
+    insert into messages (api_id, seller_id, task_id, author, body, task_status, dedupe_key)
+    select id, seller_id, sokosumi_task_id, 'coworker', ${body}, 'INPUT_REQUIRED', ${dedupeKey}
+    from apis where id = ${apiId} and sokosumi_task_id is not null
+    on conflict (dedupe_key) do nothing`;
 }

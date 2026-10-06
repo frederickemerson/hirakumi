@@ -1,4 +1,7 @@
-import { newId } from "@hirakumi/core";
+import type postgres from "postgres";
+import {
+  compareBases, judgeListingBase, LISTED_BY_OTHER, listActiveOnOrigin, newId, overlapWarning, takenEarly, type QueryFn,
+} from "@hirakumi/core";
 import type { Sql } from "../db";
 import type { Api, ApiState, OnboardStep } from "../types";
 
@@ -10,7 +13,7 @@ export const API_COLUMNS = [
 export async function createApi(
   sql: Sql,
   input: { sellerId: string; name: string; origin: string; openapiUrl: string },
-): Promise<{ api: Api; created: boolean }> {
+): Promise<{ api: Api; created: boolean } | { takenByOther: true }> {
   return sql.begin(async (tx) => {
     // Serialise double submits of the same link by the same seller.
     await tx`select pg_advisory_xact_lock(hashtext(${`${input.sellerId}|${input.openapiUrl}`}))`;
@@ -22,6 +25,7 @@ export async function createApi(
         and not exists (select 1 from onboard_steps s where s.api_id = apis.id and s.status = 'failed')
       order by created_at desc limit 1`;
     if (existing) return { api: existing, created: false };
+    if (await isTakenEarly(tx, input)) return { takenByOther: true as const };
     const [api] = await tx<Api[]>`
       insert into apis (id, seller_id, name, origin, openapi_url)
       values (${newId("api")}, ${input.sellerId}, ${input.name}, ${input.origin}, ${input.openapiUrl})
@@ -29,6 +33,36 @@ export async function createApi(
     return { api, created: true };
   });
 }
+
+/** Runs $n-parameter SQL on postgres.js, for the checks shared with the coworker (@hirakumi/core listingBase). */
+export const queryOn = (sql: Sql | postgres.TransactionSql): QueryFn =>
+  (text, params) => sql.unsafe(text, params as postgres.ParameterOrJSON<never>[]);
+
+/**
+ * Early, advisory: another account already lists a base this link can only lead to (one API, one listing).
+ * The check at proof of ownership (finalizeOwnership) is the authority.
+ */
+async function isTakenEarly(sql: Sql | postgres.TransactionSql, input: { sellerId: string; origin: string; openapiUrl: string }): Promise<boolean> {
+  return takenEarly(input, await listActiveOnOrigin(queryOn(sql), input.origin));
+}
+
+/**
+ * What the ownership and review steps say about this API's base, computed on read: `blocked` when the proof
+ * would be refused, and a warning per overlapping listing of the same seller. Empty before the base is known.
+ */
+export async function listingBaseNotes(sql: Sql, apiId: string): Promise<{ blocked: string | null; warnings: string[] }> {
+  const [me] = await sql<{ sellerId: string; origin: string; pathPrefix: string; state: ApiState }[]>`
+    select seller_id, origin, path_prefix, state from apis where id = ${apiId}`;
+  if (!me || me.state === "intake" || me.state === "retired") return { blocked: null, warnings: [] };
+  const others = await listActiveOnOrigin(queryOn(sql), me.origin, apiId);
+  const verdict = judgeListingBase(me, others);
+  const warnings = others
+    .filter((o) => o.sellerId === me.sellerId && compareBases(me, o) === "overlap")
+    .map((o) => overlapWarning(o.name));
+  return { blocked: verdict.ok ? null : verdict.message, warnings };
+}
+
+export { LISTED_BY_OTHER };
 
 /** A Sokosumi coworker task, found by the setup link the coworker posted on it (review I5). */
 export async function findCoworkerTask(sql: Sql, setupToken: string): Promise<{ taskId: string; sokosumiUserId: string } | null> {
@@ -42,7 +76,7 @@ export async function createApiForTask(
   sql: Sql,
   input: { sellerId: string; name: string; origin: string; openapiUrl: string },
   task: { taskId: string; sokosumiUserId: string },
-): Promise<{ api: Api; created: boolean } | { claimedByOther: true }> {
+): Promise<{ api: Api; created: boolean } | { claimedByOther: true } | { takenByOther: true }> {
   return sql.begin(async (tx) => {
     await tx`select pg_advisory_xact_lock(hashtext(${`task|${task.taskId}`}))`;
     // Audit M4: the first wallet to use a setup link owns that task; progress and billing go to it.
@@ -54,6 +88,7 @@ export async function createApiForTask(
         and not exists (select 1 from onboard_steps s where s.api_id = apis.id and s.status = 'failed')
       order by created_at desc limit 1`;
     if (linked) return { api: linked, created: false };
+    if (await isTakenEarly(tx, input)) return { takenByOther: true as const };
     const [api] = await tx<Api[]>`
       insert into apis (id, seller_id, name, origin, openapi_url, sokosumi_task_id)
       values (${newId("api")}, ${input.sellerId}, ${input.name}, ${input.origin}, ${input.openapiUrl}, ${task.taskId})

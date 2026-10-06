@@ -4,6 +4,8 @@ import { OwnershipPanel } from "@/components/ownership-panel";
 import { getSql } from "@/lib/db";
 import { stepForState } from "@/lib/flow";
 import { loadApiPage } from "@/lib/page-auth";
+import { ErrorState, NoticeList } from "@/components/states";
+import { listingBaseNotes } from "@/lib/repo/apis";
 import { getOrCreateVerifyCode, hasFreshVerifyPass } from "@/lib/repo/challenges";
 
 export const metadata: Metadata = { title: "Ownership" };
@@ -15,7 +17,7 @@ export default async function OwnershipPage({ params }: { params: Promise<{ apiI
   if (api.state !== "endpoints_confirmed") redirect(`/apis/${apiId}/${stepForState(api.state)}`);
   const sql = getSql();
   const { code } = await getOrCreateVerifyCode(sql, apiId);
-  const passed = await hasFreshVerifyPass(sql, apiId);
+  const [passed, notes] = await Promise.all([hasFreshVerifyPass(sql, apiId), listingBaseNotes(sql, apiId)]);
   return (
     <section className="space-y-6">
       <div className="space-y-3">
@@ -24,6 +26,8 @@ export default async function OwnershipPage({ params }: { params: Promise<{ apiI
           Two quick steps: add a code to your OpenAPI file, then sign once with your wallet.
         </p>
       </div>
+      {notes.blocked && <ErrorState title="You can't list this API yet" detail={notes.blocked} />}
+      <NoticeList items={notes.warnings} />
       <OwnershipPanel apiId={apiId} openapiUrl={api.openapiUrl} code={code} initiallyPassed={passed} />
     </section>
   );
