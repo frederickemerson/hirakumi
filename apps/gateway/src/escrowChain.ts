@@ -61,7 +61,7 @@ class WalletOperator implements EscrowOperator {
 
   async settle(at: Outref): Promise<string> {
     const lock = await this.lock(at);
-    const b = await buildSettle(this.w, { lock, script: { kind: "inline" } });
+    const b = await buildSettle(this.w, { lock, script: { kind: "inline" }, signerVkh: this.vkh });
     return this.send(b.signBuilder);
   }
 }

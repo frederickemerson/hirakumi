@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import request from "supertest";
 import { decodePaymentRequiredHeader, encodePaymentSignatureHeader } from "@x402/core/http";
-import { PACK_ESCROW, decodePackDatum, newReceiptKey, signReceipt } from "@hirakumi/escrow";
+import { PACK_ESCROW, decodePackDatum, newReceiptKey, signCloseRequest, signReceipt } from "@hirakumi/escrow";
 import { sha256Hex } from "@hirakumi/core";
 import { getChannel } from "@hirakumi/db";
 import { ChannelWatcher } from "../src/channelWatcher";
@@ -94,6 +94,16 @@ describe("escrow pack offer", () => {
     const r2 = await asBuyer(request(h.app).post(packPath()), key.publicKey, "addr_test1wpw9chzut3w9chzut3w9chzut3w9chzut3w9chzut3w9chqzhh58g");
     expect(r2.status).toBe(400);
     expect(r2.body.error).toBe("bad_refund_address");
+  });
+
+  it("400 bad_receipt_key for a small-order receipt key (identity, 8-torsion point): no offer, no quote", async () => {
+    for (const k of ["01" + "00".repeat(31), "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a"]) {
+      const r = await asBuyer(request(h.app).post(packPath()), k);
+      expect(r.status).toBe(400);
+      expect(r.body.error).toBe("bad_receipt_key");
+      expect(r.headers["payment-required"]).toBeUndefined();
+    }
+    expect((await h.sql`select 1 from pack_quotes`).length).toBe(0);
   });
 });
 
@@ -293,6 +303,38 @@ describe("channel routes and the ChannelWatcher", () => {
     const watcher = new ChannelWatcher({ sql: h.sql, chain, config: ESCROW });
     expect(await watcher.tick()).toMatchObject([{ channelId, action: "close" }]);
     void res;
+  });
+
+  it("close-auth: the receipt key's HKC1 signature closes without a bearer (a buyer that never got its token)", async () => {
+    await setup();
+    const { res, channelId } = await buy();
+    await call(res.body.token);
+    const closeUrl = `/a/${h.seeded.apiId}/channels/${channelId}/close`;
+    const none = await request(h.app).post(closeUrl);
+    expect(none.status).toBe(401);
+    expect(none.body).toMatchObject({ error: "token_required", message: expect.stringContaining("X-Hirakumi-Close-Auth") });
+    const ok = await request(h.app).post(closeUrl)
+      .set("x-hirakumi-close-auth", signCloseRequest(key.secretKey, channelId)).set("x-hirakumi-iou", iou(channelId, 1));
+    expect(ok.status).toBe(202);
+    expect(ok.body.status).toBe("close_requested");
+    expect(await getChannel(h.sql, channelId)).toMatchObject({ status: "close_requested", iou_accepted: 1 });
+  });
+
+  it("close-auth: another key, an HKR1 IOU signature, or a malformed value → 403; an unknown channel → 404", async () => {
+    await setup();
+    const { res, channelId } = await buy();
+    await call(res.body.token);
+    const closeUrl = `/a/${h.seeded.apiId}/channels/${channelId}/close`;
+    const post = (auth: string, url = closeUrl) => request(h.app).post(url).set("x-hirakumi-close-auth", auth);
+    expect((await post(signCloseRequest(newReceiptKey().secretKey, channelId))).status).toBe(403);
+    expect((await post(signReceipt(key.secretKey, channelId, 0))).status).toBe(403); // a valid IOU is not a close request
+    expect((await post("zz")).status).toBe(403);
+    const unknown = "ab".repeat(32);
+    const r404 = await post(signCloseRequest(key.secretKey, unknown), `/a/${h.seeded.apiId}/channels/${unknown}/close`);
+    expect(r404.status).toBe(404);
+    expect(r404.body.error).toBe("channel_not_found");
+    expect((await post(signCloseRequest(key.secretKey, channelId), `/a/api_other/channels/${channelId}/close`)).status).toBe(404);
+    expect((await getChannel(h.sql, channelId))!.status).toBe("locked");
   });
 
   it("/receipts includes the channel", async () => {

@@ -5,14 +5,21 @@
 //  - Closing with an older count than our latest IOU → Raise, while ≥ raiseMargin of the contest is left
 //  - after contest_end → Settle
 // Without an operator key it only verifies and observes.
-import { listChannels, updateChannel, type ChannelRow, type Sql } from "@hirakumi/db";
-import { PACK_ESCROW, decodePackDatum, type ChainOutput } from "@hirakumi/escrow";
+import {
+  allChannels, deleteStaleQuotes, expireUnseenLocks, getChannel, reopenChannel, revertChannelToPending, updateChannel,
+  type ChannelRow, type ChannelStatus, type Sql,
+} from "@hirakumi/db";
+import { decodePackDatum, type ChainOutput } from "@hirakumi/escrow";
 import type { PackEscrowConfig } from "./config";
 import type { EscrowChain, Outref } from "./escrowChain";
 import { PACK_UNIT, verifyChannelLock } from "./escrowPacks";
 
 const ACTION_BACKOFF_MS = 90_000;
 const tagOf = (channelId: string) => `5820${channelId}`;
+const LIVE: ChannelStatus[] = ["locked", "close_requested", "closing"];
+/** A paid lock that never showed up on-chain within this long is refused (finding G2). */
+const UNSEEN_LOCK_EXPIRY_SECONDS = 3600;
+const sameRef = (a: Outref, b: Outref) => a.txHash === b.txHash && a.index === b.index;
 
 type Live = { at: Outref; stage: { kind: "open" } | { kind: "closing"; accepted: number; contestEnd: number } };
 type Followed = { kind: "live"; live: Live } | { kind: "settled" } | { kind: "unknown" };
@@ -38,12 +45,19 @@ export class ChannelWatcher {
     this.running = true;
     const events: WatchEvent[] = [];
     try {
-      for (const ch of await listChannels(this.d.sql, ["pending"])) {
+      // Finding G2: every channel, page by page (a fixed first page let 200 old rows hide newer ones).
+      for await (const ch of allChannels(this.d.sql, ["pending"])) {
         const v = await verifyChannelLock(this.d.sql, this.d.chain, ch).catch(() => "unseen" as const);
         if (v === "locked") events.push({ channelId: ch.channel_id, action: "verified" });
         if (v === "refused") events.push({ channelId: ch.channel_id, action: "refused" });
       }
-      for (const ch of await listChannels(this.d.sql, ["locked", "close_requested", "closing"])) {
+      // After the verification pass, so a watcher that was down still verifies locks that landed meanwhile.
+      for (const id of await expireUnseenLocks(this.d.sql, UNSEEN_LOCK_EXPIRY_SECONDS)) {
+        console.warn(`[watcher] channel ${id}: lock never seen on-chain, refused`);
+        events.push({ channelId: id, action: "refused" });
+      }
+      await deleteStaleQuotes(this.d.sql).catch((e) => console.error("[watcher] quote cleanup:", (e as Error).message));
+      for await (const ch of allChannels(this.d.sql, LIVE)) {
         await this.watch(ch, events).catch((e) => console.error(`[watcher] ${ch.channel_id}:`, (e as Error).message));
       }
     } finally {
@@ -61,8 +75,8 @@ export class ChannelWatcher {
     const { at, stage } = f.live;
     const op = this.d.chain.operator;
     if (!op) return;
-    const fresh = (await listChannels(this.d.sql, ["locked", "close_requested", "closing"])).find((c) => c.channel_id === ch.channel_id);
-    if (!fresh) return;
+    const fresh = await getChannel(this.d.sql, ch.channel_id);
+    if (!fresh || !LIVE.includes(fresh.status)) return;
     if (fresh.last_action_at && Date.now() - fresh.last_action_at.getTime() < ACTION_BACKOFF_MS) return;
 
     const act = async (action: "close" | "raise" | "settle", run: () => Promise<string>) => {
@@ -95,11 +109,32 @@ export class ChannelWatcher {
   /** Walks from the last known pack UTxO along the spends, recording Close / Raise / Settle as it goes. */
   private async follow(ch: ChannelRow): Promise<Followed> {
     if (!ch.utxo_tx_hash || ch.utxo_output_index === null) return { kind: "unknown" };
+    const lockRef: Outref | null = ch.lock_output_index !== null ? { txHash: ch.lock_tx_hash, index: ch.lock_output_index } : null;
     let at: Outref = { txHash: ch.utxo_tx_hash, index: ch.utxo_output_index };
-    const raises = [...ch.raise_tx_hashes];
+    let raises = [...ch.raise_tx_hashes];
     let closeTx = ch.close_tx_hash;
+    let restarted = false;
     for (let hop = 0; hop < 10; hop++) {
       const outs = await this.d.chain.txOutputs(at.txHash);
+      if (!outs && lockRef) {
+        // Finding G4: the tx we were standing on is gone from the chain (a rollback).
+        if (!sameRef(at, lockRef) && !restarted) {
+          // A Close / Raise was rolled back: walk again from the lock, forgetting what we recorded after it.
+          restarted = true;
+          at = lockRef;
+          closeTx = null;
+          raises = [];
+          hop = -1;
+          continue;
+        }
+        if (sameRef(at, lockRef)) {
+          // The lock itself was rolled back: stop serving calls until the pending pass sees it again.
+          if (await revertChannelToPending(this.d.sql, ch.channel_id)) {
+            console.warn(`[watcher] ${ch.channel_id}: lock tx ${lockRef.txHash} is gone from the chain, back to pending`);
+          }
+        }
+        return { kind: "unknown" };
+      }
       const o = outs?.find((x) => x.index === at.index);
       if (!o) return { kind: "unknown" };
       const datum = o.datumCbor ? decodePackDatum(o.datumCbor) : null;
@@ -108,6 +143,12 @@ export class ChannelWatcher {
         const stage: Live["stage"] = datum.stage.kind === "open"
           ? { kind: "open" }
           : { kind: "closing", accepted: Number(datum.stage.accepted), contestEnd: Number(datum.stage.contestEnd) };
+        if (stage.kind === "open" && ch.status === "closing") {
+          // Finding G4: our record says Closing but the chain shows the pack Open again (the Close was rolled back).
+          await reopenChannel(this.d.sql, ch.channel_id, at);
+          console.warn(`[watcher] ${ch.channel_id}: Close rolled back, the pack is Open again at ${at.txHash}#${at.index}`);
+          return { kind: "live", live: { at, stage } };
+        }
         await updateChannel(this.d.sql, ch.channel_id, {
           utxo_tx_hash: at.txHash, utxo_output_index: at.index, close_tx_hash: closeTx, raise_tx_hashes: raises,
           ...(stage.kind === "closing"
@@ -119,7 +160,9 @@ export class ChannelWatcher {
       const spender = o.consumedBy;
       const next = await this.d.chain.txOutputs(spender);
       if (!next) return { kind: "unknown" }; // the spend isn't indexed yet
-      const cont = next.find((x) => x.address === PACK_ESCROW.address && x.datumCbor && safeChannel(x.datumCbor) === ch.channel_id);
+      // The continuing output sits at the same script as the one it spends (not today's PACK_ESCROW address:
+      // a channel locked at an older validator version must not be mistaken for settled).
+      const cont = next.find((x) => x.address === o.address && x.datumCbor && safeChannel(x.datumCbor) === ch.channel_id);
       if (cont) {
         if (datum.stage.kind === "open") closeTx = spender;
         else raises.push(spender);

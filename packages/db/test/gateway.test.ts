@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTestDb, type TestDb } from "../src/testing";
 import {
-  activateTokenByPayment, claimJob, insertJob, insertPendingToken, listJobsAwaitingPayment, loadApiBundle,
-  markExhaustedIfEmpty, recordHealthTransition, releaseCredit, reserveCredit,
+  activateTokenByPayment, claimJob, claimSubmit, insertJob, insertPendingToken, listJobsAwaitingPayment, listUnsubmittedPasses,
+  loadApiBundle, markExhaustedIfEmpty, markJobCompleted, recordHealthTransition, releaseCredit, releaseSubmitClaim, reserveCredit,
+  storeJobOutput,
 } from "../src/gateway";
 
 let db: TestDb;
@@ -79,6 +80,26 @@ describe("jobs and health", () => {
     expect((await listJobsAwaitingPayment(db.sql)).map((j) => j.id)).toEqual(["job_1"]);
     const claims = await Promise.all([claimJob(db.sql, "job_1"), claimJob(db.sql, "job_1")]);
     expect(claims.filter(Boolean)).toHaveLength(1);
+  });
+  it("claimSubmit: one submitter while the claim is fresh; released or stale claims can be taken (finding G6)", async () => {
+    await insertJob(db.sql, { id: "job_1", apiId: "api_a", identifierFromPurchaser: "aabbccddeeff0011", input: { symbol: "ADA" },
+      inputHash: "ih", blockchainIdentifier: "bc1", payByTime: new Date(Date.now() + 60_000), submitResultTime: new Date(Date.now() + 120_000) });
+    expect(await claimSubmit(db.sql, "job_1")).toBe(false); // not running yet
+    await claimJob(db.sql, "job_1");
+    await storeJobOutput(db.sql, "job_1", "{}", "oh");
+    expect((await listUnsubmittedPasses(db.sql)).map((j) => j.id)).toEqual(["job_1"]);
+    const claims = await Promise.all([claimSubmit(db.sql, "job_1"), claimSubmit(db.sql, "job_1")]);
+    expect(claims.filter(Boolean)).toHaveLength(1);
+    expect(await listUnsubmittedPasses(db.sql)).toEqual([]);
+    await releaseSubmitClaim(db.sql, "job_1");
+    expect((await listUnsubmittedPasses(db.sql)).map((j) => j.id)).toEqual(["job_1"]);
+    expect(await claimSubmit(db.sql, "job_1")).toBe(true);
+    await db.sql`update jobs set submit_claimed_at = now() - interval '10 minutes' where id = 'job_1'`;
+    expect((await listUnsubmittedPasses(db.sql)).map((j) => j.id)).toEqual(["job_1"]);
+    expect(await claimSubmit(db.sql, "job_1")).toBe(true);
+    await markJobCompleted(db.sql, "job_1");
+    await db.sql`update jobs set submit_claimed_at = null where id = 'job_1'`;
+    expect(await claimSubmit(db.sql, "job_1")).toBe(false); // completed
   });
   it("recordHealthTransition updates apis and writes one health_events row atomically", async () => {
     await recordHealthTransition(db.sql, "api_a", "healthy", "down", [{ op: "getPrice", reason: "/price is missing", since: "2026-10-06T12:00:00.000Z" }]);
