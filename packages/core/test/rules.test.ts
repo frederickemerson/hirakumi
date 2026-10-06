@@ -48,6 +48,13 @@ describe("compileRule", () => {
     const v = compileRule(priceRule).check(res({ ...fresh, updatedAt: "2026-10-06T11:00:00.000Z" }));
     expect(v).toEqual({ pass: false, reasons: ["/updatedAt is older than 300s"] });
   });
+  it("a timestamp from the future is not fresh (\"2099-…\", or epoch milliseconds read as seconds)", () => {
+    const rule: RuleDefinition = { ...priceRule, schema: { type: "object", required: ["ts"], properties: { ts: { maxAgeSeconds: 60 } } } };
+    const c = compileRule(rule);
+    expect(c.check(res({ ts: "2099-01-01T00:00:00Z" })).reasons).toEqual(["/ts is in the future"]);
+    expect(c.check(res({ ts: NOW.getTime() })).pass).toBe(false);
+    expect(c.check(res({ ts: new Date(NOW.getTime() + 30_000).toISOString() })).pass).toBe(true); // clock skew up to 60 s is fine
+  });
   it("maxAgeSeconds also accepts epoch seconds", () => {
     const rule: RuleDefinition = { ...priceRule, schema: { type: "object", required: ["ts"], properties: { ts: { type: "number", maxAgeSeconds: 60 } } } };
     const nowS = NOW.getTime() / 1000;

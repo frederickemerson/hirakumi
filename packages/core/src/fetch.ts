@@ -18,7 +18,7 @@ for (const [net, prefix] of [
   ["224.0.0.0", 4], ["240.0.0.0", 4],
 ] as const) blocked.addSubnet(net, prefix, "ipv4");
 for (const [net, prefix] of [
-  ["::", 128], ["::1", 128], ["64:ff9b::", 96], ["2001:db8::", 32],
+  ["::", 128], ["::1", 128], ["64:ff9b::", 96], ["64:ff9b:1::", 48], ["2001:db8::", 32], ["2002::", 16],
   ["fc00::", 7], ["fe80::", 10], ["ff00::", 8],
 ] as const) blocked.addSubnet(net, prefix, "ipv6");
 
@@ -33,6 +33,8 @@ export function isBlockedAddress(addr: string): boolean {
     const hi = parseInt(mappedHex[1], 16), lo = parseInt(mappedHex[2], 16);
     return isBlockedAddress(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`);
   }
+  // Deprecated IPv4-compatible IPv6 (::a.b.c.d / ::hhhh:hhhh) is never a public destination.
+  if (/^::(?:(?:[0-9a-f]{1,4}:)?[0-9a-f]{1,4}|\d{1,3}(?:\.\d{1,3}){3})$/i.test(addr) && addr !== "::1") return true;
   const family = isIP(addr);
   if (family === 0) return true;
   return blocked.check(addr, family === 6 ? "ipv6" : "ipv4");

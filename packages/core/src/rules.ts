@@ -15,6 +15,7 @@ export type CompiledRule = { hash: string; check(res: UpstreamResult): Verdict }
 
 // Contract v1.1 B2: 600–3000 s. Price feeds such as CoinGecko lag 1–5 min, and a stale demo answer is 1 h old.
 export const DEFAULT_MAX_AGE_SECONDS = 900;
+const MAX_CLOCK_SKEW_SECONDS = 60;
 
 /** Age in seconds of an ISO 8601 string or an epoch-seconds number; null when unparseable. */
 export function ageSeconds(value: string | number, nowMs: number): number | null {
@@ -31,7 +32,8 @@ ajv.addKeyword({
   // Runs at validation time, so Date.now() is the moment the response is checked.
   validate: (maxAge: number, data: unknown) => {
     const age = ageSeconds(data as string | number, Date.now());
-    return age !== null && age <= maxAge;
+    // A timestamp more than a minute in the future (a far-off date, or epoch ms read as seconds) is not fresh.
+    return age !== null && age >= -MAX_CLOCK_SKEW_SECONDS && age <= maxAge;
   },
 });
 
@@ -45,7 +47,10 @@ export function formatSchemaErrors(errors: ErrorObject[] | null | undefined): st
     if (e.keyword === "required") {
       return `${e.instancePath}/${(e.params as { missingProperty: string }).missingProperty} is missing`;
     }
-    if (e.keyword === "maxAgeSeconds") return `${at} is older than ${String(e.schema)}s`;
+    if (e.keyword === "maxAgeSeconds") {
+      const age = ageSeconds(e.data as string | number, Date.now());
+      return age !== null && age < 0 ? `${at} is in the future` : `${at} is older than ${String(e.schema)}s`;
+    }
     if (e.keyword === "not") return `${at} looks like an error response`;
     return `${at} ${e.message ?? "is invalid"}`;
   });

@@ -27,6 +27,7 @@ describe("isBlockedAddress", () => {
     ["169.254.169.254", true], ["100.64.0.1", true], ["0.0.0.0", true], ["::1", true],
     ["fd00:ec2::254", true], ["fe80::1", true], ["::ffff:127.0.0.1", true], ["not-an-ip", true],
     ["::ffff:7f00:1", true], ["::ffff:a9fe:a9fe", true],
+    ["2002:7f00:1::1", true], ["64:ff9b:1::a00:1", true], ["::7f00:1", true], ["::a9fe:a9fe", true],
     ["8.8.8.8", false], ["2606:4700:4700::1111", false], ["::ffff:808:808", false],
   ])("%s → %s", (addr, blocked) => { expect(isBlockedAddress(addr)).toBe(blocked); });
 });
