@@ -10,6 +10,7 @@ import { Reveal } from "@/components/landing/reveal";
 import { ScrubText, type Paragraph } from "@/components/landing/scrub-text";
 import { SmoothScroll } from "@/components/landing/smooth-scroll";
 import { StepLine } from "@/components/landing/step-line";
+import { ListApiLink } from "@/components/list-api-link";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -116,9 +117,7 @@ export default function Home() {
               Paste your OpenAPI link, sign with your Cardano wallet, set a pack price. AI agents pay in USDM, and stale or empty answers cost them nothing.
             </p>
             <div className="mt-8 flex flex-col items-stretch gap-4 animate-rise [animation-delay:140ms] sm:flex-row sm:items-center">
-              <Link href="/login" className={buttonVariants({ size: "lg" })}>
-                {PRIMARY_CTA}
-              </Link>
+              <ListApiLink className={buttonVariants({ size: "lg" })}>{PRIMARY_CTA}</ListApiLink>
               <Link href={`${DEMO_API}/try`} className={buttonVariants({ variant: "outline", size: "lg" })}>
                 {SECONDARY_CTA}
               </Link>
@@ -263,7 +262,7 @@ export default function Home() {
             Paste your OpenAPI link, sign with your Cardano wallet, approve the promise and the price. That is the whole onboarding.
           </p>
           <div className="mt-8 flex w-full flex-col items-stretch gap-4 sm:w-auto sm:flex-row">
-            <Link href="/login" className={buttonVariants({ size: "lg" })}>{PRIMARY_CTA}</Link>
+            <ListApiLink className={buttonVariants({ size: "lg" })}>{PRIMARY_CTA}</ListApiLink>
             <Link href={`${DEMO_API}/try`} className={buttonVariants({ variant: "outline", size: "lg" })}>{SECONDARY_CTA}</Link>
           </div>
         </Reveal>

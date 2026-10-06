@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Mascot } from "@/components/brand/mascot";
+import { ListApiLink } from "@/components/list-api-link";
 
 const DEMO_API = "/p/api_eejiaioyqt";
 
@@ -11,7 +12,7 @@ const columns = [
       { href: "/#trust", label: "How the money is protected" },
       { href: DEMO_API, label: "Live status page" },
       { href: `${DEMO_API}/try`, label: "Try a live API" },
-      { href: "/login", label: "List your API" },
+      { href: "/login", label: "List your API", listApi: true },
     ],
   },
   {
@@ -45,7 +46,9 @@ export function SiteFooter() {
             <ul className="space-y-2 text-body">
               {col.links.map((l) => (
                 <li key={l.href}>
-                  {"external" in l && l.external ? (
+                  {"listApi" in l ? (
+                    <ListApiLink className="underline-offset-4 hover:underline">{l.label}</ListApiLink>
+                  ) : "external" in l && l.external ? (
                     <a href={l.href} target="_blank" rel="noreferrer" className="underline-offset-4 hover:underline">
                       {l.label}
                     </a>

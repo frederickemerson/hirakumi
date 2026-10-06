@@ -1,9 +1,20 @@
 // @vitest-environment jsdom
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { act, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it } from "vitest";
+import { resetAuthForTests, setAuth } from "@/lib/auth-client";
 import Home from "./page";
 
 describe("Home", () => {
+  beforeEach(() => resetAuthForTests());
+
+  it("sends a signed-in seller straight to a new listing, not to the login page", () => {
+    render(<Home />);
+    act(() => setAuth({ status: "in", address: "addr_test1qz…tuqq5x" }));
+    const ctas = screen.getAllByRole("link", { name: "List your API" });
+    expect(ctas.length).toBeGreaterThan(1);
+    for (const cta of ctas) expect(cta).toHaveAttribute("href", "/apis/new");
+  });
+
   it("invites the seller to list an API", () => {
     render(<Home />);
     expect(screen.getByRole("heading", { level: 1, name: "Make your APIs monetizable" })).toBeInTheDocument();

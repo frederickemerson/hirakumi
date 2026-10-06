@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { HealthBadge } from "@/components/health-badge";
+import { ListApiLink } from "@/components/list-api-link";
 import { RegistryCard } from "@/components/registry-card";
 import { OverviewStatGrid } from "@/components/stat";
 import { StatusPanel } from "@/components/status-panel";
@@ -81,7 +82,7 @@ export default async function DemoSellerPage() {
 
       <div className="flex flex-wrap items-center justify-between gap-4 rounded-[2px] border-2 border-ink bg-ice p-5">
         <p className="text-body-lg">Ready to list your own API?</p>
-        <Link href="/login" className={buttonVariants()}>List your API</Link>
+        <ListApiLink className={buttonVariants()} />
       </div>
     </section>
   );

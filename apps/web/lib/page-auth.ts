@@ -5,9 +5,14 @@ import { getApiForSeller } from "./repo/apis";
 import { readSessionToken, SESSION_COOKIE, type SessionInfo } from "./session";
 import type { Api } from "./types";
 
-export async function requireSellerPage(nextPath: string): Promise<SessionInfo> {
+/** The session behind this request, or null. Reading cookies makes the page dynamic. */
+export async function readPageSession(): Promise<SessionInfo | null> {
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
-  const session = token ? readSessionToken(token) : null;
+  return token ? readSessionToken(token) : null;
+}
+
+export async function requireSellerPage(nextPath: string): Promise<SessionInfo> {
+  const session = await readPageSession();
   if (!session) redirect(`/login?next=${encodeURIComponent(nextPath)}`);
   return session;
 }

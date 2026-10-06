@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { Mascot } from "@/components/brand/mascot";
-import { buttonVariants } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { HeaderAuth } from "@/components/header-auth";
 
 const links = [
   { href: "/#how", label: "How it works" },
@@ -10,7 +9,7 @@ const links = [
   { href: "/#faq", label: "FAQ" },
 ];
 
-/** White top bar, 1px ink rule: logo left, links centre, log in + CTA right. Not sticky. */
+/** White top bar, 1px ink rule: logo left, links centre, the signed-in or signed-out actions right. Not sticky. */
 export function SiteHeader() {
   return (
     <header className="border-b border-ink bg-frost">
@@ -26,14 +25,7 @@ export function SiteHeader() {
             </Link>
           ))}
         </nav>
-        <div className="flex items-center gap-4">
-          <Link href="/apis" className="hidden py-2 text-caption font-medium uppercase tracking-[0.06em] underline-offset-4 hover:underline sm:inline">
-            Log in
-          </Link>
-          <Link href="/login" className={cn(buttonVariants({ variant: "nav", size: "sm" }), "min-h-9")}>
-            List your API
-          </Link>
-        </div>
+        <HeaderAuth />
       </div>
     </header>
   );

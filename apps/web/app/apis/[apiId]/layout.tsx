@@ -1,21 +1,19 @@
-import { cookies } from "next/headers";
 import { ViewTransition, type ReactNode } from "react";
 import { ApiNav } from "@/components/api-nav";
 import { SellerGuide } from "@/components/seller-guide";
 import { getSql } from "@/lib/db";
 import { env } from "@/lib/env";
 import type { ApiProgress } from "@/lib/progress";
+import { readPageSession } from "@/lib/page-auth";
 import { getApiForSeller } from "@/lib/repo/apis";
 import { loadProgress } from "@/lib/repo/progress";
-import { readSessionToken, SESSION_COOKIE } from "@/lib/session";
 
 /**
  * The signed-in seller's progress on this API, or null. Pages enforce sign-in and ownership
  * themselves; without either, the tab keeps the redirecting link and the guide shows nothing specific.
  */
 async function loadSellerProgress(apiId: string): Promise<ApiProgress | null> {
-  const token = (await cookies()).get(SESSION_COOKIE)?.value;
-  const session = token ? readSessionToken(token) : null;
+  const session = await readPageSession();
   const sql = getSql();
   const api = session ? await getApiForSeller(sql, apiId, session.sellerId) : null;
   return api ? loadProgress(sql, api) : null;

@@ -8,7 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PhoneWalletConnect } from "@/components/phone-wallet-connect";
 import { GetAWallet, MobileNote, useIsMobile, useWallets, WalletIcon } from "@/components/wallet-picker";
+import { setAuth } from "@/lib/auth-client";
 import { postJson } from "@/lib/client-fetch";
+import { shortAddress } from "@/lib/copy";
 import { startRouteProgress } from "@/lib/route-progress";
 import {
   checkPreprodFunds,
@@ -61,7 +63,9 @@ export function WalletLogin({ next }: { next: string }) {
       setPhase({ kind: "working", walletId, text: "Approve the sign-in message in your wallet. It costs nothing and moves no funds." });
       const sig = await signText(conn.api, conn.addressHex, challenge.message);
       setPhase({ kind: "working", walletId, text: "Signature received. Opening your dashboard…" });
-      await postJson("/api/auth/verify", { nonceToken: challenge.nonceToken, ...sig });
+      const seller = await postJson<{ address: string }>("/api/auth/verify", { nonceToken: challenge.nonceToken, ...sig });
+      // The header is a client island outside this page: tell it now instead of waiting for a reload.
+      setAuth({ status: "in", address: shortAddress(seller.address) });
       startRouteProgress();
       router.push(next);
     } catch (e) {

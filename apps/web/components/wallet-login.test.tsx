@@ -2,6 +2,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { getAuth } from "@/lib/auth-client";
 import { dedupeWallets, listWallets, type Cip30Api } from "@/lib/wallet-client";
 import { jsonResponse } from "@/test/http";
 import { WalletLogin } from "./wallet-login";
@@ -95,6 +96,8 @@ describe("WalletLogin", () => {
     await userEvent.setup().click(await screen.findByRole("button", { name: "Sign in with Test Wallet" }));
 
     await vi.waitFor(() => expect(nav.push).toHaveBeenCalledWith("/apis/api_1"));
+    // The header learns about the new session without a reload.
+    expect(getAuth()).toEqual({ status: "in", address: "addr_test1qq" });
     expect(signData).toHaveBeenCalledWith("00abcd", Buffer.from("Sign in to Hirakumi").toString("hex"));
     expect(bodyOf(fetchMock, "/api/wallet/preprod-funds")).toEqual({ addresses: ["00abcd"] });
     expect(bodyOf(fetchMock, "/api/auth/nonce")).toEqual({ address: "00abcd" });
