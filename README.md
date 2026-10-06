@@ -9,18 +9,15 @@ Turn any read-only OpenAPI API into a paid supplier for AI agents on Cardano. Bu
 - Video, slides, write-up: see `docs/submission/`
 
 ## Who you trust, in each payment mode
-Buyers pick their trust level.
+| | Escrow pack channel (`PACK_MODE=escrow`) | Direct packs (default today) | Masumi escrow jobs |
+|---|---|---|---|
+| Where the money sits | Cardano contract until settlement | Seller's wallet from purchase | Masumi contract per job |
+| What the seller can be paid | Only calls the buyer signed IOUs for | The whole pack up front | The job, if a passing result is submitted |
+| Who counts | Buyer-signed IOUs, checked on-chain | Hirakumi's database (auditable at `/receipts`) | Nothing to count |
+| If Hirakumi disappears | Buyer closes and settles alone and gets everything unsigned back | Remaining credits can't be used | No result, so Cardano refunds |
+| Cost | One lock plus one close/settle per pack | ~0.014 ADA overhead per call | A full payment and minutes per job |
 
-| | Call packs (x402) | Escrow jobs (Masumi) |
-|---|---|---|
-| Where the money sits | Seller's wallet, from the moment of purchase (on-chain) | Masumi escrow contract until a result or the deadline (on-chain) |
-| Who decides pass or fail | Hirakumi's gateway, against a rule whose hash is published before you pay | Hirakumi's gateway, same rule |
-| Who counts what's left | Hirakumi's database | Nothing to count: one job per lock |
-| If a call is wrongly charged | Visible in your receipts (`GET /a/<apiId>/receipts`), no automatic refund | Dispute window before unlock |
-| If Hirakumi goes offline | Remaining credits can't be used | No result is submitted, so Cardano refunds you |
-| Cost per call | ~0.014 ADA overhead (one payment per 100 calls) | A full payment and minutes per job |
-
-Packs are fast and cheap: you pay once on Cardano and the gateway uses a credit only when a response passes. Every credit call is logged with its verdict, rule hash and MIP-004 style input/output hashes, and the token holder can fetch them from `/receipts` and recompute the output hash from the body they received. Escrow needs much less trust: Masumi's contract holds the money, and if we don't deliver a passing result, Cardano refunds you automatically. Next step on the roadmap: pack money paid into escrow and released to the seller in batches as calls pass.
+The pass/fail check runs on our gateway in every mode, against a rule whose hash is published before payment. The escrow channel is the validator in `contracts/pack-escrow` (Aiken, Plutus V3, 110 tests), proven end to end on preprod (see `docs/submission/submission-checklist.md`).
 
 ## Where each technology is used
 
@@ -41,7 +38,7 @@ Packs are fast and cheap: you pay once on Cardano and the gateway uses a credit 
 - Chainlink CRE uptime scoring was a stretch goal and is not in this repo.
 
 ## Repository layout
-`apps/gateway` · `apps/web` · `apps/coworker` · `packages/core` · `packages/db` · `packages/masumi` · `sellers/price-api` · `agents/buyer` · `db/migrations` · `docs/`
+`apps/gateway` · `apps/web` · `apps/coworker` · `packages/core` · `packages/db` · `packages/masumi` · `sellers/price-api` · `agents/buyer` · `contracts/pack-escrow` · `packages/escrow` · `db/migrations` · `docs/`
 
 ## Run it
 Requirements: Node 22+, pnpm, Docker. A funded preprod wallet (tADA from https://docs.cardano.org/cardano-testnets/tools/faucet, tUSDM from https://tusdm.moneta.global) and a Blockfrost preprod key.

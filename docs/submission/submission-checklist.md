@@ -56,3 +56,8 @@ All on Cardano preprod. Explorer: https://preprod.cardanoscan.io
 ### x402 call packs
 - First pack: tx `43844e7b86c35e680805d5916cd38743462fbcf4cbd1db580d0faad8936e6a09`, settled in 16.5 s, seller received exactly 2.00 tUSDM
 - Demo pack for the try page: tx `9d1b37bee0227ae56217699b15ddea5cf7d549f2bd4dae0e734f304c55c7b9eb`, settled in 9.4 s, paid straight to the API owner's wallet
+
+### Pack escrow channel (contracts/pack-escrow, script `addr_test1wqwqw68rgnnd7z99300njyhkez24yzwx660vxmu0wzpzsscrga9pa`)
+- Run 1: lock `2e5a2d0e13dd634e9946eef0c83ff322dcb8614f847cffd9f693fd982f78c5d4` (x402 `script` through the hosted facilitator) → Close{1} `b6b853e94dc3860acea21872b231e913962bbd9090ceee60c09c04ff0aa9ce13` → Raise{3} `bffe6067c246017d041f4c0f79204c3bc2b31ab443ab1716c9006a81c25701c5` → Settle `51c249eaf4048cf2628554246f78642fe2b96738f6a3b2100d6c07f92aecb1f8` (seller 58 200, fee 1 800, buyer 1 940 000 micros tUSDM; every payout tagged with the channel id)
+- Run 2 (buyer exits with no IOU): lock `527793c53cebb0f9bb52c565f3cd6902a3bd6d41576e7f3c232e2736b15be940` → Close{0} by the buyer `4df338a3f7dc07d1259cace23ec674c7619fe209101b3b55ea8650d935f90c23` → Settle `dce6cf35de5554e4477e2105b6925a57691ecbbffaea9c155bd7a3f44dec059f` (everything back to the buyer)
+- Gateway + buyer agent run: lock `013b170a9b49047c3f6f9e6a88a3b200986bce855e9949cc283b628570d06995` → watcher Close{3} `bd34fe3a8bdc8fea9d37aade8a525addf1eff47c3ff987d54f253bcbbe21d549` → watcher Settle `18f943db059ce79c5e888305564797c8eb51da92efc6210e18430fb53cfe59ff` (seller 60 000, buyer 1 940 000)
