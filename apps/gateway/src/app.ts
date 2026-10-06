@@ -3,6 +3,7 @@ import { getRuleByHash } from "@hirakumi/db";
 import { creditsRouter } from "./credits";
 import type { AppDeps } from "./deps";
 import { errorHandler } from "./http";
+import { mip003Router } from "./mip003";
 import { packRouter } from "./packs";
 
 export function createApp(d: AppDeps): Express {
@@ -13,6 +14,7 @@ export function createApp(d: AppDeps): Express {
   app.get("/healthz", (_req, res) => { res.json({ ok: true }); });
   app.use(packRouter(d));
   app.use(creditsRouter(d));
+  app.use(mip003Router(d));
   app.get("/r/:ruleHash", async (req, res, next) => {
     try {
       const rule = await getRuleByHash(d.sql, req.params.ruleHash);
