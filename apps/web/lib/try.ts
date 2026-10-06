@@ -10,6 +10,11 @@ export type TryReceipt = {
   /** MIP-004 output hash of a paid answer: sha256(token id + ";" + exact body). Null when no answer was paid for. */
   outputHash: string | null;
   receiptsUrl: string;
+  /**
+   * Escrow packs: the channel, the IOU the demo wallet signed after checking this answer (null: none), and
+   * whether it disputed a "pass" that broke the promise. Null for a direct pack.
+   */
+  escrow?: { channelId: string; iouSigned: number | null; disputed: boolean } | null;
 };
 
 /** Gateway credit route: GET input goes in the query string, any other method sends it as the JSON body. */

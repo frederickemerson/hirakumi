@@ -71,7 +71,7 @@ export function LiveMoment({ apiId, liveSince, registryUrl, health = "healthy" }
             Your API is live
           </h2>
           <p className="max-w-xl text-body-lg animate-rise [animation-delay:140ms]">
-            It is registered on Masumi, and agents can buy call packs now. Each pack payment settles to your wallet.
+            It is registered on Masumi, and agents can buy call packs now. Each pack locks in escrow and pays you per answer that kept the promise.
           </p>
           <div className="flex flex-col gap-4 animate-rise [animation-delay:200ms] sm:flex-row sm:items-center">
             <TryLiveLink apiId={apiId} state="live" health={health} />

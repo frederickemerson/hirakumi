@@ -114,7 +114,9 @@ export function parseTrustedCidrs(raw: string | undefined): string[] {
 }
 
 function packEscrowFrom(env: NodeJS.ProcessEnv, demoMode: boolean): Pick<GatewayConfig, "packMode" | "packEscrow"> {
-  const mode = env.PACK_MODE?.trim() || "direct";
+  // Escrow is the default: pack money sits in the pack_escrow contract and the seller is paid per signed call.
+  // PACK_MODE=direct (packs pay the seller at purchase) stays as an explicit fallback.
+  const mode = env.PACK_MODE?.trim() || "escrow";
   if (mode !== "direct" && mode !== "escrow") throw new Error("PACK_MODE must be direct or escrow");
   if (mode === "direct") return { packMode: "direct", packEscrow: null };
   const feeAddress = env.HIRAKUMI_FEE_ADDRESS?.trim();

@@ -11,7 +11,7 @@ Turn any read-only OpenAPI API into a paid supplier for AI agents on Cardano. Bu
 - Video, slides, write-up: see `docs/submission/`
 
 ## Who you trust, in each payment mode
-| | Escrow pack channel (`PACK_MODE=escrow`) | Direct packs (default today) | Masumi escrow jobs |
+| | Escrow pack channel (`PACK_MODE=escrow`, the default) | Direct packs (`PACK_MODE=direct`, fallback) | Masumi escrow jobs |
 |---|---|---|---|
 | Where the money sits | Cardano contract until settlement | Seller's wallet from purchase | Masumi contract per job |
 | What the seller can be paid | Only calls the buyer signed IOUs for | The whole pack up front | The job, if a passing result is submitted |

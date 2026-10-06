@@ -104,7 +104,7 @@ export function ReviewPanel({ apiId, promises, pack }: {
         </div>
         {perCall && <p className="text-body">About {perCall} tUSDM per call.</p>}
         <p className="text-body text-graphite">
-          Pack payments go straight to your wallet. For per-job hires, Masumi holds the payment and keeps 5%.
+          Pack money locks in an escrow contract: you are paid per signed call when the pack settles, less Hirakumi's 3%, and the buyer gets back the rest. For per-job hires, Masumi holds the payment and keeps 5%.
         </p>
         <div className="flex flex-col gap-4 border-t border-ink pt-5 sm:flex-row sm:items-center">
           <Button disabled={busy} pending={status.kind === "publishing"} pendingLabel="Publishing…" onClick={publishAtThisPrice}>

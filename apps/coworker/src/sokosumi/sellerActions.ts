@@ -103,6 +103,10 @@ export async function savePrice(pool: pg.Pool, apiId: string, priceText: string,
       [apiId],
     );
     const packCalls = calls ?? pack?.calls ?? SUGGESTED_PACK.calls;
+    // Escrow packs pay per call: the price must split evenly across the calls (the gateway won't offer it otherwise).
+    if (priceMicros % BigInt(packCalls) !== 0n) {
+      return { ok: false, error: `The pack price must split evenly across its ${packCalls} calls, because escrow pays you per call. Try a round price such as ${formatTusdm(((priceMicros + BigInt(packCalls) - 1n) / BigInt(packCalls)) * BigInt(packCalls))} tUSDM.` };
+    }
     if (pack) {
       await c.query(`update packs set calls = $2, price_micros = $3::bigint where api_id = $1`, [apiId, packCalls, priceMicros.toString()]);
     } else {

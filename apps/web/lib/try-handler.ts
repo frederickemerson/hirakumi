@@ -2,6 +2,7 @@ import { outputHash } from "@hirakumi/core";
 import { clientAddress } from "./client-address";
 import { errorJson, json, readJson, sameOrigin } from "./http";
 import { buildGatewayCall, describeTryResult, type TryReceipt } from "./try";
+import { escrowCall, IOU_HEADER, type TryEscrowStore } from "./try-escrow";
 import type { TryPack } from "./try-repo";
 
 const METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
@@ -16,6 +17,8 @@ export type TryDeps = {
   allow: (key: string) => boolean;
   /** Shared limit across instances: a message when the pack can't take another paid try, else null. */
   budget: (apiId: string, token: string) => Promise<string | null>;
+  /** IOU state for escrow packs. Without it an escrow pack is refused (nothing could be signed for it). */
+  escrow?: TryEscrowStore;
   fetchImpl?: typeof fetch;
   now?: () => number;
 };
@@ -54,16 +57,30 @@ export function createTryHandler(d: TryDeps) {
     const problem = await d.budget(apiId, pack.token);
     if (problem) return errorJson(429, problem);
 
+    const channel = pack.channel ?? null;
+    if (channel && !d.escrow) return errorJson(503, "Live tries for escrow packs aren't set up right now. Try again later.");
     const call = buildGatewayCall(d.gatewayBase, apiId, { opId, method }, input as Record<string, unknown>, pack.token);
+    const send = (iou: string | null) => {
+      const headers = { ...(call.init.headers as Record<string, string>), ...(iou ? { [IOU_HEADER]: iou } : {}) };
+      return doFetch(call.url, { ...call.init, headers, signal: AbortSignal.timeout(TIMEOUT_MS) });
+    };
     const started = now();
     let res: Response;
+    let text: string;
+    let escrow: TryReceipt["escrow"] = null;
     try {
-      res = await doFetch(call.url, { ...call.init, signal: AbortSignal.timeout(TIMEOUT_MS) });
+      if (channel && d.escrow) {
+        const out = await escrowCall(d.escrow, channel, send);
+        ({ res, text } = out);
+        escrow = { channelId: channel.channelId, iouSigned: out.iouSigned, disputed: out.disputed };
+      } else {
+        res = await send(null);
+        text = await res.text();
+      }
     } catch {
       return errorJson(502, "We couldn't reach the Hirakumi gateway. Try again in a minute.");
     }
     const latencyMs = Math.round(now() - started);
-    const text = await res.text();
     const body = parseBody(text);
     const remaining = res.headers.get("x-credits-remaining");
     const creditsRemaining = remaining !== null && /^\d+$/.test(remaining) ? Number(remaining) : null;
@@ -74,6 +91,7 @@ export function createTryHandler(d: TryDeps) {
       // The gateway logs sha256(token id + ";" + body) for the answer it sent; this is the same hash over what we got.
       outputHash: res.status === 200 ? outputHash(pack.creditTokenId, text) : null,
       receiptsUrl: receiptsPath(apiId),
+      ...(escrow ? { escrow } : {}),
     };
     return json({ status: res.status, latencyMs, creditsRemaining, result, receipt, body, request: { method, url: call.url } });
   };

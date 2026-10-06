@@ -47,13 +47,13 @@ const STEPS: { title: string; body: string; rb: string }[] = [
   },
   {
     title: "You're live",
-    body: "Agents on Masumi and Sokosumi find your API and buy call packs in USDM on Cardano. Each pack payment settles to your wallet.",
+    body: "Agents on Masumi and Sokosumi find your API and buy call packs in USDM on Cardano. Each pack locks in an escrow contract and pays you per answer that kept the promise.",
     rb: "rb-periwinkle",
   },
 ];
 
 const LIVE_TODAY = [
-  "Pack payments settle straight to the seller's wallet",
+  "Pack money waits in a Cardano escrow contract until it is earned",
   "A credit is used only when the answer keeps the promise",
   "A receipt for every paid call, open to the buyer",
   "Single jobs through Masumi, refunded on-chain when the answer fails",
@@ -83,7 +83,7 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: "What does it cost?",
-    a: "Nothing on preprod. The plan is an onboarding fee and a small take rate on sales. Pack payments settle to your wallet; Hirakumi never holds your money.",
+    a: "Nothing on preprod. The plan is an onboarding fee and a small take rate on sales. Pack money waits in a Cardano escrow contract, never with Hirakumi, and pays you per kept promise.",
   },
   {
     q: "What does a promise look like?",
@@ -167,15 +167,15 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Trust: where the money sits today, and what is proven but not yet the default. */}
+      {/* Trust: where the money sits. */}
       <section id="trust" className="bleed scroll-mt-10 border-t-2 border-ink bg-ice py-20 sm:py-28">
         <div className="mx-auto w-full max-w-[1200px] px-4">
           <div className="grid gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:gap-16">
             <Reveal>
               <H2>How the money is protected</H2>
               <p className="mt-6 text-body-lg sm:text-sub">
-                Today a pack payment settles straight to the seller&apos;s wallet. Hirakumi&apos;s gateway checks every answer against the
-                promise and only then uses a credit. A stale, empty or failed answer is free.
+                A pack payment locks in a Cardano escrow contract. The buyer signs for each answer that kept the promise; the seller is
+                paid only for signed calls, and everything else goes back to the buyer. A stale, empty or failed answer is free.
               </p>
               <p className="mt-6 text-body-lg text-graphite">
                 Every paid call is logged with its verdict, and the buyer can audit the log at /receipts.

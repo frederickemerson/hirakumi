@@ -31,6 +31,7 @@ class FakeBuyer implements DemoBuyer {
     const { token } = await insertActiveToken(this.h().sql, this.h().seeded, 100);
     return { token, credits: 100, txHash: "ab".repeat(32) };
   }
+  async buyEscrowPack(): Promise<never> { throw new Error("direct-mode tests never buy escrow packs"); }
   async balance() { this.balanceCalls += 1; return this.funds; }
   fetch = async (url: string, init?: RequestInit): Promise<Response> => {
     const hd = new Headers(init?.headers);

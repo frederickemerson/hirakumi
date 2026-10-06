@@ -4,6 +4,8 @@ import { estimatedDowntimeSeconds, loadConfig } from "../src/config";
 const env = {
   DATABASE_URL: "postgres://x", PUBLIC_BASE_URL: "https://api.hirakumi.app/", INTERNAL_TOKEN: "change-me-32-bytes",
   FACILITATOR_URL: "https://x402.preprod.dev.ecosyseng.cf-deployments.org",
+  // Escrow packs are the default, so a working config names the fee address and the closer key.
+  HIRAKUMI_FEE_ADDRESS: "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s", ESCROW_CLOSER_VKH: "cd".repeat(28),
 };
 
 describe("loadConfig", () => {
@@ -42,12 +44,14 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...env, PAYMENT_SERVICE_URL: "http://ps/api/v1", PAYMENT_SERVICE_TOKEN: "t" }).masumi)
       .toEqual({ baseUrl: "http://ps/api/v1", token: "t" });
   });
-  it("PACK_MODE defaults to direct; escrow needs a fee address and a closer key", () => {
-    expect(loadConfig(env)).toMatchObject({ packMode: "direct", packEscrow: null });
-    expect(() => loadConfig({ ...env, PACK_MODE: "escrow" })).toThrow(/HIRAKUMI_FEE_ADDRESS/);
+  it("PACK_MODE defaults to escrow, which needs a fee address and a closer key; direct stays as a fallback", () => {
+    expect(loadConfig(env)).toMatchObject({ packMode: "escrow" });
+    const bare = { ...env, HIRAKUMI_FEE_ADDRESS: "", ESCROW_CLOSER_VKH: "" };
+    expect(() => loadConfig(bare)).toThrow(/HIRAKUMI_FEE_ADDRESS/);
+    expect(loadConfig({ ...bare, PACK_MODE: "direct" })).toMatchObject({ packMode: "direct", packEscrow: null });
     const fee = "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s";
-    expect(() => loadConfig({ ...env, PACK_MODE: "escrow", HIRAKUMI_FEE_ADDRESS: fee })).toThrow(/OPERATOR_MNEMONIC/);
-    const c = loadConfig({ ...env, DEMO_MODE: "1", PACK_MODE: "escrow", HIRAKUMI_FEE_ADDRESS: fee, ESCROW_CLOSER_VKH: "AB".repeat(28) });
+    expect(() => loadConfig({ ...bare, PACK_MODE: "escrow", HIRAKUMI_FEE_ADDRESS: fee })).toThrow(/OPERATOR_MNEMONIC/);
+    const c = loadConfig({ ...bare, DEMO_MODE: "1", PACK_MODE: "escrow", HIRAKUMI_FEE_ADDRESS: fee, ESCROW_CLOSER_VKH: "AB".repeat(28) });
     expect(c.packEscrow).toMatchObject({
       feeAddress: fee, feeBps: 300, closerVkh: "ab".repeat(28), contestPeriodMs: 180_000, closeFeeBudgetLovelace: 700_000, operatorMnemonic: null,
     });

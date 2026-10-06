@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { getSql } from "@/lib/db";
 import { resetDb } from "@/test/db";
 import { seedApi, seedOperation, seedSeller } from "@/test/factories";
-import { demoBudgetProblem, findTryPack, listTryOperations } from "./try-repo";
-import { sha256Hex } from "@hirakumi/core";
+import { demoBudgetProblem, findTryPack, listTryOperations, tryEscrowStore } from "./try-repo";
+import { ruleHash, sha256Hex, type RuleDefinition } from "@hirakumi/core";
 import { seedPack } from "@/test/factories";
 
 describe("listTryOperations", () => {
@@ -97,5 +97,69 @@ describe("demo pack budget", () => {
   it("explains an empty pack", async () => {
     const { token } = await demo(0, "exhausted");
     expect(await demoBudgetProblem(getSql(), token.raw, 3)).toMatch(/used up/);
+  });
+});
+
+describe("escrow live packs", () => {
+  beforeEach(resetDb);
+
+  /** A live escrow pack as the gateway stores it: credit token, its channel, and the demo wallet's IOU key. */
+  async function escrowPack(channelStatus = "locked") {
+    const sql = getSql();
+    const seller = await seedSeller();
+    const api = await seedApi(seller.id, "live");
+    const pack = await seedPack(api.id);
+    const raw = "hk_escrow_1";
+    const channelId = "cd".repeat(32);
+    await sql`
+      insert into credit_tokens (id, api_id, pack_id, token_hash, status, remaining, payment_payload_hash, tx_hash)
+      values ('ct_esc', ${api.id}, ${pack.id}, ${sha256Hex(raw)}, 'active', 100, 'pp_esc', 'tx_esc')`;
+    await sql`
+      insert into pack_channels (channel_id, api_id, pack_id, credit_token_id, receipt_key, refund_address, seller_address, fee_address, fee_bps,
+        price_micros, price_per_call_micros, max_calls, unsigned_allowance, contest_period_ms, close_fee_budget_lovelace, datum_cbor, status, lock_tx_hash)
+      values (${channelId}, ${api.id}, ${pack.id}, 'ct_esc', 'rk', 'addr_test1r', 'addr_test1s', 'addr_test1f', 300,
+        2000000, 20000, 100, 1, 180000, 700000, 'd8', ${channelStatus}, 'tx_esc')`;
+    await sql`
+      insert into try_tokens (id, api_id, status, token, token_hash, credits, channel_id, iou_secret, rule_hash, iou_last)
+      values ('try_esc', ${api.id}, 'active', ${raw}, ${sha256Hex(raw)}, 100, ${channelId}, ${"11".repeat(32)}, 'sha256:x', '3.sig')`;
+    return { api, channelId };
+  }
+
+  it("returns the channel and IOU key with an open escrow pack", async () => {
+    const { api, channelId } = await escrowPack();
+    expect((await findTryPack(getSql(), api.id, undefined))?.channel).toEqual({
+      tryId: "try_esc", channelId, secretKey: "11".repeat(32), ruleHash: "sha256:x", lastIou: "3.sig",
+    });
+  });
+
+  it("skips a pack whose channel is closing or that the demo wallet disputed", async () => {
+    const { api } = await escrowPack("close_requested");
+    expect(await findTryPack(getSql(), api.id, undefined)).toBeNull();
+    await getSql()`update pack_channels set status = 'locked'`;
+    await getSql()`update try_tokens set disputed = true`;
+    expect(await findTryPack(getSql(), api.id, undefined)).toBeNull();
+  });
+
+  it("counts checked passes atomically and only ever moves the kept IOU forward", async () => {
+    await escrowPack();
+    const store = tryEscrowStore(getSql());
+    expect(await Promise.all([store.countPass("try_esc"), store.countPass("try_esc"), store.countPass("try_esc")])).toEqual(expect.arrayContaining([1, 2, 3]));
+    expect(await store.verified("try_esc")).toBe(3);
+    await store.saveIou("try_esc", 5, "5.new");
+    await store.saveIou("try_esc", 4, "4.older");
+    const [row] = await getSql()<{ iouSigned: number; iouLast: string }[]>`select iou_signed, iou_last from try_tokens where id = 'try_esc'`;
+    expect(row).toEqual({ iouSigned: 5, iouLast: "5.new" });
+  });
+
+  it("finds the promise only when its definition hashes to the lock's rule hash", async () => {
+    const seller = await seedSeller();
+    const api = await seedApi(seller.id, "live");
+    const op = await seedOperation(api.id, { enabled: true });
+    const def = { version: 1, status: { min: 200, max: 299 }, contentType: "application/json", schema: { type: "object" } } as RuleDefinition;
+    await getSql()`insert into rules (id, operation_id, version, definition, hash) values ('r_ok', ${op.id}, 1, ${getSql().json(def as never)}, ${ruleHash(def)})`;
+    await getSql()`insert into rules (id, operation_id, version, definition, hash) values ('r_bad', ${op.id}, 2, ${getSql().json(def as never)}, 'sha256:forged')`;
+    const store = tryEscrowStore(getSql());
+    expect(await store.rule(ruleHash(def))).toEqual(def);
+    expect(await store.rule("sha256:forged")).toBeNull();
   });
 });

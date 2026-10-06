@@ -1,6 +1,6 @@
 import { reloadQuietly } from "@/lib/gateway";
 import { errorJson, json, readJson, type ApiRouteContext } from "@/lib/http";
-import { MIN_PRICE_MICROS, MoneyError, parsePackCalls, parseTusdm } from "@/lib/money";
+import { MIN_PRICE_MICROS, MoneyError, parsePackCalls, parseTusdm, unevenPackPrice } from "@/lib/money";
 import { savePricing } from "@/lib/repo/packs";
 import { loadOwnedApi } from "@/lib/route-helpers";
 
@@ -25,6 +25,8 @@ export async function POST(req: Request, ctx: ApiRouteContext): Promise<Response
     return errorJson(400, "A pack must cost at least 1 tUSDM. Cardano can't move smaller token payments cheaply.");
   }
   if (escrowPriceMicros < MIN_PRICE_MICROS) return errorJson(400, "A per-job hire must cost at least 1 tUSDM.");
+  const uneven = unevenPackPrice(priceMicros, calls);
+  if (uneven) return errorJson(400, uneven);
   const result = await savePricing(sql, { apiId: api.id, sellerId: session.sellerId, calls, priceMicros, escrowPriceMicros });
   if (!result.ok) return errorJson(result.status, result.error);
   await reloadQuietly(api.id);

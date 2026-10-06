@@ -2,7 +2,8 @@
 // Byte layout and signature scheme match contracts/pack-escrow/lib/hirakumi/iou.ak.
 import { createHash } from "node:crypto";
 import { ed25519 } from "@noble/curves/ed25519";
-import { bytesOf, hexOf, toHex } from "./hex.js";
+// Extensionless, like @hirakumi/core: the web bundles this file from source (apps/web/lib/try-escrow.ts).
+import { bytesOf, hexOf, toHex } from "./hex";
 
 const PREFIX = Uint8Array.from([0x48, 0x4b, 0x52, 0x31]); // "HKR1"
 const CLOSE_PREFIX = Uint8Array.from([0x48, 0x4b, 0x43, 0x31]); // "HKC1"

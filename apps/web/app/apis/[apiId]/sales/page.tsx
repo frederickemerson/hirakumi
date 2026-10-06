@@ -17,7 +17,7 @@ export default async function SalesPage({ params }: { params: Promise<{ apiId: s
       <h1 className="text-h font-medium uppercase">{api.name} sales</h1>
       <div className="space-y-3">
         <h2 className="text-sub font-semibold uppercase">Credit packs</h2>
-        <p className="text-body">Pack payments go straight to your wallet in one transaction each.</p>
+        <p className="text-body">Each pack locks in an escrow contract. When it settles you receive its signed calls, less Hirakumi's 3%; unused calls refund to the buyer.</p>
         <PackSalesTable sales={sales} />
       </div>
       <div className="space-y-3">

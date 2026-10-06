@@ -101,11 +101,15 @@ export function createPackPayer(cfg: { mnemonic: string; blockfrostProjectId: st
      * Escrow pack: sends our IOU key and refund address on both the unpaid and the paid request, and pays only
      * if `check` accepts the 402's datum.
      */
-    buyEscrowPack(buyUrl: string, keys: { receiptKey: string; refundAddress: string }, check: OfferCheck): Promise<EscrowPurchase> {
+    buyEscrowPack(
+      buyUrl: string, keys: { receiptKey: string; refundAddress: string }, check: OfferCheck, hooks: { onSigned?: SignedHook } = {},
+    ): Promise<EscrowPurchase> {
       return serial.run(async () => {
         lastSignature = null;
         offerCheck = check;
         const recoverySecret = randomBytes(32).toString("base64url");
+        const hook = hooks.onSigned;
+        onSigned = hook ? (paymentSignature) => hook({ paymentSignature, recoverySecret }) : null;
         try {
           const res = await payFetch(buyUrl, {
             method: "POST",
@@ -131,9 +135,14 @@ export function createPackPayer(cfg: { mnemonic: string; blockfrostProjectId: st
         } catch (e) {
           // Nothing was signed, so nothing can land on-chain: the caller may forget the channel.
           if (lastSignature === null) throw new PaymentNotSentError(e);
+          // A signed lock can still land on-chain even when the answer was lost: keep what /recover needs.
+          if (!(e instanceof PackPurchaseError)) {
+            throw new PackPurchaseError(0, (e as Error)?.message ?? String(e), lastSignature, recoverySecret);
+          }
           throw e;
         } finally {
           offerCheck = null;
+          onSigned = null;
         }
       });
     },

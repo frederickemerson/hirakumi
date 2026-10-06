@@ -178,6 +178,9 @@ describe("replies on a task", () => {
     await db.pool.query(`insert into rules (id, operation_id, version, definition, hash) values ($1, $2, 1, '{}'::jsonb, 'sha256:x')`, [`rule_${rand()}`, get]);
     await reply("price 0.5");
     expect((await messagesForTask(t.id)).at(-1)?.body).toMatch(/at least 1 tUSDM/);
+    // Escrow packs pay per call, so the price must split evenly across the calls.
+    await reply("price 1.000001 for 3 calls");
+    expect((await messagesForTask(t.id)).at(-1)?.body).toMatch(/split evenly across its 3 calls.*Try a round price such as 1\.000002 tUSDM/);
     await reply("price 2.5 for 200 calls");
     expect((await db.pool.query(`select calls, price_micros::text, escrow_price_micros::text from packs where api_id = $1`, [apiId])).rows)
       .toEqual([{ calls: 200, price_micros: "2500000", escrow_price_micros: "2000000" }]);
