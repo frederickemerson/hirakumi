@@ -66,7 +66,13 @@ describe("UpstreamAuthForm", () => {
     const user = userEvent.setup();
     render(<UpstreamAuthForm apiId="api_1" initial={null} hint={null} />);
     await user.click(screen.getByRole("button", { name: "Add a key" }));
+    // Header by default, with no warning; a query parameter warns that the address can leak.
+    expect(screen.getByRole("radio", { name: "Header" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.queryByTestId("query-key-warning")).toBeNull();
     await user.click(screen.getByRole("radio", { name: "Query parameter" }));
+    expect(screen.getByTestId("query-key-warning")).toHaveTextContent(
+      "A key in the address can leak in logs and error messages. Use a header if your API accepts one.",
+    );
     await user.type(screen.getByLabelText("Query parameter name"), "api_key");
     await user.type(screen.getByLabelText("Key"), KEY);
     await user.click(screen.getByRole("button", { name: "Save key" }));
@@ -136,6 +142,12 @@ describe("UpstreamAuthForm after failed test calls", () => {
 });
 
 describe("helpers", () => {
+  it("shows the gateway's notice about the stored key", () => {
+    const notice = "The API's address changed since the key was saved. Save the key again.";
+    render(<UpstreamAuthForm apiId="api_1" initial={{ in: "header", name: "X-API-Key", hint: "WXYZ" }} hint={null} notice={notice} />);
+    expect(screen.getByRole("alert")).toHaveTextContent(notice);
+  });
+
   it("describes a setting without a hint for short keys", () => {
     expect(describeSetting({ in: "query", name: "key", hint: "" })).toBe("key in query");
   });

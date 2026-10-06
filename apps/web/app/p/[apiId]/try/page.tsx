@@ -35,6 +35,7 @@ export default async function TryApiPage({ params }: { params: Promise<{ apiId: 
     path: r.path,
     description: r.description,
     promise: rules.find((p) => p.opId === r.opId)?.plainEnglish ?? null,
+    statusOnly: rules.find((p) => p.opId === r.opId)?.statusOnly ?? false,
     fields: fieldsFromSchema(r.inputSchema),
   }));
   return (

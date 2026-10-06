@@ -2,12 +2,16 @@ import { AddressError, toPreprodBech32, verifyCip30Signature } from "@/lib/carda
 import { shortAddress } from "@/lib/copy";
 import { errorJson, json, readJson, type ApiRouteContext } from "@/lib/http";
 import { finalizeOwnership, getOpenWalletChallenge, hasFreshVerifyPass } from "@/lib/repo/challenges";
+import { updatingResponse } from "@/lib/repo/schema";
 import { loadOwnedApi, wrongStep } from "@/lib/route-helpers";
 
 export async function POST(req: Request, ctx: ApiRouteContext): Promise<Response> {
   const loaded = await loadOwnedApi(req, ctx);
   if (loaded instanceof Response) return loaded;
   const { api, sql, session } = loaded;
+  // The verification code is a challenge of kind 'header', which needs migration 0014.
+  const updating = await updatingResponse(sql);
+  if (updating) return updating;
   if (api.state !== "endpoints_confirmed") return wrongStep(api);
   const body = await readJson(req);
   if (!body || typeof body.challengeId !== "string" || typeof body.signature !== "string" || typeof body.key !== "string") {

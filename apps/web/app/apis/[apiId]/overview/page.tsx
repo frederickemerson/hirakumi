@@ -21,6 +21,7 @@ import { loadApiPage } from "@/lib/page-auth";
 import { listOnboardSteps } from "@/lib/repo/apis";
 import { getPack } from "@/lib/repo/packs";
 import { listLatestRules } from "@/lib/repo/rules";
+import { hasAnyApiSchema } from "@/lib/repo/schema";
 import { getUpstreamAuth } from "@/lib/repo/upstream-auth";
 import { getOverviewStats, listIncidents, listPackSales } from "@/lib/repo/stats";
 import { progressFor } from "@/lib/progress";
@@ -31,6 +32,9 @@ import { registryLinks } from "@/lib/try";
 
 export const metadata: Metadata = { title: "Overview" };
 
+/** The gateway's health reason when a stored key was sealed for the API's old address (apps/gateway registry.ts). */
+const ADDRESS_CHANGED = "The API's address changed since the key was saved. Save the key again.";
+
 export default async function OverviewPage({ params }: { params: Promise<{ apiId: string }> }) {
   const { apiId } = await params;
   const { api } = await loadApiPage(apiId, `/apis/${apiId}/overview`);
@@ -38,13 +42,16 @@ export default async function OverviewPage({ params }: { params: Promise<{ apiId
     redirect(`/apis/${apiId}/${stepForState(api.state)}`);
   }
   const sql = getSql();
-  const [stats, incidents, pack, promises, sales, steps, upstreamAuth] = await Promise.all([
+  const [stats, incidents, pack, promises, sales, steps, upstreamAuth, keysOn] = await Promise.all([
     getOverviewStats(sql, apiId), listIncidents(sql, apiId), getPack(sql, apiId),
     listLatestRules(sql, apiId), listPackSales(sql, apiId, 5), listOnboardSteps(sql, apiId), getUpstreamAuth(sql, apiId),
+    hasAnyApiSchema(sql),
   ]);
   const downReasons = api.state === "live" && api.health === "down"
     ? await getGateway().getHealth(apiId).then((h) => h.lastReasons).catch(() => [])
     : [];
+  // The gateway can't open a key sealed for the API's old address (@hirakumi/core upstreamAuth.ts).
+  const keyNotice = downReasons.some((r) => r.includes(ADDRESS_CHANGED)) ? ADDRESS_CHANGED : undefined;
   const publicBase = env.publicBaseUrl();
   const buyerBase = `${publicBase}/a/${apiId}`;
   const snippetOp = promises.find((p) => p.opId === api.escrowOpId) ?? promises[0];
@@ -131,9 +138,9 @@ export default async function OverviewPage({ params }: { params: Promise<{ apiId
         )}
       </div>
 
-      {api.state !== "retired" && (
+      {api.state !== "retired" && keysOn && (
         // For key rotation: a new key takes effect on the next call, nothing else changes.
-        <UpstreamAuthForm apiId={apiId} initial={upstreamAuth} hint={null} title="Your API's key" />
+        <UpstreamAuthForm apiId={apiId} initial={upstreamAuth} hint={null} title="Your API's key" notice={keyNotice} />
       )}
 
       {api.state === "live" && <RetireButton apiId={apiId} name={api.name} />}

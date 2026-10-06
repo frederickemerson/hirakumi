@@ -19,8 +19,9 @@ create unique index challenges_header_token_uniq on challenges (token) where kin
 -- At most one open code per API, so the code the seller copied stays the code we check.
 create unique index challenges_header_open_per_api on challenges (api_id) where kind = 'header' and consumed_at is null;
 
--- APIs that need a key. upstream_auth = {"in": "header"|"query", "name": "...", "sealed": "hks1....", "hint": "abcd"}.
--- sealed is the key encrypted to the gateway's public key and bound to this API's id (@hirakumi/core upstreamAuth.ts);
+-- APIs that need a key. upstream_auth = {"in": "header"|"query", "name": "...", "sealed": "hks2....", "hint": "abcd"}.
+-- sealed is the key encrypted to the gateway's public key and bound to this API's id, placement and name, origin and
+-- path prefix (@hirakumi/core upstreamAuth.ts), so a changed address means saving the key again;
 -- only the gateway can open it. hint is the last 4 characters (empty for short keys), for display only.
 alter table apis add column upstream_auth jsonb;
 

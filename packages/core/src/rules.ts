@@ -3,6 +3,7 @@ import type { ErrorObject, ValidateFunction } from "ajv";
 import { jcs } from "./jcs";
 import { sha256Hex } from "./ids";
 import type { UpstreamResult } from "./fetch";
+import { isJsonMediaType, isMarkupMediaType, isTextMediaType, mediaTypeOf } from "./mediaTypes";
 
 export type RuleDefinition = {
   version: 1;
@@ -15,32 +16,7 @@ export type RuleDefinition = {
   schema: Record<string, unknown>;
 };
 
-/**
- * application/json, structured-syntax JSON such as application/vnd.api+json or application/problem+json, and JSON
- * sent as text (text/json, text/x-json, text/*+json): the body is parsed and checked as JSON.
- */
-export function isJsonMediaType(ct: string): boolean {
-  return ct === "application/json" || /^application\/[a-z0-9.!#$&^_-]+\+json$/.test(ct)
-    || ct === "text/json" || ct === "text/x-json" || /^text\/[a-z0-9.!#$&^_-]+\+json$/.test(ct);
-}
-
-/** Answers Hirakumi can check as text: text/* (but not JSON sent as text), XML, CSV and YAML. Binary types are not. */
-export function isTextMediaType(ct: string): boolean {
-  if (isJsonMediaType(ct)) return false;
-  return /^text\/[a-z0-9.+-]+$/.test(ct)
-    || ct === "application/xml" || /^application\/[a-z0-9.!#$&^_-]+\+xml$/.test(ct)
-    || ct === "application/csv" || ct === "application/yaml" || ct === "application/x-yaml";
-}
-
-/** Text types whose good answers are markup themselves, so an HTML page is not a sign of an error. */
-function isMarkupMediaType(ct: string): boolean {
-  return ct === "text/html" || ct === "text/xml" || ct === "application/xml" || /\+xml$/.test(ct);
-}
-
-/** The media type of a Content-Type header, lowercased without parameters. */
-export function mediaTypeOf(contentType: string | null | undefined): string {
-  return (contentType ?? "").split(";")[0].trim().toLowerCase();
-}
+export { isJsonMediaType, isMarkupMediaType, isTextMediaType, mediaTypeOf } from "./mediaTypes";
 
 export type Verdict = { pass: boolean; reasons: string[] };
 /** contentType is the promised media type (the gateway asks the upstream for it). */
@@ -86,6 +62,9 @@ export function formatSchemaErrors(errors: ErrorObject[] | null | undefined): st
     }
     if (e.keyword === "not") return `${at} looks like an error response`;
     if (e.keyword === "pattern" && e.schema === NON_BLANK) return `${at} is blank`;
+    if (e.keyword === "pattern" && /^#\/allOf\/[1-9]\d*\/pattern$/.test(e.schemaPath)) {
+      return `${at} does not contain ${JSON.stringify(unescapeRegExp(String(e.schema)))}`;
+    }
     return `${at} ${e.message ?? "is invalid"}`;
   });
 }
@@ -204,35 +183,122 @@ const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** Matches a body with at least one non-whitespace character. */
 const NON_BLANK = "\\S";
-/** "<!doctype html" or "<html" at the start, after optional whitespace, in any case (patterns take no flags). */
+/** Patterns take no flags, so a word is matched in any case letter by letter. */
 const anyCase = (s: string) => s.replace(/[a-z]/g, (c) => `[${c.toUpperCase()}${c}]`);
-const HTML_PAGE = `^\\s*<(?:!${anyCase("doctype")}\\s+${anyCase("html")}|${anyCase("html")})`;
+/** The HTML not-pattern of rules made before error bodies were refused: still a status-only rule. */
+const LEGACY_HTML_PAGE = `^\\s*<(?:!${anyCase("doctype")}\\s+${anyCase("html")}|${anyCase("html")})`;
+/**
+ * An HTML page or fragment at the start, after optional whitespace: "<!doctype html", "<html", or an "<h1", "<title",
+ * "<body" or "<head" tag (a proxy's or framework's error page).
+ */
+const HTML_PAGE = `^\\s*<(?:!${anyCase("doctype")}\\s+${anyCase("html")}|${anyCase("html")}|(?:${["h1", "title", "body", "head"].map(anyCase).join("|")})(?=[\\s>/]))`;
+/** A body shorter than this that starts with an error phrase is an error page, whatever its status. */
+export const ERROR_BODY_MAX_LENGTH = 199;
+const ERROR_PHRASES = [
+  "internal server error", "internal error", "error", "rate limit exceeded", "rate limited", "rate limit", "too many requests",
+  "service unavailable", "bad gateway", "gateway timeout", "gateway time-out", "not found", "forbidden", "unauthorized",
+  "unauthorised", "maintenance", "timeout", "timed out",
+];
+/**
+ * A short error text: after optional whitespace, leading tags and an HTTP status ("404 Not Found", "HTTP/1.1 503
+ * Service Unavailable"), one of ERROR_PHRASES as a whole word. "Errors: 0" and "error_count" do not match.
+ */
+const ERROR_BODY = `^\\s*(?:<[^>]{0,200}>\\s*)*(?:${anyCase("http")}(?:\\/[0-9.]+)?\\s+)?(?:[45][0-9][0-9](?:\\s*[-:.]\\s*|\\s+))?`
+  + `(?:${ERROR_PHRASES.map((p) => p.split(" ").map(anyCase).join("\\s+")).join("|")})(?![A-Za-z0-9_])`;
 
 /**
- * The promise for a text answer: the media type, a 2xx status and a body that is not blank. Unless the type is HTML
- * or XML, a body that is an HTML page (a proxy's or framework's error page) breaks it too. When the samples are at
- * least two different bodies, each more than one line, and they all start with the same first line (a CSV header,
- * say), that line is required too; one body repeated (QA calls the same example several times) does not show which
- * line is a header and which is data.
- * The status code is the main signal for an error: a text error ("Rate limit exceeded") sent with a 2xx status
- * passes, so the seller's API must answer errors with a 4xx or 5xx status. An error answer must differ by status,
- * media type or that first line; otherwise this throws.
+ * What a text promise refuses whatever the status: an HTML page (unless the promised type is HTML or XML, whose good
+ * answers are markup) and a short error text. Both sit in one `not: { anyOf: [...] }`.
+ */
+function errorBodyNot(contentType: string): Record<string, unknown> {
+  const shortError = { maxLength: ERROR_BODY_MAX_LENGTH, pattern: ERROR_BODY };
+  return { anyOf: isMarkupMediaType(contentType) ? [shortError] : [{ pattern: HTML_PAGE }, shortError] };
+}
+
+// A first line that changes between answers is data, not a header: a date, a time or a number in it.
+const DATE_OR_TIME = /\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}|\d{1,2}:\d{2}/;
+const NUMBER_TOKEN = /^[+\-.,%\d]*\d[+\-.,%\d]*$/;
+const MAX_HEADER_LENGTH = 300;
+
+/** True when a shared first line can be a header: short enough, with no date, time or standalone number in it. */
+function headerLike(line: string): boolean {
+  if (!line.trim() || line.length > MAX_HEADER_LENGTH || DATE_OR_TIME.test(line)) return false;
+  const tokens = line.split(/[\s,;|\t]+/).map((t) => t.replace(/^["']+|["']+$/g, "")).filter(Boolean);
+  return !tokens.some((t) => NUMBER_TOKEN.test(t));
+}
+
+/**
+ * The promise for a text answer: the media type, a 2xx status, a body that is not blank, and no error body
+ * (errorBodyNot): an HTML page unless the type is HTML or XML, or a short text such as "Rate limit exceeded" or
+ * "404 Not Found". When the samples are at least two different bodies, each more than one line, and they all start
+ * with the same first line (a CSV header, say) with no date, time or number in it, that line is required too; one
+ * body repeated (QA calls the same example several times) does not show which line is a header and which is data.
+ * An error answer must still differ by status, media type, that first line or an error body; otherwise this throws.
  */
 export function inferTextRule(contentType: string, samples: string[], errorSample?: UpstreamResult): RuleDefinition {
   if (samples.length === 0) throw new Error("inferTextRule needs at least one passing sample");
   const firstLines = samples.map((s) => s.split(/\r?\n/)[0]);
   const header = new Set(samples).size >= 2
-    && samples.every((s) => /\r?\n/.test(s.trimEnd())) && firstLines.every((l) => l === firstLines[0]) && firstLines[0].trim()
+    && samples.every((s) => /\r?\n/.test(s.trimEnd())) && firstLines.every((l) => l === firstLines[0]) && headerLike(firstLines[0])
     ? firstLines[0]
     : null;
-  const schema: Record<string, unknown> = { type: "string", minLength: 1, pattern: header ? `^${escapeRegExp(header)}\\r?\\n` : NON_BLANK };
-  if (!isMarkupMediaType(contentType)) schema.not = { pattern: HTML_PAGE };
+  const schema: Record<string, unknown> = {
+    type: "string", minLength: 1, pattern: header ? `^${escapeRegExp(header)}\\r?\\n` : NON_BLANK, not: errorBodyNot(contentType),
+  };
   const def: RuleDefinition = { version: 1, status: { min: 200, max: 299 }, contentType, schema };
   if (errorSample && compileRule(def).check(errorSample).pass) {
     throw new RuleInferenceError("The promise would accept the error response. Make your API answer unknown input with an HTTP 4xx status.");
   }
   return def;
 }
+
+const isTextRule = (def: RuleDefinition) => !isJsonMediaType(def.contentType) && def.schema.type === "string";
+
+/**
+ * True for a text promise that checks only the status, the media type, a non-blank body and error bodies: no
+ * pinned header line and no required phrase. Such a promise is kept by any answer that is not an error, so the
+ * seller may want to add a phrase (withRequiredPhrase).
+ */
+export function isStatusOnlyRule(def: RuleDefinition): boolean {
+  if (!isTextRule(def)) return false;
+  const { type: _type, minLength, pattern, not, ...rest } = def.schema;
+  if (Object.keys(rest).length) return false;
+  if (minLength !== undefined && !(typeof minLength === "number" && minLength <= 1)) return false;
+  if (pattern !== undefined && pattern !== NON_BLANK) return false;
+  if (not === undefined) return true;
+  const known = [errorBodyNot(def.contentType), { pattern: LEGACY_HTML_PAGE }].map((n) => jcs(n));
+  return known.includes(jcs(not));
+}
+
+export const MAX_REQUIRED_PHRASE_LENGTH = 200;
+
+/**
+ * A copy of a text promise that also requires the body to contain phrase (trimmed, matched exactly, 1 to 200
+ * characters on one line). Each check is one entry of schema.allOf: the existing pattern first, then the phrases.
+ * Throws RuleInferenceError for a JSON promise or a bad phrase.
+ */
+export function withRequiredPhrase(def: RuleDefinition, phrase: string): RuleDefinition {
+  if (!isTextRule(def)) throw new RuleInferenceError("A required phrase only works for promises on text answers.");
+  const p = phrase.trim();
+  if (!p) throw new RuleInferenceError("Type the phrase every good answer contains.");
+  if (p.length > MAX_REQUIRED_PHRASE_LENGTH) throw new RuleInferenceError(`The phrase can be at most ${MAX_REQUIRED_PHRASE_LENGTH} characters.`);
+  if (/[\r\n]/.test(p)) throw new RuleInferenceError("The phrase must be on one line.");
+  const { pattern, allOf, ...schema } = def.schema;
+  const checks: unknown[] = Array.isArray(allOf) ? [...allOf] : [];
+  if (pattern !== undefined) checks.unshift({ pattern });
+  else if (!checks.length) checks.push({ pattern: NON_BLANK });
+  const added = { pattern: escapeRegExp(p) };
+  if (!checks.some((c) => jcs(c) === jcs(added))) checks.push(added);
+  return { ...def, schema: { ...schema, allOf: checks } };
+}
+
+/** The phrases withRequiredPhrase added to a text promise, unescaped, in order. */
+export function requiredPhrasesOf(def: RuleDefinition): string[] {
+  if (!isTextRule(def) || !Array.isArray(def.schema.allOf)) return [];
+  return (def.schema.allOf as { pattern?: unknown }[]).slice(1).flatMap((c) => (typeof c?.pattern === "string" ? [unescapeRegExp(c.pattern)] : []));
+}
+
+const unescapeRegExp = (s: string) => s.replace(/\\(.)/g, "$1");
 
 /**
  * The promise from real answers: JSON types go through inferRule on the parsed bodies (the media type is the one

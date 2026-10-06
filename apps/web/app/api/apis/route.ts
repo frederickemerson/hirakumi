@@ -3,6 +3,7 @@ import { getSql } from "@/lib/db";
 import { env } from "@/lib/env";
 import { errorJson, json, readJson, requireSeller } from "@/lib/http";
 import { createApi, createApiForTask, findCoworkerTask, LISTED_BY_OTHER, type ApiInput } from "@/lib/repo/apis";
+import { updatingResponse } from "@/lib/repo/schema";
 import { validateApiName, validateOpenApiUrl, ValidationError } from "@/lib/validate";
 
 /**
@@ -22,11 +23,19 @@ function readIntake(body: Record<string, unknown>, sellerId: string): ApiInput {
   return { sellerId, name: validateApiName(body.name, hostname), origin, openapiUrl: url };
 }
 
+const SAMPLES_OFF = "Listing an API from example requests isn't available yet. Paste the link to your OpenAPI description instead.";
+
 export async function POST(req: Request): Promise<Response> {
   const session = requireSeller(req);
   if (session instanceof Response) return session;
   const body = await readJson(req);
   if (!body) return errorJson(400, "Paste the link to your OpenAPI description, or your base URL and example requests.");
+  if (body.mode === "samples") {
+    // Behind SAMPLES_INTAKE until the coworker that reads example requests runs (lib/env.ts), and needs migration 0014.
+    if (!env.samplesIntake()) return errorJson(400, SAMPLES_OFF);
+    const updating = await updatingResponse(getSql());
+    if (updating) return updating;
+  }
   try {
     const input = readIntake(body, session.sellerId);
     let result: Awaited<ReturnType<typeof createApi>>;

@@ -1,6 +1,6 @@
 import Ajv2020 from "ajv/dist/2020.js";
 import {
-  compileRule, formatSchemaErrors, jcs, openUpstreamSecret, validateUpstreamAuth, type CompiledRule, type UpstreamCredential,
+  compileRule, formatSchemaErrors, jcs, openUpstreamSecret, UpstreamAddressChangedError, validateUpstreamAuth, type CompiledRule, type UpstreamCredential,
 } from "@hirakumi/core";
 import { loadApiBundle, type ApiRow, type OperationRow, type PackRow, type RuleRow, type Sql } from "@hirakumi/db";
 import type { HealthTracker } from "./health";
@@ -18,18 +18,23 @@ export type LoadedApi = { api: ApiRow & UpstreamAccess; ops: Map<string, LoadedO
  * Opens an API's stored key with the gateway's private key. Never throws; the reason is in credentialError, which
  * buyers can see, so it never names the key or the gateway's settings. The placement and name are stored in the
  * clear, so they are checked again here like the web app checks them (no reserved header, no line breaks).
+ * The key opens only for the placement, name, origin and path prefix it was sealed with: a key saved before the
+ * API's address changed blocks every call until the seller saves it again.
  */
-export function openCredential(api: Pick<ApiRow, "id" | "upstream_auth">, privateKey: string | null): UpstreamAccess {
+export function openCredential(api: Pick<ApiRow, "id" | "upstream_auth" | "origin" | "path_prefix">, privateKey: string | null): UpstreamAccess {
   const stored = api.upstream_auth;
   if (!stored) return { credential: null, credentialError: null };
   if (!privateKey) return { credential: null, credentialError: "this API needs a key, and the gateway can't read keys right now" };
   try {
-    const value = openUpstreamSecret(privateKey, api.id, stored.sealed);
+    const value = openUpstreamSecret(privateKey, { apiId: api.id, in: stored.in, name: stored.name, origin: api.origin, pathPrefix: api.path_prefix }, stored.sealed);
     return { credential: validateUpstreamAuth({ in: stored.in, name: stored.name, value }), credentialError: null };
-  } catch {
+  } catch (e) {
+    if (e instanceof UpstreamAddressChangedError) return { credential: null, credentialError: ADDRESS_CHANGED };
     return { credential: null, credentialError: "this API's key could not be read. The seller should enter it again" };
   }
 }
+
+export const ADDRESS_CHANGED = "The API's address changed since the key was saved. Save the key again.";
 
 const inputAjv = new Ajv2020({ allErrors: true, strict: false, coerceTypes: true, useDefaults: true });
 const validators = new Map<string, (input: unknown) => InputCheck>();

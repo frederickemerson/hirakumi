@@ -8,18 +8,26 @@ import type { LoadedOp, UpstreamAccess } from "./registry";
 export type UpstreamApi = Pick<ApiRow, "origin" | "path_prefix"> & Partial<UpstreamAccess>;
 
 /**
- * Every way the key can be written in an answer or a message (@hirakumi/core upstreamSecretForms): the whole value
- * and, for "Bearer abc…", the bare token, each as is and base64-encoded, percent-encoded, JSON-escaped and
- * entity-escaped, lowercased (matching ignores case). Longest first.
+ * The common ways the key is written in an answer or a message that redaction can cut out (@hirakumi/core
+ * upstreamSecretForms): the whole value and its parts (the bare token of "Bearer abc…"), each as is and
+ * base64-encoded, percent-encoded, JSON-escaped and entity-escaped, lowercased (matching ignores case). Longest
+ * first. leaksSecret also decodes the text, so it finds more than these.
  */
 export const secretForms = upstreamSecretForms;
 
-/** True when text (an answer or one of its headers) contains the key in any of its forms, in any case. */
+/**
+ * True when text (an answer or one of its headers) contains the key in a common encoding, in any case: the forms
+ * above, the text with escapes undone, and base64 tokens decoded (@hirakumi/core textLeaksSecret). Not every
+ * encoding: a header key, which answers echo less often than URLs, is the safer default.
+ */
 export function leaksSecret(text: string | null | undefined, credential: UpstreamCredential | null | undefined): boolean {
   return !!credential && textLeaksSecret(text, credential.value);
 }
 
-/** Removes the key from text that may reach a buyer, the database or a log (error messages can quote the URL). */
+/**
+ * Removes the key from text that may reach a buyer, the database or a log (error messages can quote the URL). Text
+ * where the key is found only after decoding is replaced whole.
+ */
 export function redactSecret(text: string, credential: UpstreamCredential | null | undefined): string {
   return credential ? redactUpstreamSecret(text, credential.value) : text;
 }

@@ -6,11 +6,22 @@ import type { Sql } from "../db";
 import { recordsKeptReason } from "../api-delete";
 import type { Api, ApiState, OnboardStep } from "../types";
 import { API_DELETE_ORDER, registerStartedSql, soldSql } from "./delete-api";
+import { hasAnyApiSchema } from "./schema";
 
 export const API_COLUMNS = [
   "id", "seller_id", "name", "origin", "path_prefix", "openapi_url", "intake_kind", "state", "health",
   "health_checked_at", "escrow_op_id", "agent_identifier", "created_at",
 ];
+/** Before migration 0014 there is no intake_kind: every API then came from an OpenAPI link (lib/repo/schema.ts). */
+const LEGACY_API_COLUMNS = API_COLUMNS.filter((c) => c !== "intake_kind");
+
+/**
+ * The select list for an Api row, on either side of migration 0014 (anyApi: hasAnyApiSchema). Synchronous on
+ * purpose: a fragment is a thenable, so returning it from an async function would run it as a query.
+ */
+export function apiColumns(sql: Sql | postgres.TransactionSql, anyApi: boolean) {
+  return anyApi ? sql`${sql(API_COLUMNS)}` : sql`${sql(LEGACY_API_COLUMNS)}, 'openapi'::text as intake_kind`;
+}
 
 /**
  * What the seller gave: an OpenAPI link (hosted anywhere; openapiUrl set, origin is the link's and only a
@@ -31,22 +42,28 @@ export async function createApi(
   return sql.begin(async (tx) => {
     // Serialise double submits of the same link (or the same samples base) by the same seller.
     await tx`select pg_advisory_xact_lock(hashtext(${`${input.sellerId}|${intakeKey(input)}`}))`;
+    const anyApi = await hasAnyApiSchema(tx);
+    const cols = apiColumns(tx, anyApi);
     // Audit I1: an API whose onboarding failed for good is not "the same API" any more: pasting the link
     // again (after fixing the API) must start over, or the seller is stuck on the failure forever.
     const [existing] = await tx<Api[]>`
-      select ${tx(API_COLUMNS)} from apis
-      where seller_id = ${input.sellerId} and state <> 'retired' and ${sameIntake(tx, input)}
-        and samples is not distinct from ${samplesOf(tx, input)}::jsonb
+      select ${cols} from apis
+      where seller_id = ${input.sellerId} and state <> 'retired' and ${sameIntake(tx, input, anyApi)}
         and not exists (select 1 from onboard_steps s where s.api_id = apis.id and s.status = 'failed')
       order by created_at desc limit 1`;
     if (existing) return { api: existing, created: false };
     if (await isTakenEarly(tx, input)) return { takenByOther: true as const };
     if (input.samples) await eraseEarlierSamples(tx, input.sellerId, input.samples.base);
-    const [api] = await tx<Api[]>`
-      insert into apis (id, seller_id, name, origin, openapi_url, intake_kind, samples)
-      values (${newId("api")}, ${input.sellerId}, ${input.name}, ${input.origin}, ${input.openapiUrl},
-              ${input.samples ? "samples" : "openapi"}, ${samplesOf(tx, input)})
-      returning ${tx(API_COLUMNS)}`;
+    const [api] = anyApi
+      ? await tx<Api[]>`
+        insert into apis (id, seller_id, name, origin, openapi_url, intake_kind, samples)
+        values (${newId("api")}, ${input.sellerId}, ${input.name}, ${input.origin}, ${input.openapiUrl},
+                ${input.samples ? "samples" : "openapi"}, ${samplesOf(tx, input)})
+        returning ${cols}`
+      : await tx<Api[]>`
+        insert into apis (id, seller_id, name, origin, openapi_url)
+        values (${newId("api")}, ${input.sellerId}, ${input.name}, ${input.origin}, ${input.openapiUrl})
+        returning ${cols}`;
     return { api, created: true };
   });
 }
@@ -54,9 +71,12 @@ export async function createApi(
 /** What makes two submits "the same API": the OpenAPI link, or the samples base (samples APIs have no link). */
 const intakeKey = (input: ApiInput) => (input.samples ? `samples|${input.samples.base}` : `openapi|${input.openapiUrl}`);
 
-const sameIntake = (tx: postgres.TransactionSql, input: ApiInput) => (input.samples
-  ? tx`intake_kind = 'samples' and samples->>'base' = ${input.samples.base}`
-  : tx`intake_kind = 'openapi' and openapi_url = ${input.openapiUrl}`);
+/** Before migration 0014 (anyApi false) every API came from a link; callers refuse samples then (lib/repo/schema.ts). */
+const sameIntake = (tx: postgres.TransactionSql, input: ApiInput, anyApi: boolean) => (!anyApi
+  ? tx`openapi_url = ${input.openapiUrl}`
+  : input.samples
+    ? tx`intake_kind = 'samples' and samples = ${samplesOf(tx, input)}::jsonb`
+    : tx`intake_kind = 'openapi' and openapi_url = ${input.openapiUrl} and samples is null`);
 
 /**
  * Corrected example requests for the same base URL replace the earlier ones: the earlier API is erased while
@@ -128,28 +148,35 @@ export async function createApiForTask(
     const [other] = await tx`select 1 from apis where sokosumi_task_id = ${task.taskId} and seller_id <> ${input.sellerId} limit 1`;
     if (other) return { claimedByOther: true as const };
     await tx`update sellers set sokosumi_user_id = ${task.sokosumiUserId} where id = ${input.sellerId} and sokosumi_user_id is null`;
+    const anyApi = await hasAnyApiSchema(tx);
+    const cols = apiColumns(tx, anyApi);
     const [linked] = await tx<Api[]>`
-      select ${tx(API_COLUMNS)} from apis where sokosumi_task_id = ${task.taskId} and seller_id = ${input.sellerId} and state <> 'retired'
+      select ${cols} from apis where sokosumi_task_id = ${task.taskId} and seller_id = ${input.sellerId} and state <> 'retired'
         and not exists (select 1 from onboard_steps s where s.api_id = apis.id and s.status = 'failed')
       order by created_at desc limit 1`;
     if (linked) return { api: linked, created: false };
     if (await isTakenEarly(tx, input)) return { takenByOther: true as const };
-    const [api] = await tx<Api[]>`
-      insert into apis (id, seller_id, name, origin, openapi_url, intake_kind, samples, sokosumi_task_id)
-      values (${newId("api")}, ${input.sellerId}, ${input.name}, ${input.origin}, ${input.openapiUrl},
-              ${input.samples ? "samples" : "openapi"}, ${samplesOf(tx, input)}, ${task.taskId})
-      returning ${tx(API_COLUMNS)}`;
+    const [api] = anyApi
+      ? await tx<Api[]>`
+        insert into apis (id, seller_id, name, origin, openapi_url, intake_kind, samples, sokosumi_task_id)
+        values (${newId("api")}, ${input.sellerId}, ${input.name}, ${input.origin}, ${input.openapiUrl},
+                ${input.samples ? "samples" : "openapi"}, ${samplesOf(tx, input)}, ${task.taskId})
+        returning ${cols}`
+      : await tx<Api[]>`
+        insert into apis (id, seller_id, name, origin, openapi_url, sokosumi_task_id)
+        values (${newId("api")}, ${input.sellerId}, ${input.name}, ${input.origin}, ${input.openapiUrl}, ${task.taskId})
+        returning ${cols}`;
     return { api, created: true };
   });
 }
 
 export async function getApiForSeller(sql: Sql, apiId: string, sellerId: string): Promise<Api | null> {
-  const [row] = await sql<Api[]>`select ${sql(API_COLUMNS)} from apis where id = ${apiId} and seller_id = ${sellerId} and deleted_at is null`;
+  const [row] = await sql<Api[]>`select ${apiColumns(sql, await hasAnyApiSchema(sql))} from apis where id = ${apiId} and seller_id = ${sellerId} and deleted_at is null`;
   return row ?? null;
 }
 
 export async function getLiveApi(sql: Sql, apiId: string): Promise<Api | null> {
-  const [row] = await sql<Api[]>`select ${sql(API_COLUMNS)} from apis where id = ${apiId} and state = 'live'`;
+  const [row] = await sql<Api[]>`select ${apiColumns(sql, await hasAnyApiSchema(sql))} from apis where id = ${apiId} and state = 'live'`;
   return row ?? null;
 }
 
@@ -171,7 +198,7 @@ export async function listRecordsKept(sql: Sql, sellerId: string): Promise<Map<s
 }
 
 export async function listApisForSeller(sql: Sql, sellerId: string): Promise<Api[]> {
-  return sql<Api[]>`select ${sql(API_COLUMNS)} from apis where seller_id = ${sellerId} and deleted_at is null order by created_at desc`;
+  return sql<Api[]>`select ${apiColumns(sql, await hasAnyApiSchema(sql))} from apis where seller_id = ${sellerId} and deleted_at is null order by created_at desc`;
 }
 
 /** Conditional transition: succeeds only from one of `from`, so double clicks and races can't skip a step. */

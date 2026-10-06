@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type pg from "pg";
 import { withTx } from "../db.js";
+import { enqueueMessage } from "../messages.js";
 import type { StructuredCall } from "../llm/claude.js";
 import { createSpecFetcher } from "../openapi/fetchSpec.js";
 import type { SokosumiClient, SokosumiEvent } from "./client.js";
@@ -83,7 +84,7 @@ export function createInbox(deps: InboxDeps): { poll(): Promise<number> } {
         created++;
         const ownComments = comments.filter((e) => e.actor?.id === task.userId).map((e) => e.comment as string);
         const brief = [task.name, task.description ?? "", ...ownComments].join("\n");
-        await handleBrief(convo, { taskId, sokosumiUserId: task.userId, setupToken: token }, brief);
+        await answered(convo, taskId, `brief:${taskId}`, () => handleBrief(convo, { taskId, sokosumiUserId: task.userId, setupToken: token }, brief));
       }
       return created;
     },
@@ -111,6 +112,28 @@ async function handleReplies(convo: ConversationDeps, soko: SokosumiClient, row:
     if (claimed.rowCount !== 1) continue;
     // Only the task's owner (the Sokosumi user who is billed) may steer it; other participants are ignored.
     if (e.actor?.id !== row.sokosumi_user_id) continue;
-    await handleReply(convo, ref, e.id, e.comment as string);
+    await answered(convo, row.task_id, `reply:${e.id}`, () => handleReply(convo, ref, e.id, e.comment as string));
+  }
+}
+
+const FALLBACK =
+  "Something went wrong on my side while reading your message. Please send it again in a few minutes. " +
+  "Reply with your OpenAPI link, or your base URL and example requests, one per line.";
+
+/**
+ * The task or event is claimed before it is handled, so an error must not leave it unanswered: the seller gets a
+ * plain "send it again" under the same dedupe key (a no-op when the handler already answered). Only when even that
+ * fails is the error thrown, for the loop to log.
+ */
+async function answered(convo: ConversationDeps, taskId: string, dedupeKey: string, handle: () => Promise<void>): Promise<void> {
+  try {
+    await handle();
+  } catch (e) {
+    console.error(`[sokosumi-inbox] ${dedupeKey} failed: ${e instanceof Error ? e.message : String(e)}`);
+    try {
+      await enqueueMessage(convo.pool, { apiId: null, taskId, body: FALLBACK, taskStatus: "INPUT_REQUIRED", dedupeKey });
+    } catch {
+      throw e;
+    }
   }
 }

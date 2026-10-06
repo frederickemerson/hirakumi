@@ -59,6 +59,10 @@ export type RuleView = {
   hash: string;
   definition: unknown;
   plainEnglish: string | null;
+  /** A text promise that checks only the status and error pages (@hirakumi/core isStatusOnlyRule). */
+  statusOnly: boolean;
+  /** The phrases every good answer must contain (@hirakumi/core requiredPhrasesOf). */
+  requiredPhrases: string[];
 };
 
 export type Pack = { id: string; calls: number; priceMicros: string; escrowPriceMicros: string };

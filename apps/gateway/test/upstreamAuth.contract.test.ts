@@ -58,7 +58,7 @@ describe("upstream key contract: coworker hint, web sealing, gateway opening", (
     expect(hint).toEqual({ in: "header", name: "Authorization", prefix: "Bearer " });
     const credential = validateUpstreamAuth({ in: hint!.in, name: hint!.name, value: `${hint!.prefix}${KEY}` });
     expect(await setUpstreamAuth(h.sql, { apiId, sellerId: h.seeded.sellerId }, {
-      in: credential.in, name: credential.name, sealed: sealUpstreamSecret(keys.publicKey, apiId, credential.value),
+      in: credential.in, name: credential.name, sealed: sealUpstreamSecret(keys.publicKey, { apiId, in: credential.in, name: credential.name, origin: h.stub.origin, pathPrefix: "/" }, credential.value),
       hint: upstreamSecretHint(credential.value),
     })).toBe(true);
     expect(await getUpstreamAuth(h.sql, apiId)).toEqual({ in: "header", name: "Authorization", hint: "WXYZ" });

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { parseStep } from "../src/onboarding/parseStep.js";
 import type { SokosumiClient, SokosumiEvent } from "../src/sokosumi/client.js";
 import { createInbox } from "../src/sokosumi/inbox.js";
+import { SpecNotServedError } from "../src/openapi/fetchSpec.js";
 import { createTestDb, seedOperation, type TestDb } from "./helpers/db.js";
 
 let db: TestDb;
@@ -44,7 +45,10 @@ async function messagesForTask(taskId: string) {
   return rows;
 }
 
-async function run(task: Task, fetchSpec = vi.fn()) {
+// A base URL is fetched once to check it isn't an OpenAPI file; here it answers 404.
+const notFound = () => vi.fn().mockRejectedValue(new SpecNotServedError("Fetching your OpenAPI file returned HTTP 404. Check the link and try again.", 404));
+
+async function run(task: Task, fetchSpec = notFound()) {
   const { soko, setEvents } = fakeSoko(task);
   const inbox = createInbox({ pool: db.pool, soko, webBaseUrl: WEB, fetchSpec });
   await inbox.poll();
@@ -60,7 +64,7 @@ describe("a brief with a base URL and example requests (no OpenAPI file)", () =>
     const host = `${rand()}.example.dev`;
     const t = newTask(`My API: https://${host}/v1\n- GET /price?symbol=ADA\n- GET /coins/{id=cardano}?days?=7`);
     const { fetchSpec } = await run(t);
-    expect(fetchSpec).not.toHaveBeenCalled();
+    expect(fetchSpec).toHaveBeenCalledWith(`https://${host}/v1`);
     const [m] = await messagesForTask(t.id);
     expect(m.task_status).toBe("INPUT_REQUIRED");
     expect(m.body).toMatch(new RegExp(`^Step 1 of 7, Read your file: I read your example requests for https://${host}/v1 and found 2 endpoints:`));
@@ -90,6 +94,12 @@ describe("a brief with a base URL and example requests (no OpenAPI file)", () =>
     const t = newTask("https://api.example.dev\nGET /price?symbol=");
     await run(t);
     expect((await messagesForTask(t.id))[0].body).toMatch(/Line 1: give an example value for "symbol".*Reply with your API's base URL and example requests/);
+  });
+
+  it("a base URL that times out still takes example requests", async () => {
+    const t = newTask("https://api.example.dev/v1\nGET /price?symbol=ADA");
+    await run(t, vi.fn().mockRejectedValue(new Error("upstream did not answer within 15000 ms")));
+    expect((await messagesForTask(t.id))[0].body).toMatch(/I read your example requests for https:\/\/api.example.dev\/v1 and found 1 endpoints/);
   });
 
   it("an OpenAPI link with lines next to it is still an OpenAPI intake", async () => {

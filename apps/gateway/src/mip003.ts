@@ -4,7 +4,7 @@ import { inputHash, newId } from "@hirakumi/core";
 import { getJob, insertJob, type JobRow } from "@hirakumi/db";
 import { estimatedDowntimeSeconds } from "./config";
 import type { AppDeps } from "./deps";
-import { downBody } from "./http";
+import { downBody, SELLER_BODY_HEADERS } from "./http";
 import { escrowOperation } from "./registry";
 import { normalizeMip003Input } from "./upstream";
 
@@ -198,7 +198,8 @@ export function mip003Router(d: AppDeps): Router {
       const jobId = typeof req.query.job_id === "string" ? req.query.job_id : "";
       const job = jobId ? await getJob(d.sql, req.params.apiId, jobId) : null;
       if (!job) { res.status(404).json({ error: "JOB_NOT_FOUND" }); return; }
-      res.json(statusBody(job));
+      // The job's output is the seller's body inside JSON.
+      res.set(SELLER_BODY_HEADERS).json(statusBody(job));
     } catch (e) { next(e); }
   });
 

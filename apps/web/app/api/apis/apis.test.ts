@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getSql } from "@/lib/db";
 import { resetDb } from "@/test/db";
 import { seedSeller } from "@/test/factories";
@@ -57,6 +57,22 @@ describe("POST /api/apis (Setup)", () => {
   describe("without an OpenAPI file (base URL and example requests)", () => {
     const samplesBody = (o: Record<string, unknown> = {}) => ({
       mode: "samples", baseUrl: "https://price.example.dev/v1", samples: "GET /price?symbol=ADA\nGET /coins/{id=cardano}", ...o,
+    });
+
+    afterEach(() => vi.unstubAllEnvs());
+
+    it("is refused in plain words while SAMPLES_INTAKE is off, and stores nothing", async () => {
+      vi.stubEnv("SAMPLES_INTAKE", "");
+      const seller = await seedSeller();
+      const res = await POST(jsonRequest("/api/apis", { cookie: cookieFor(seller), body: samplesBody() }));
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({
+        error: "Listing an API from example requests isn't available yet. Paste the link to your OpenAPI description instead.",
+      });
+      expect(await getSql()`select 1 from apis where seller_id = ${seller.id}`).toHaveLength(0);
+      // An OpenAPI link still works.
+      const link = await POST(jsonRequest("/api/apis", { cookie: cookieFor(seller), body: { openapiUrl: "https://price.example.dev/openapi.json" } }));
+      expect(link.status).toBe(201);
     });
 
     it("stores the samples with no OpenAPI link, and the base's origin", async () => {

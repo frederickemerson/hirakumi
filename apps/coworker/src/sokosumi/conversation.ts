@@ -1,4 +1,4 @@
-import { apiBaseUrl, normalizeSamplesBase, parseSampleLines, SampleError, specFromSamples } from "@hirakumi/core";
+import { apiBaseUrl, normalizeSamplesBase, parseSampleLines, SampleError, specFromSamples, UpstreamTimeoutError, UpstreamTooLargeError } from "@hirakumi/core";
 import type pg from "pg";
 import type { Db } from "../db.js";
 import { PermanentError } from "../errors.js";
@@ -8,10 +8,11 @@ import { mapReplyToChoice, type Offered } from "../llm/replyChoice.js";
 import { enqueueMessage, type TaskStatus } from "../messages.js";
 import type { HumanStep } from "../humanSteps.js";
 import { apiBase } from "../onboarding/parseStep.js";
-import { describeAuthHint, parseOpenApi, type AuthHint } from "../openapi/parse.js";
+import { SpecNotServedError } from "../openapi/fetchSpec.js";
+import { describeAuthHint, isOpenApiDocument, parseOpenApi, type AuthHint } from "../openapi/parse.js";
 import {
-  findLinks, findSamplesIntake, formatCommand, formatTusdm, isOnlySamples, LinkError, looksLikeSecret, parseCommand, SUGGESTED_PACK, validateOpenApiUrl,
-  type Command, type SamplesIntake,
+  callsLinkASpec, findLinks, findSamplesIntake, formatCommand, formatTusdm, LinkError, likelySpecLink, linksToProbe, looksLikeSecret, MAX_LINK_PROBES,
+  parseCommand, SUGGESTED_PACK, validateOpenApiUrl, type Command, type SamplesIntake,
 } from "./replies.js";
 import {
   apiAuthHint, apiForTask, confirmSell, createTaskApi, linkedSeller, listOps, opLine, savePrice, type ListedOp, type TaskApi,
@@ -95,10 +96,7 @@ export async function handleBrief(deps: ConversationDeps, task: TaskRef, brief: 
       { status: "INPUT_REQUIRED" });
     return;
   }
-  const samples = findSamplesIntake(brief);
-  if (samples) return handleSamples(deps, task, samples, `brief:${task.taskId}`);
-  const links = findLinks(brief);
-  if (links.length === 0) {
+  if (findLinks(brief).length === 0) {
     await say(
       deps.pool, task, `setup:${task.taskId}`,
       `Hi! I'll put your API on the agent market. Reply here with the https link to your OpenAPI file, or open this setup link and paste it there (about 3 minutes, 4 clicks): ${setupLink(deps.webBaseUrl, task.setupToken)} ${NO_OPENAPI_HINT}.`,
@@ -106,7 +104,7 @@ export async function handleBrief(deps: ConversationDeps, task: TaskRef, brief: 
     );
     return;
   }
-  await handleLink(deps, task, links[0], `brief:${task.taskId}`);
+  await handleLinks(deps, task, brief, `brief:${task.taskId}`);
 }
 
 /** One seller comment on a known task. */
@@ -117,15 +115,10 @@ export async function handleReply(deps: ConversationDeps, task: TaskRef, eventId
     await say(deps.pool, task, key, `${SECRET_WARNING} ${keyFormLine(api, deps.webBaseUrl)}`, { apiId: api?.id ?? null });
     return;
   }
-  // Once an API is under way, a command wins ("price 2" with a note and a docs link under it). Example requests
-  // start over only when there is no API yet, it failed, or the reply is nothing but links and example lines.
+  // Once an API is under way, a command wins ("price 2" with a note and a docs link under it). Any other reply with
+  // a link is a new intake, which starts over only when there is no API yet or it failed.
   const underWay = api !== null && !api.failed;
-  if (!(underWay && parseCommand(text))) {
-    const samples = findSamplesIntake(text);
-    if (samples && (!underWay || isOnlySamples(text))) return handleSamples(deps, task, samples, key);
-    const links = findLinks(text);
-    if (links.length) return handleLink(deps, task, links[0], key);
-  }
+  if (!(underWay && parseCommand(text)) && findLinks(text).length) return handleLinks(deps, task, text, key);
 
   const ops = api ? await listOps(deps.pool, api.id) : [];
   let cmd: Command | null = parseCommand(text);
@@ -245,27 +238,115 @@ type Intake = {
   /** What to paste on the setup page, and how to retry after an error. */
   setupHint: string;
   retryHint: string;
+  /** Said first, such as why example lines next to an OpenAPI link were ignored. */
+  note?: string;
 };
 
-/** An OpenAPI link from the brief or a reply: start onboarding (linked seller) or read it and ask for the sign-in. */
-async function handleLink(deps: ConversationDeps, task: TaskRef, raw: string, key: string): Promise<void> {
-  let link: { url: string; origin: string; hostname: string };
+/** What fetching one link showed: an OpenAPI (or Swagger) document, something else, or no answer at all. */
+type Probe =
+  | { link: string; url: string; kind: "spec"; text: string }
+  | { link: string; url: string; kind: "notSpec"; reason: string }
+  | { link: string; url: string; kind: "failed"; problem: string };
+
+const SAMPLE_EXAMPLE = "GET /price?symbol=ADA";
+
+/** Why a fetch got no answer, as the end of "I couldn't read <link>: …". */
+function fetchProblem(e: unknown): string {
+  if (e instanceof UpstreamTimeoutError) return "it didn't answer within 15 seconds.";
+  if (e instanceof UpstreamTooLargeError) return "it is larger than 1 MB, the limit for an OpenAPI file.";
+  return e instanceof Error ? e.message : String(e);
+}
+
+/** Why an answer is not an OpenAPI file, as the end of "it didn't look like an OpenAPI file (…)". */
+function notSpecReason(text: unknown): string {
+  const s = typeof text === "string" ? text.trim() : "";
+  if (s === "") return "it was empty";
+  if (s.startsWith("<")) return "it is a web page";
+  if (s.startsWith("{") || s.startsWith("[")) return "it is JSON with no openapi version";
+  return "it has no openapi version";
+}
+
+/** Fetches one link with the SSRF-safe spec fetcher (same limits as the parse step) and says what it is. */
+async function probeLink(deps: ConversationDeps, link: string, url: string): Promise<Probe> {
+  let text: string;
   try {
-    link = validateOpenApiUrl(raw, deps.allowInsecure);
+    text = await deps.fetchSpec(url);
   } catch (e) {
-    if (!(e instanceof LinkError)) throw e;
-    await say(deps.pool, task, key, `${e.message} Reply with the public https link to your OpenAPI file.`, { step: "Read your file", status: "INPUT_REQUIRED" });
+    if (e instanceof SpecNotServedError) {
+      return { link, url, kind: "notSpec", reason: e.status >= 300 && e.status < 400 ? "it redirects to another address" : `it answered with HTTP ${e.status}` };
+    }
+    return { link, url, kind: "failed", problem: fetchProblem(e) };
+  }
+  // Valid or not: an OpenAPI or Swagger document is read as one, so its own errors (Swagger 2.0, invalid) are told.
+  if (isOpenApiDocument(text)) return { link, url, kind: "spec", text };
+  return { link, url, kind: "notSpec", reason: notSpecReason(text) };
+}
+
+/**
+ * A brief or reply with links. Each link is fetched (at most MAX_LINK_PROBES, likely OpenAPI files first), since a
+ * link's name doesn't tell an OpenAPI file from a base URL (/v3/api-docs, /api-json, /openapi). An OpenAPI file wins,
+ * even over example request lines next to it. Otherwise example lines make a samples intake, and a link alone gets
+ * the samples prompt: "that isn't an OpenAPI file; if it's your base URL, send example requests".
+ */
+async function handleLinks(deps: ConversationDeps, task: TaskRef, text: string, key: string): Promise<void> {
+  const existing = await apiForTask(deps.pool, task.taskId);
+  if (existing && !existing.failed) return alreadyInProgress(deps, task, key, existing);
+  const samples = findSamplesIntake(text);
+  const valid: { link: string; url: string }[] = [];
+  let refused: LinkError | null = null;
+  for (const link of linksToProbe(text)) {
+    try {
+      valid.push({ link, url: validateOpenApiUrl(link, deps.allowInsecure).url });
+    } catch (e) {
+      if (!(e instanceof LinkError)) throw e;
+      refused ??= e;
+    }
+  }
+  const probes = await Promise.all(valid.slice(0, MAX_LINK_PROBES).map((v) => probeLink(deps, v.link, v.url)));
+  const spec = probes.find((p) => p.kind === "spec");
+  if (spec?.kind === "spec") {
+    return startOpenApi(deps, task, key, spec.url, spec.text,
+      samples ? "That link is an OpenAPI file, so I read it and ignored your example requests. " : "");
+  }
+  if (samples) {
+    // A link the seller means as their OpenAPI file, but it couldn't be fetched: the fetch error is the answer.
+    const failed = probes.find((p) => p.kind === "failed" && (likelySpecLink(p.link) || callsLinkASpec(text)));
+    if (failed?.kind === "failed") return couldNotRead(deps, task, key, failed);
+    return handleSamples(deps, task, samples, key);
+  }
+  const notSpec = probes.find((p) => p.kind === "notSpec");
+  if (notSpec?.kind === "notSpec") {
+    await say(deps.pool, task, key,
+      `I opened ${notSpec.link}, but it didn't look like an OpenAPI file (${notSpec.reason}). ` +
+        `If it's your API's base URL, reply with it and a few example requests, one per line, like this:\n${notSpec.link}\n${SAMPLE_EXAMPLE}\n` +
+        "If it should be your OpenAPI file, check the link and send it again.",
+      { step: "Read your file", status: "INPUT_REQUIRED" });
     return;
   }
+  const failed = probes.find((p) => p.kind === "failed");
+  if (failed?.kind === "failed") return couldNotRead(deps, task, key, failed);
+  // No link passed the web's link rules, so nothing was fetched.
+  await say(deps.pool, task, key, `${refused?.message ?? "Paste the link to your OpenAPI description."} Reply with the public https link to your OpenAPI file.`,
+    { step: "Read your file", status: "INPUT_REQUIRED" });
+}
+
+async function couldNotRead(deps: ConversationDeps, task: TaskRef, key: string, p: { link: string; problem: string }): Promise<void> {
+  await say(deps.pool, task, key, `I couldn't read ${p.link}: ${p.problem} Reply with the corrected link to try again. ${NO_OPENAPI_HINT}.`,
+    { step: "Read your file", status: "INPUT_REQUIRED" });
+}
+
+/** An OpenAPI file, already fetched: start onboarding (linked seller) or read it and ask for the sign-in. */
+async function startOpenApi(deps: ConversationDeps, task: TaskRef, key: string, url: string, text: string, note: string): Promise<void> {
+  const u = new URL(url);
   await startIntake(deps, task, key, {
-    name: link.hostname,
-    origin: link.origin,
-    openapiUrl: link.url,
-    label: link.url,
-    // First time: read the file now (SSRF-safe fetch).
-    specText: () => deps.fetchSpec(link.url),
+    name: u.hostname,
+    origin: u.origin,
+    openapiUrl: url,
+    label: url,
+    specText: async () => text,
     setupHint: "paste the same link on this setup page",
     retryHint: `Reply with the corrected link to try again. ${NO_OPENAPI_HINT}.`,
+    note,
   });
 }
 
@@ -304,14 +385,16 @@ async function handleSamples(deps: ConversationDeps, task: TaskRef, intake: Samp
   });
 }
 
+async function alreadyInProgress(deps: ConversationDeps, task: TaskRef, key: string, existing: TaskApi): Promise<void> {
+  await say(deps.pool, task, key,
+    `This task already has ${existing.name} in progress, and each task onboards one API. To sell another API, start a new task. Details: ${apiLink(deps.webBaseUrl, existing.id)}`,
+    { apiId: existing.id });
+}
+
 async function startIntake(deps: ConversationDeps, task: TaskRef, key: string, intake: Intake): Promise<void> {
   const existing = await apiForTask(deps.pool, task.taskId);
-  if (existing && !existing.failed) {
-    await say(deps.pool, task, key,
-      `This task already has ${existing.name} in progress, and each task onboards one API. To sell another API, start a new task. Details: ${apiLink(deps.webBaseUrl, existing.id)}`,
-      { apiId: existing.id });
-    return;
-  }
+  if (existing && !existing.failed) return alreadyInProgress(deps, task, key, existing);
+  const note = intake.note ?? "";
   const sellerId = await linkedSeller(deps.pool, task.sokosumiUserId);
   if (sellerId) {
     // This Sokosumi account signed in with its wallet on an earlier setup link, so the API can start right here.
@@ -319,7 +402,7 @@ async function startIntake(deps: ConversationDeps, task: TaskRef, key: string, i
       sellerId, taskId: task.taskId, name: intake.name, origin: intake.origin, openapiUrl: intake.openapiUrl,
       ...(intake.samples ? { samples: intake.samples } : {}),
     });
-    await say(deps.pool, task, key, `Got your ${intake.samples ? "example requests" : "link"}. Reading ${intake.label} now.`, { apiId, step: "Read your file", status: "RUNNING" });
+    await say(deps.pool, task, key, `${note}Got your ${intake.samples ? "example requests" : "link"}. Reading ${intake.label} now.`, { apiId, step: "Read your file", status: "RUNNING" });
     return;
   }
   // First time: read it now, and ask for the one sign-in that ties the task to a wallet.
@@ -332,7 +415,7 @@ async function startIntake(deps: ConversationDeps, task: TaskRef, key: string, i
     if (parsed.operations.length === 0) throw new PermanentError(`${what} no endpoints we can sell yet${parsed.skipped.length ? ` (${parsed.skipped.map((s) => `${s.method} ${s.path}: ${s.reason}`).join("; ")})` : ""}.`);
     const list = parsed.operations.map((o, i) => `${i + 1}. ${o.method.toUpperCase()} ${o.path} (${o.opId})${o.llm.summary ? `: ${o.llm.summary}` : ""}`);
     summary = [
-      `I read ${intake.samples ? intake.label : parsed.title || intake.name} and found ${parsed.operations.length} endpoints${parsed.skipped.length ? ` (I skipped ${parsed.skipped.length})` : ""}:`,
+      `${note}I read ${intake.samples ? intake.label : parsed.title || intake.name} and found ${parsed.operations.length} endpoints${parsed.skipped.length ? ` (I skipped ${parsed.skipped.length})` : ""}:`,
       ...list,
       `Suggested price: ${SUGGESTED_PRICE}. I write the promise (what a good answer looks like) from real test calls, which run after you prove you own the API.`,
       ...(parsed.authHint ? [`Your API needs a key (${describeAuthHint(parsed.authHint)}). You'll add it on the ownership page later. Never paste it in a comment.`] : []),
@@ -341,7 +424,7 @@ async function startIntake(deps: ConversationDeps, task: TaskRef, key: string, i
     ].join("\n");
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    await say(deps.pool, task, key, `I couldn't read ${intake.label}: ${msg} ${intake.retryHint}`, { step: "Read your file", status: "INPUT_REQUIRED" });
+    await say(deps.pool, task, key, `${note}I couldn't read ${intake.label}: ${msg} ${intake.retryHint}`, { step: "Read your file", status: "INPUT_REQUIRED" });
     return;
   }
   await say(deps.pool, task, key, summary, { step: "Read your file", status: "INPUT_REQUIRED" });

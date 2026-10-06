@@ -10,6 +10,7 @@ import { loadApiPage } from "@/lib/page-auth";
 import { listingBaseNotes } from "@/lib/repo/apis";
 import { loadProgress } from "@/lib/repo/progress";
 import { getPack } from "@/lib/repo/packs";
+import { hasAnyApiSchema } from "@/lib/repo/schema";
 import { getAuthHint, getUpstreamAuth } from "@/lib/repo/upstream-auth";
 import { listLatestRules } from "@/lib/repo/rules";
 
@@ -21,6 +22,8 @@ export default async function ReviewPage({ params }: { params: Promise<{ apiId: 
   const sql = getSql();
   const heading = <h1 className="text-h font-medium uppercase">Review and publish</h1>;
   const overlaps = <NoticeList items={(await listingBaseNotes(sql, apiId)).warnings} />;
+  // Before migration 0014 no key can be stored, so the key form is hidden (lib/repo/schema.ts).
+  const keysOn = await hasAnyApiSchema(sql);
 
   if (api.state === "ownership_verified") {
     const progress = await loadProgress(sql, api);
@@ -34,7 +37,7 @@ export default async function ReviewPage({ params }: { params: Promise<{ apiId: 
         {failure ? (
           <>
             <ErrorState title="Your test calls didn't pass" detail={failure} />
-            <UpstreamAuthForm apiId={apiId} initial={upstreamAuth} hint={authHint} retriesTests />
+            {keysOn && <UpstreamAuthForm apiId={apiId} initial={upstreamAuth} hint={authHint} retriesTests />}
           </>
         ) : (
           <WaitingState title="Running test calls on your API"
@@ -59,7 +62,7 @@ export default async function ReviewPage({ params }: { params: Promise<{ apiId: 
         <ReviewPanel apiId={apiId} state={api.state} promises={promises} pack={pack} />
       )}
       {/* For key rotation before publishing: a new key takes effect on the next call. */}
-      <UpstreamAuthForm apiId={apiId} initial={upstreamAuth} hint={null} title="Your API's key" />
+      {keysOn && <UpstreamAuthForm apiId={apiId} initial={upstreamAuth} hint={null} title="Your API's key" />}
     </section>
   );
 }

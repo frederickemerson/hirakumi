@@ -111,8 +111,14 @@ describe("a key in the example requests", () => {
   it.each([
     ["GET /price?symbol=ADA&apikey=a1b2c3d4e5f6g7h8i9j0", /"apikey" looks like your API's key/],
     ["GET /price?symbol=ADA&api_key=YOUR_KEY", /"api_key" looks like your API's key/],
-    ["GET /items/{key=abc}", /"key" looks like your API's key/],
-    ["GET /price?symbol=ADA&k=sk_live_abcdefghijkl1234", /looks like it has a key, token or password/],
+    ["GET /items/{key=a1b2c3d4e5f6g7}", /"key" looks like your API's key/],
+    ["GET /price?symbol=ADA&k=sk_live_abcdefghijkl1234", /"k" looks like your API's key/],
+    // Key-shaped values under names that say nothing: random hex, and known prefixes.
+    ["GET /price?symbol=ADA&k=7f3a9c1e0b2d4f6a8c9e1b3d5f7a9c2e", /"k" looks like your API's key/],
+    ["GET /price?symbol=ADA&x=live_8aK2pQ7rT9vW1yZ3", /"x" looks like your API's key/],
+    ["GET /items/{x=test_9fK2pQ7rT9vW1yZ3}", /"x" looks like your API's key/],
+    ["GET /price?appid=1234567890", /"appid" looks like your API's key/],
+    ["GET /price?access_token=abcdefgh", /"access_token" looks like your API's key/],
     ['POST /search {"q": "ada", "api_key": "a1b2c3d4e5f6g7h8"}', /looks like it has a key, token or password/],
     // Key names from real APIs.
     ["GET /simple/price?ids=cardano&x_cg_demo_api_key=CG-q1W2e3R4t5Y6u7I8o9P0aSdF", /"x_cg_demo_api_key" looks like your API's key/],
@@ -121,7 +127,7 @@ describe("a key in the example requests", () => {
     ["GET /x?subscription-key=0123456789abcdef0123456789abcdef", /"subscription-key" looks like your API's key/],
     [`GET /contacts?hapikey=${FAKE_HUBSPOT_KEY}`, /"hapikey" looks like your API's key/],
     ["GET /x?x-api-token=a1b2c3d4e5f6g7h8", /"x-api-token" looks like your API's key/],
-    ["GET /x?token=sk_live_abcdefghijkl1234", /looks like it has a key, token or password/],
+    ["GET /x?token=sk_live_abcdefghijkl1234", /"token" looks like your API's key/],
   ])("refuses %j and says where the key goes", (line, msg) => {
     expect(() => parseSampleLines(line)).toThrow(SampleError);
     expect(() => parseSampleLines(line)).toThrow(msg);
@@ -139,6 +145,11 @@ describe("a key in the example requests", () => {
     "GET /balance?token=TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
     "GET /utxos?token=addr_test1vrgvs0dkrtnm4uxpq5fu4e5gm0jvqhp6xlyq6dnwvzk0cqs5yhtyn&sig=0x5e1a3b9c0d7f2e4a6b8c1d3e5f7a9b0c2d4e6f8a1b3c5d7e9f0a2b4c6d8e0f1a2b",
     "GET /search?keyword=ada&keys=a,b&sort_key=price&public_key=ed25519pk1x2y3z4",
+    // Generic names refused only for their name before: their values are a ticker, a small number, a word.
+    "GET /items/{key=abc}", "GET /price?key=BTC", "GET /weather?appid=12&use_auth=true", "GET /x?auth=basic&key=bitcoin-cash",
+    // Ids that look random but are not keys.
+    "GET /tx?hash=5e1a3b9c0d7f2e4a6b8c1d3e5f7a9b0c2d4e6f8a1b3c5d7e9f0a2b4c6d8e0f1a", "GET /orders/{id=550e8400-e29b-41d4-a716-446655440000}",
+    "GET /pairs?symbol=BTCUSDT2024&cursor=eyJwYWdlIjoyfQ1a2b3c4d", "GET /price?api_key=demo",
   ])("keeps on-chain ids and ordinary names: %j", (line) => {
     expect(() => parseSampleLines(line)).not.toThrow();
   });

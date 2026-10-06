@@ -35,11 +35,18 @@ describe("SetupForm", () => {
 });
 
 describe("SetupForm without an OpenAPI file", () => {
+  it("offers only the OpenAPI link while listing from example requests is off", () => {
+    render(<SetupForm initialUrl="" />);
+    expect(screen.queryByRole("radio", { name: "I don't" })).toBeNull();
+    expect(screen.queryByLabelText("Base URL")).toBeNull();
+    expect(screen.getByLabelText("OpenAPI link")).toBeInTheDocument();
+  });
+
   it("sends the base URL and example requests", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ apiId: "api_2", state: "intake", created: true }, 201));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
-    render(<SetupForm initialUrl="" />);
+    render(<SetupForm initialUrl="" samples />);
     await user.click(screen.getByRole("radio", { name: "I don't" }));
     expect(screen.queryByLabelText("OpenAPI link")).toBeNull();
     await user.type(screen.getByLabelText("Base URL"), "https://api.example.com/v1");

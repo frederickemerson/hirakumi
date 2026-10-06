@@ -6,6 +6,7 @@ import {
 } from "@hirakumi/core";
 import { getOpenVerifyCode, getOwnershipTarget, insertCall } from "@hirakumi/db";
 import { demoBuyPack } from "./demoBuy";
+import { SELLER_BODY_HEADERS } from "./http";
 import type { AppDeps } from "./deps";
 import { canEscrow, forgetSettlementSignals, policyFor } from "./settlement";
 import { runOperation } from "./upstream";
@@ -110,7 +111,7 @@ export function internalRouter(d: AppDeps): Router {
       if (outcome.execution === "blocked") { res.status(400).json({ error: "blocked", detail: outcome.reasons[0] }); return; }
       if (outcome.execution === "timeout") { res.status(504).json({ error: "upstream_timeout", detail: outcome.reasons[0] }); return; }
       if (!outcome.result) { res.status(502).json({ error: "upstream_error", detail: outcome.reasons[0] }); return; }
-      res.json({ ...outcome.result, ...(op.rule ? { verdict: { pass: outcome.verdict === "pass", reasons: outcome.reasons } } : {}) });
+      res.set(SELLER_BODY_HEADERS).json({ ...outcome.result, ...(op.rule ? { verdict: { pass: outcome.verdict === "pass", reasons: outcome.reasons } } : {}) });
     } catch (e) { next(e); }
   });
 

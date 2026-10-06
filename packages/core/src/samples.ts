@@ -1,5 +1,5 @@
 import { AMBIGUOUS_PATH, unsafePathReason } from "./ownership";
-import { isKeyParamName, looksLikeSecret } from "./secrets";
+import { isUnambiguousKeyParamName, looksLikeSecret, paramHoldsSecret } from "./secrets";
 
 /**
  * Any API, no OpenAPI file: the seller gives a base URL and one example request per line. Hirakumi builds an
@@ -14,7 +14,8 @@ import { isKeyParamName, looksLikeSecret } from "./secrets";
  * on several lines to give more examples.
  *
  * The API's key never goes in a line: every value becomes a public input example for buyers, and the lines are
- * stored as they are. A line with a key parameter (api_key, apikey, key…) or a key-shaped value is refused, and
+ * stored as they are. A line with a credential parameter (api_key=…, access_token=…), a key-shaped value under any
+ * name (?k=7f3a9c1e…) or a key elsewhere in it is refused, and
  * the seller adds the key on the ownership page instead, sealed so only the gateway can read it.
  *
  * Ownership is proven like any other API: the X-Hirakumi-Verify response header at the base URL (ownership.ts).
@@ -76,8 +77,12 @@ function parseLine(line: string, n: number): Sample {
       return fail(`${what} has a broken % escape. Write the character itself, or a full escape such as %20.`);
     }
   };
-  const keyParam = (name: string) => {
-    if (isKeyParamName(name)) fail(`"${name}" looks like your API's key. ${KEY_ADVICE}`);
+  // A credential name with any value of 8 characters or more (a placeholder too: the parameter itself is the key's),
+  // or a value that holds a key under its name. key=BTC, appid=12 and use_auth=true are ordinary inputs.
+  const keyParam = (name: string, value: string) => {
+    if ((isUnambiguousKeyParamName(name) && value.length >= 8) || paramHoldsSecret(name, value)) {
+      fail(`"${name}" looks like your API's key. ${KEY_ADVICE}`);
+    }
   };
   let rest = line.trim();
   let method: SampleMethod = "GET";
@@ -103,8 +108,8 @@ function parseLine(line: string, n: number): Sample {
     if (!NAME.test(name)) fail(`"{${name}}" is not a valid parameter name.`);
     if (value === undefined || value === "") fail(`give an example value for {${name}}, like {${name}=example}.`);
     if (pathParams.some((p) => p.name === name)) fail(`{${name}} appears twice in the path.`);
-    keyParam(name);
     const decoded = decode(value!, `the value of {${name}}`);
+    keyParam(name, decoded);
     // The gateway refuses such a path value at call time, so the test calls would fail with no reason given.
     if (/[/\\]/.test(decoded) || decoded === "." || decoded === "..") {
       fail(`the value of {${name}} can't contain / or \\ or be . or .. because a path value is one part of the path. Put it in the query instead, like ?${name}=value.`);
@@ -131,7 +136,7 @@ function parseLine(line: string, n: number): Sample {
       }
       if (!NAME.test(name)) fail(`"${name}" is not a valid query parameter name.`);
       if (name === "body") fail(`a parameter named "body" is reserved for the request body. Rename it.`);
-      keyParam(name);
+      keyParam(name, value);
       if (value === "") fail(`give an example value for "${name}", like ${name}=example.`);
       if (query.some((p) => p.name === name) || pathParams.some((p) => p.name === name)) fail(`"${name}" appears twice.`);
       query.push({ name, value, required });

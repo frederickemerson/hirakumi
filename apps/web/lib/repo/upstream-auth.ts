@@ -1,6 +1,7 @@
 import type postgres from "postgres";
 import type { StoredUpstreamAuth, UpstreamAuthPlacement } from "@hirakumi/core";
 import type { Sql } from "../db";
+import { hasAnyApiSchema } from "./schema";
 
 /** What the seller may see of a stored key: where it goes and its last characters. Never the sealed key. */
 export type UpstreamAuthView = { in: UpstreamAuthPlacement; name: string; hint: string };
@@ -10,6 +11,8 @@ export type AuthHint = { in: UpstreamAuthPlacement; name: string; prefix?: strin
 const isPlacement = (v: unknown): v is UpstreamAuthPlacement => v === "header" || v === "query";
 
 export async function getUpstreamAuth(sql: Sql, apiId: string): Promise<UpstreamAuthView | null> {
+  // Before migration 0014 no key can be stored (lib/repo/schema.ts).
+  if (!(await hasAnyApiSchema(sql))) return null;
   // Only the three display fields leave the database; the sealed key is never selected here.
   const [row] = await sql<{ placement: unknown; name: unknown; hint: unknown }[]>`
     select upstream_auth->>'in' as placement, upstream_auth->>'name' as name, upstream_auth->>'hint' as hint
@@ -30,8 +33,19 @@ export async function setUpstreamAuth(sql: Sql, a: { apiId: string; sellerId: st
   return rows.length > 0;
 }
 
+/**
+ * What buyers can see of an API's example values: the seller's example requests (apis.samples lines) and every
+ * endpoint's input schema with its examples (operations.input_schema). A key found here is public already.
+ */
+export async function publicExampleTexts(sql: Sql, apiId: string): Promise<string[]> {
+  const [api] = await sql<{ lines: string | null }[]>`select samples->>'lines' as lines from apis where id = ${apiId}`;
+  const ops = await sql<{ schema: string | null }[]>`select input_schema::text as schema from operations where api_id = ${apiId}`;
+  return [api?.lines ?? null, ...ops.map((o) => o.schema)].filter((t): t is string => typeof t === "string" && t !== "");
+}
+
 /** True when a key was stored and is now gone. */
 export async function clearUpstreamAuth(sql: Sql, apiId: string): Promise<boolean> {
+  if (!(await hasAnyApiSchema(sql))) return false;
   const rows = await sql`update apis set upstream_auth = null where id = ${apiId} and upstream_auth is not null returning id`;
   return rows.length > 0;
 }

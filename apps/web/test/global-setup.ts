@@ -3,9 +3,10 @@ import { join } from "node:path";
 import postgres from "postgres";
 import { TEST_DATABASE_URL } from "./env";
 
-const MIGRATIONS_DIR = join(import.meta.dirname, "..", "..", "..", "db", "migrations");
+export const MIGRATIONS_DIR = join(import.meta.dirname, "..", "..", "..", "db", "migrations");
 
-export async function resetDatabase(url: string): Promise<void> {
+/** Recreates the database from the migrations; `before` (a file name such as "0014") stops at that migration. */
+export async function resetDatabase(url: string, before?: string): Promise<void> {
   const dbName = decodeURIComponent(new URL(url).pathname.slice(1));
   if (!/test|e2e/.test(dbName)) {
     throw new Error(`Refusing to reset "${dbName}": the database name must contain "test" or "e2e".`);
@@ -22,7 +23,7 @@ export async function resetDatabase(url: string): Promise<void> {
   const sql = postgres(url, { max: 1, onnotice: () => {} });
   try {
     await sql.unsafe("drop schema if exists public cascade; create schema public;");
-    const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql")).sort();
+    const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql") && (!before || f < before)).sort();
     for (const file of files) await sql.unsafe(readFileSync(join(MIGRATIONS_DIR, file), "utf8"));
   } finally {
     await sql.end();

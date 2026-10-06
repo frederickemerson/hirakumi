@@ -11,6 +11,7 @@ import { coerceInput, type TryField, type TryKind, type TryReceipt, type TryResu
 import { cardanoscanTx, readBuyEvents, type BuyEvent } from "@/lib/try-stream";
 import { settlementLine } from "@/lib/settlement";
 import { cn } from "@/lib/utils";
+import { StatusOnlyNote } from "@/components/status-only-note";
 
 export type TryOp = {
   opId: string;
@@ -18,6 +19,8 @@ export type TryOp = {
   path: string;
   description: string | null;
   promise: string | null;
+  /** The promise checks only the status and error pages (StatusOnlyNote). */
+  statusOnly?: boolean;
   fields: TryField[];
 };
 
@@ -245,6 +248,7 @@ export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReas
                 {op.promise}
               </p>
             )}
+            {op.statusOnly && <StatusOnlyNote className="mt-3" />}
 
             <form className="mt-6 space-y-5 border-t border-ink pt-6" onSubmit={(e) => { e.preventDefault(); void run(); }}>
               {op.fields.length === 0 && <p className="text-body text-graphite">This endpoint takes no input.</p>}

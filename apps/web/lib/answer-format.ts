@@ -1,18 +1,11 @@
 /*
  * Answers are JSON or text (CSV, XML, plain text...). A promise's definition names the media type every good
- * answer has (@hirakumi/core rules.ts). These mirror its helpers without importing @hirakumi/core, which pulls in
- * node:crypto and must stay out of client components.
+ * answer has (@hirakumi/core rules.ts). The media type helpers come from "@hirakumi/core/media-types", which has no
+ * Node imports, so client components can use them.
  */
+import { isJsonMediaType, mediaTypeOf } from "@hirakumi/core/media-types";
 
-/** The media type of a Content-Type header, lowercased without parameters. */
-export function mediaTypeOf(contentType: string | null | undefined): string {
-  return (contentType ?? "").split(";")[0].trim().toLowerCase();
-}
-
-/** application/json and any +json type. */
-export function isJsonMediaType(ct: string): boolean {
-  return ct === "application/json" || /^application\/[a-z0-9.!#$&^_-]+\+json$/.test(ct);
-}
+export { isJsonMediaType, isMarkupMediaType, isTextMediaType, mediaTypeOf } from "@hirakumi/core/media-types";
 
 /** The media type a promise checks (rules.definition.contentType). Rules from before text answers are JSON. */
 export function promiseMediaType(definition: unknown): string {

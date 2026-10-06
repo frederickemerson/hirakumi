@@ -2,6 +2,7 @@ import type postgres from "postgres";
 import { recordsKeptReason } from "../api-delete";
 import type { Sql } from "../db";
 import type { ApiState } from "../types";
+import { hasAnyApiSchema } from "./schema";
 
 type Tx = postgres.TransactionSql;
 type ApiRef = string | postgres.PendingQuery<postgres.Row[]>;
@@ -68,7 +69,12 @@ export async function deleteApi(sql: Sql, a: { apiId: string; sellerId: string }
       select ${registerStartedSql(tx, a.apiId)} as register_started, ${soldSql(tx, a.apiId)} as sold`;
     const recordsKept = recordsKeptReason({ state: api.state, agentIdentifier: api.agentIdentifier, ...facts }) !== null;
     if (recordsKept) {
-      await tx`update apis set state = 'retired', deleted_at = now(), upstream_auth = null where id = ${a.apiId}`;
+      // Before migration 0014 there is no upstream_auth column, so no key to drop (lib/repo/schema.ts).
+      if (await hasAnyApiSchema(tx)) {
+        await tx`update apis set state = 'retired', deleted_at = now(), upstream_auth = null where id = ${a.apiId}`;
+      } else {
+        await tx`update apis set state = 'retired', deleted_at = now() where id = ${a.apiId}`;
+      }
     } else {
       for (const step of API_DELETE_ORDER) await step.run(tx, a.apiId);
       await tx`delete from apis where id = ${a.apiId}`;

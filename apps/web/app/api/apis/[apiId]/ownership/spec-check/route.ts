@@ -1,6 +1,7 @@
 import { GatewayError, getGateway, type ChallengeCheck } from "@/lib/gateway";
 import { errorJson, json, type ApiRouteContext } from "@/lib/http";
 import { getOrCreateVerifyCode, markVerifyPassed } from "@/lib/repo/challenges";
+import { updatingResponse } from "@/lib/repo/schema";
 import { loadOwnedApi, wrongStep } from "@/lib/route-helpers";
 
 /**
@@ -11,6 +12,9 @@ export async function POST(req: Request, ctx: ApiRouteContext): Promise<Response
   const loaded = await loadOwnedApi(req, ctx);
   if (loaded instanceof Response) return loaded;
   const { api, sql } = loaded;
+  // The verification code is a challenge of kind 'header', which needs migration 0014.
+  const updating = await updatingResponse(sql);
+  if (updating) return updating;
   if (api.state !== "endpoints_confirmed") return wrongStep(api);
   // Only the owning seller reaches this line (loadOwnedApi), and the code belongs to this API alone.
   const code = await getOrCreateVerifyCode(sql, api.id);

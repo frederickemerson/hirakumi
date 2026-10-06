@@ -1,14 +1,14 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { Elapsed } from "@/components/elapsed";
 import { InlineError, InlineStatus } from "@/components/states";
 import { toast } from "@/components/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { promiseFormatNote } from "@/lib/answer-format";
+import { isTextPromise, promiseFormatNote } from "@/lib/answer-format";
 import { postJson, RequestError } from "@/lib/client-fetch";
 import { formatTusdm, parsePackCalls, parseTusdm, perCallTusdm } from "@/lib/money";
 import { startRouteProgress } from "@/lib/route-progress";
@@ -79,6 +79,7 @@ export function ReviewPanel({ apiId, promises, pack }: {
             <p className="flex items-center gap-2 text-body-lg"><Badge variant="sky">{p.method.toUpperCase()}</Badge><code>{p.path}</code></p>
             <p className="text-body-lg">{p.plainEnglish ?? "The plain-English summary isn't ready yet. The exact check is below."}</p>
             {promiseFormatNote(p.definition) && <p className="text-body text-graphite">{promiseFormatNote(p.definition)}</p>}
+            {isTextPromise(p.definition) && <PhraseField apiId={apiId} promise={p} disabled={busy} />}
             <details className="group">
               <summary className="cursor-pointer text-body underline underline-offset-4">Show the exact check (JSON)</summary>
               <pre className="mt-3 overflow-x-auto rounded-[2px] bg-ink p-3 text-caption text-cream">{JSON.stringify(p.definition, null, 2)}</pre>
@@ -124,5 +125,53 @@ export function ReviewPanel({ apiId, promises, pack }: {
         {status.kind === "error" && <InlineError>{status.text}</InlineError>}
       </section>
     </div>
+  );
+}
+
+export const STATUS_ONLY_NOTICE =
+  "This promise only checks the status and that the answer is not an error page. Add a phrase every good answer contains to make it stronger.";
+
+/**
+ * "Every good answer contains": an optional phrase for a text promise. Saving it makes a new promise version
+ * (POST /api/apis/[apiId]/promise-phrase); the page then shows the new promise.
+ */
+function PhraseField({ apiId, promise, disabled }: { apiId: string; promise: RuleView; disabled: boolean }) {
+  const router = useRouter();
+  const [phrase, setPhrase] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const id = `phrase-${promise.operationId}`;
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setError(null);
+    try {
+      await postJson(`/api/apis/${apiId}/promise-phrase`, { operationId: promise.operationId, phrase });
+      setPhrase("");
+      toast("Promise updated");
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof RequestError ? err.message : "Something went wrong. Try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={save} className="space-y-2 border-t border-ink pt-3" aria-busy={saving || undefined}>
+      {promise.statusOnly && <p className="text-body" data-testid="status-only-notice">{STATUS_ONLY_NOTICE}</p>}
+      {promise.requiredPhrases.length > 0 && (
+        <p className="text-body text-graphite">Every good answer contains: {promise.requiredPhrases.map((t) => `"${t}"`).join(", ")}</p>
+      )}
+      <label htmlFor={id} className="block text-body font-medium">Every good answer contains (optional)</label>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Input id={id} type="text" maxLength={200} value={phrase} onChange={(e) => setPhrase(e.target.value)} disabled={disabled || saving} />
+        <Button type="submit" variant="outline" disabled={disabled || saving || !phrase.trim()} pending={saving} pendingLabel="Saving…">
+          Add phrase
+        </Button>
+      </div>
+      {error && <InlineError>{error}</InlineError>}
+    </form>
   );
 }

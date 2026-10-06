@@ -22,5 +22,10 @@ export const env = {
   openaiApiKey: () => process.env.OPENAI_API_KEY || null,
   /** Optional: the gateway's public key for sealing API keys sellers give (UPSTREAM_AUTH_PRIVATE_KEY opens them). */
   upstreamAuthPublicKey: () => process.env.UPSTREAM_AUTH_PUBLIC_KEY || null,
+  /**
+   * "1" turns on listing an API from example requests (the "I don't" option on /apis/new). Off by default: a
+   * coworker older than this option fails such listings for good, so it is turned on once the new coworker runs.
+   */
+  samplesIntake: () => process.env.SAMPLES_INTAKE === "1",
   secureCookies: () => process.env.NODE_ENV === "production",
 };

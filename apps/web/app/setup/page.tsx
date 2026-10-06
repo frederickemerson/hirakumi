@@ -1,4 +1,6 @@
 import { SetupForm } from "@/components/setup-form";
+import { getSql } from "@/lib/db";
+import { samplesIntakeOpen } from "@/lib/repo/schema";
 import { InlineError } from "@/components/states";
 import { requireSellerPage } from "@/lib/page-auth";
 
@@ -15,7 +17,7 @@ export default async function SokosumiSetupPage({ searchParams }: { searchParams
         back to that task, and nothing is published until you approve it.
       </p>
       {token ? (
-        <SetupForm initialUrl="" setupToken={token} />
+        <SetupForm initialUrl="" setupToken={token} samples={await samplesIntakeOpen(getSql())} />
       ) : (
         <InlineError>This setup link is missing its code. Open the link from your Sokosumi task again.</InlineError>
       )}

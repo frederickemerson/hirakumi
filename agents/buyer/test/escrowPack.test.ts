@@ -3,7 +3,7 @@ import { mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { USDM_PREPROD_ASSET } from "@x402/cardano";
-import { decodeBody, inferRuleFromResponses, ruleHash, type RuleDefinition } from "@hirakumi/core";
+import { decodeBody, inferRuleFromResponses, ruleHash, withRequiredPhrase, type RuleDefinition } from "@hirakumi/core";
 import { PACK_ESCROW, encodePackDatum, newReceiptKey, verifyReceipt, type PackDatum } from "@hirakumi/escrow";
 import { EscrowOfferError, IouKeyStore, checkEscrowOffer, escrowCall, signNext, type EscrowChannel, type Requirement } from "../src/escrowPack.js";
 import { runEscrowPack } from "../src/escrowPackFlow.js";
@@ -152,6 +152,27 @@ describe("escrowCall", () => {
     expect(await call(withBom)).toMatchObject({ kind: "pass", body: "ADA 0.36\n" });
     expect((await call(" \n ")).kind).toBe("dispute");
     expect((await call("<!DOCTYPE html><html>502</html>")).kind).toBe("dispute");
+  });
+
+  it("an error body sent with 200 under a text promise is a dispute: nothing is counted or signed", async () => {
+    const textRule = inferRuleFromResponses([{ status: 200, contentType: "text/plain", body: "ADA 0.35", latencyMs: 1 }]);
+    const phraseRule = withRequiredPhrase(textRule, "ADA");
+    const plain = (body: string) => () => new Response(body, { status: 200, headers: { "content-type": "text/plain", "x-hirakumi-sign-next": "1" } });
+    const call = async (rule: RuleDefinition, body: string) => {
+      const store = tmpStore();
+      const c = channel(store, { ruleHash: ruleHash(rule) });
+      const r = await escrowCall({ fetch: gateway([plain(body)]).fetch, rule: async () => rule, save: (x) => store.put(x) }, c, "https://gw.test/x");
+      return { r, saved: store.get("api_demo", "pk_demo") };
+    };
+    for (const body of ["Rate limit exceeded", "Internal Server Error", "404 Not Found", "<h1>Bad Gateway</h1>", "<title>Error</title>"]) {
+      const { r, saved } = await call(textRule, body);
+      expect(r, body).toEqual({ kind: "dispute", reasons: ["/ looks like an error response"] });
+      expect(saved, body).toMatchObject({ disputed: true, verifiedPasses: 0, lastSigned: 0, lastIou: null });
+    }
+    expect((await call(textRule, "ADA 0.36")).r).toMatchObject({ kind: "pass", signed: 1 });
+    // A promise with a required phrase: an answer without it is a dispute too.
+    expect((await call(phraseRule, "ADA 0.36")).r).toMatchObject({ kind: "pass" });
+    expect((await call(phraseRule, "BTC 62000")).r).toEqual({ kind: "dispute", reasons: ['/ does not contain "ADA"'] });
   });
 
   it("402 iou_required: signs an earned IOU and retries once; never an unearned one", async () => {

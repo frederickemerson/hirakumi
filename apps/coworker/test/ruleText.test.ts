@@ -1,4 +1,4 @@
-import { inferRuleFromResponses, type RuleDefinition } from "@hirakumi/core";
+import { inferRuleFromResponses, withRequiredPhrase, type RuleDefinition } from "@hirakumi/core";
 import { describe, expect, it, vi } from "vitest";
 import type { StructuredCall } from "../src/llm/claude.js";
 import { LlmRefusalError } from "../src/llm/claude.js";
@@ -25,24 +25,53 @@ describe("fallbackRuleText for answers that are not JSON", () => {
 
   it("says the type, that it is not empty, and the header line every answer starts with", () => {
     const rule = inferRuleFromResponses([answer("text/csv; charset=utf-8", "date,price (usd)\n2024-01-01,1.5\n"), answer("text/csv", "date,price (usd)\n2024-01-02,1.6\n")]);
-    expect(fallbackRuleText(rule)).toBe('A response counts as good when the status is 200-299 and the body is text/csv text, not empty, starting with the line "date,price (usd)", and not an HTML page.');
+    expect(fallbackRuleText(rule)).toBe('A response counts as good when the status is 200-299 and the body is text/csv text, not empty, starting with the line "date,price (usd)", and not an HTML page or an error message.');
   });
 
   it("leaves the header out when the answers share none", () => {
     const rule = inferRuleFromResponses([answer("text/plain", "1.5"), answer("text/plain", "1.6")]);
-    expect(fallbackRuleText(rule)).toBe("A response counts as good when the status is 200-299 and the body is text/plain text, not empty, and not an HTML page.");
+    expect(fallbackRuleText(rule)).toBe(
+      "A response counts as good when the status is 200-299 and the body is text/plain text, not empty, and not an HTML page or an error message. This is a status-only promise: it does not check the content.",
+    );
     expect(fallbackRuleText(rule)).not.toMatch(/JSON|format/);
   });
 
-  it("an HTML answer may be a page, so it doesn't promise otherwise", () => {
-    const rule = inferRuleFromResponses([answer("text/html", "<p>1.5</p>"), answer("text/html", "<p>1.6</p>")]);
-    expect(fallbackRuleText(rule)).toBe("A response counts as good when the status is 200-299 and the body is text/html text, not empty.");
+  it("an HTML or XML answer may be markup, so it only refuses error text", () => {
+    for (const ct of ["text/html", "application/xml"]) {
+      const rule = inferRuleFromResponses([answer(ct, "<p>1.5</p>"), answer(ct, "<p>1.6</p>")]);
+      expect(fallbackRuleText(rule)).toBe(
+        `A response counts as good when the status is 200-299 and the body is ${ct} text, not empty, and not an error message. This is a status-only promise: it does not check the content.`,
+      );
+    }
+  });
+
+  it("lists each required phrase, after the header line", () => {
+    const csv = inferRuleFromResponses([answer("text/csv", "date,price\n2024-01-01,1.5\n"), answer("text/csv", "date,price\n2024-01-02,1.6\n")]);
+    const both = withRequiredPhrase(withRequiredPhrase(csv, "BTC"), 'say "hi"');
+    expect(fallbackRuleText(both)).toBe(
+      'A response counts as good when the status is 200-299 and the body is text/csv text, not empty, starting with the line "date,price", containing "BTC", containing "say \\"hi\\"", and not an HTML page or an error message.',
+    );
+    const plain = inferRuleFromResponses([answer("text/plain", "1.5"), answer("text/plain", "1.6")]);
+    expect(fallbackRuleText(withRequiredPhrase(plain, "price: 1.5 (usd)"))).toBe(
+      'A response counts as good when the status is 200-299 and the body is text/plain text, not empty, containing "price: 1.5 (usd)", and not an HTML page or an error message.',
+    );
+  });
+
+  it("still renders rules made before error text was refused", () => {
+    const legacyHtml = "^\\s*<(?:![Dd][Oo][Cc][Tt][Yy][Pp][Ee]\\s+[Hh][Tt][Mm][Ll]|[Hh][Tt][Mm][Ll])";
+    const base: RuleDefinition = { ...RULE, contentType: "text/csv", schema: { type: "string", minLength: 1, pattern: "^a,b\\r?\\n", not: { pattern: legacyHtml } } };
+    expect(fallbackRuleText(base)).toBe('A response counts as good when the status is 200-299 and the body is text/csv text, not empty, starting with the line "a,b", and not an HTML page.');
+    expect(fallbackRuleText({ ...base, schema: { type: "string", minLength: 1, pattern: "\\S", not: { pattern: legacyHtml } } })).toBe(
+      "A response counts as good when the status is 200-299 and the body is text/csv text, not empty, and not an HTML page. This is a status-only promise: it does not check the content.",
+    );
   });
 
   it("still names a pattern it can't read back as a format, and reads a non-blank pattern as not empty", () => {
     const base: RuleDefinition = { ...RULE, contentType: "text/plain", schema: { type: "string", pattern: "^\\d+$" } };
     expect(fallbackRuleText(base)).toBe("A response counts as good when the status is 200-299 and the body is text/plain text, matching the format of its test answers.");
-    expect(fallbackRuleText({ ...base, schema: { type: "string", pattern: "\\S" } })).toBe("A response counts as good when the status is 200-299 and the body is text/plain text, not empty.");
+    expect(fallbackRuleText({ ...base, schema: { type: "string", pattern: "\\S" } })).toBe(
+      "A response counts as good when the status is 200-299 and the body is text/plain text, not empty. This is a status-only promise: it does not check the content.",
+    );
   });
 
   it("names a vendor JSON type, and keeps plain JSON wording unchanged", () => {

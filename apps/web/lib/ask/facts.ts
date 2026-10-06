@@ -46,13 +46,13 @@ OWNERSHIP PROOF AND THE WALLET
 APIS THAT NEED A KEY
 - If the API only answers with a key, the seller adds it on the ownership step, in "Does your API need a key?", before signing. They choose a header (such as X-API-Key or Authorization) or a query parameter, its name, and paste the key. Hirakumi prefills the name when the OpenAPI file describes the key. A live API's key can be replaced or removed on its overview page.
 - The key is encrypted so only the Hirakumi gateway can read it. The website and the database never hold it in the clear.
-- The gateway sends the key only to this API's own address, the proven origin and folder, and never follows redirects. An answer that contains the key is withheld from the buyer.
+- The gateway sends the key only to this API's own address, the proven origin and folder, and never follows redirects. An answer that contains the key is withheld from the buyer. That check catches the key as is and in common encodings, not every possible one, so a header is safer than a query parameter: a key in the address can leak in logs and error messages.
 - After saving, the key is never shown again. The seller only sees its name, where it goes and its last 4 characters. To change it they replace it.
 - If the test calls get 401 or 403, the API needs a key that Hirakumi doesn't have yet. The review page then shows the key form: saving or removing the key there runs the test calls again.
 
 ANSWER FORMATS
 - JSON answers are checked field by field against the promise.
-- Text answers such as CSV, XML, YAML or plain text work too. They are checked as text: the content type, the status and a non-empty answer, plus a shared first line such as a CSV header.
+- Text answers such as CSV, XML, YAML or plain text work too. They are checked as text: the content type, the status and a non-empty answer, plus a shared first line such as a CSV header. Before publishing, the seller can add a phrase every good answer contains on the review page. A text promise with no first line and no phrase only checks the status and that the answer is not an error page; buyers see it marked as a status-only promise.
 - Binary answers such as images, PDF or files are not supported yet. All answers of one endpoint must have the same content type.
 
 PRICING AND PACKS (what an agent pays)
