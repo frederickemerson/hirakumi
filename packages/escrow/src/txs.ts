@@ -20,6 +20,7 @@ import {
 } from "@evolution-sdk/evolution";
 import type { BuildOptions, Evaluator } from "@evolution-sdk/evolution/sdk/builders/TransactionBuilder";
 import { Effect } from "effect";
+import { addressFromSeed } from "@evolution-sdk/evolution/sdk/wallet/Derivation";
 import { PACK_ESCROW } from "./blueprint.js";
 import { decodePackDatum, packDatumToData, type PackDatum } from "./datum.js";
 import { hexOf } from "./hex.js";
@@ -49,7 +50,8 @@ export const slotOfMs = (ms: bigint) => Time.unixTimeToSlot(ms, preprod.slotConf
 export const alignMs = (ms: bigint) => msOfSlot(slotOfMs(ms));
 
 const COINS_PER_UTXO_BYTE = 4310n;
-const COLLATERAL = 2_000_000n;
+// ≥ 150% of the largest fee we pay (Settle ≤ close_fee_budget 0.7 ADA); small so a lean wallet still has a valid collateral return.
+const COLLATERAL = 1_500_000n;
 
 export type LockState = { utxo: UTxO.UTxO; datum: PackDatum; lovelace: bigint; tokens: bigint };
 
@@ -220,4 +222,12 @@ export async function buildDeployReference(w: Wallet, holder: string): Promise<B
     .payToAddress({ address: Address.fromBech32(holder), assets: Assets.fromLovelace(0n), script: escrowScript, autoMinUtxo: true })
     .build({ changeAddress: await w.address(), setCollateral: COLLATERAL, ...p.build });
   return { signBuilder: sb, fee: await feeOf(sb) };
+}
+
+/** Base address (account 0) and payment key hash of a mnemonic: the same derivation the x402 signer uses. */
+export function walletKeys(mnemonic: string, accountIndex = 0): { address: string; vkh: string } {
+  const { address } = addressFromSeed(mnemonic.trim().replace(/\s+/g, " ").toLowerCase(), { accountIndex, networkId: 0 });
+  const pc = address.paymentCredential;
+  if (!(pc instanceof KeyHash.KeyHash)) throw new Error("expected a key payment credential");
+  return { address: Address.toBech32(address), vkh: KeyHash.toHex(pc) };
 }
