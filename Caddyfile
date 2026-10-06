@@ -1,0 +1,21 @@
+{
+	email {$ACME_EMAIL}
+}
+
+{$PUBLIC_DOMAIN} {
+	encode zstd gzip
+
+	# Spike/operator tool: registry health-check measurement independent of the gateway.
+	handle_path /spike/* {
+		reverse_proxy availability-stub:8080
+	}
+
+	handle {
+		reverse_proxy gateway:4021
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

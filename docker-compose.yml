@@ -1,0 +1,111 @@
+name: hirakumi
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hirakumi
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hirakumi}
+      POSTGRES_DB: hirakumi
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./deploy/postgres-init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hirakumi -d hirakumi"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  payment-service:
+    image: ghcr.io/masumi-network/masumi-payment-service:0.29.0
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - deploy/masumi.env
+    environment:
+      DATABASE_URL: postgresql://hirakumi:${POSTGRES_PASSWORD:-hirakumi}@postgres:5432/masumi?schema=public&connection_limit=10
+      PORT: "3001"
+    ports:
+      - "127.0.0.1:3001:3001"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  gateway:
+    build:
+      context: .
+      dockerfile: deploy/app.Dockerfile
+      args:
+        APP_DIR: apps/gateway
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    # DATABASE_URL comes from .env: the Hirakumi database is Neon (contract v1.1). Local postgres serves only the payment service.
+    environment:
+      PAYMENT_SERVICE_URL: http://payment-service:3001/api/v1
+      GATEWAY_PORT: "4021"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      payment-service:
+        condition: service_healthy
+    expose:
+      - "4021"
+
+  coworker:
+    build:
+      context: .
+      dockerfile: deploy/app.Dockerfile
+      args:
+        APP_DIR: apps/coworker
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    # DATABASE_URL comes from .env: the Hirakumi database is Neon (contract v1.1). Local postgres serves only the payment service.
+    environment:
+      PAYMENT_SERVICE_URL: http://payment-service:3001/api/v1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      payment-service:
+        condition: service_healthy
+
+  availability-stub:
+    image: node:22-alpine
+    restart: unless-stopped
+    command: ["node", "/stub/availability-stub.mjs"]
+    volumes:
+      - ./deploy/spike:/stub:ro
+      - stubflags:/flags
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2.11-alpine
+    restart: unless-stopped
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?set PUBLIC_DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
+  stubflags:

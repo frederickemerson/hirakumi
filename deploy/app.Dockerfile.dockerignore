@@ -1,0 +1,9 @@
+**/node_modules
+.git
+.env
+.env.*
+!.env.example
+deploy/masumi.env
+apps/web/.next
+vendor
+docs
