@@ -85,10 +85,13 @@ describe("HeaderAuth", () => {
   });
 
   it("never flashes Log in on a seller page while the session is still unknown", () => {
-    nav.pathname = "/apis";
-    stubFetch({ signedIn: true, address: SHORT });
-    render(<HeaderAuth />);
-    expect(screen.queryByRole("link", { name: "Log in" })).toBeNull();
+    for (const path of ["/apis", "/account"]) {
+      nav.pathname = path;
+      stubFetch({ signedIn: true, address: SHORT });
+      const { unmount } = render(<HeaderAuth />);
+      expect(screen.queryByRole("link", { name: "Log in" })).toBeNull();
+      unmount();
+    }
   });
 });
 
@@ -103,20 +106,32 @@ describe("account menu", () => {
     const menu = screen.getByRole("menu", { name: "Account" });
     expect(chip).toHaveAttribute("aria-controls", menu.id);
     const items = screen.getAllByRole("menuitem");
-    expect(items.map((i) => i.textContent)).toEqual(["My APIs", "List a new API", "Log out"]);
+    expect(items.map((i) => i.textContent)).toEqual(["My APIs", "List a new API", "Account settings", "Log out"]);
     expect(items[0]).toHaveAttribute("href", "/apis");
     expect(items[1]).toHaveAttribute("href", "/apis/new");
+    expect(items[2]).toHaveAttribute("href", "/account");
     expect(items[0]).toHaveFocus();
     await user.keyboard("{ArrowDown}");
     expect(items[1]).toHaveFocus();
-    await user.keyboard("{ArrowDown}{ArrowDown}");
+    await user.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}");
     expect(items[0]).toHaveFocus();
     await user.keyboard("{ArrowUp}");
-    expect(items[2]).toHaveFocus();
+    expect(items[3]).toHaveFocus();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("menu")).toBeNull();
     expect(chip).toHaveAttribute("aria-expanded", "false");
     expect(chip).toHaveFocus();
+  });
+
+  it("links to Account settings and closes the menu on the way", async () => {
+    const user = userEvent.setup();
+    await renderSignedIn();
+    await user.click(screen.getByRole("button", { name: CHIP }));
+    const link = screen.getByRole("menuitem", { name: "Account settings" });
+    expect(link).toHaveAttribute("href", "/account");
+    link.addEventListener("click", (e) => e.preventDefault()); // jsdom has no navigation
+    await user.click(link);
+    expect(screen.queryByRole("menu")).toBeNull();
   });
 
   it("opens with ArrowDown and closes on a click outside", async () => {

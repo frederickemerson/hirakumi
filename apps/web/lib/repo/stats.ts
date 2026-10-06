@@ -49,6 +49,13 @@ export type OverviewStats = {
 
 const MASUMI_FEE_PERCENT = 5n;
 
+/** Completed escrow jobs at the escrow price: what buyers paid, what Masumi kept, and what reached the seller. */
+export function escrowTake(completedJobs: number, escrowPriceMicros: string | null): { gross: bigint; fee: bigint; net: bigint } {
+  const gross = BigInt(completedJobs) * BigInt(escrowPriceMicros ?? "0");
+  const fee = (gross * MASUMI_FEE_PERCENT) / 100n;
+  return { gross, fee, net: gross - fee };
+}
+
 export async function getOverviewStats(sql: Sql, apiId: string): Promise<OverviewStats> {
   const [calls] = await sql<{ callsDay: number; passDay: number; failDay: number }[]>`
     select count(*)::int as calls_day,
@@ -63,8 +70,7 @@ export async function getOverviewStats(sql: Sql, apiId: string): Promise<Overvie
   const [escrow] = await sql<{ escrowJobs: number; escrowPriceMicros: string | null }[]>`
     select (select count(*)::int from jobs where api_id = ${apiId} and status = 'completed') as escrow_jobs,
            (select escrow_price_micros::text from packs where api_id = ${apiId} order by id limit 1) as escrow_price_micros`;
-  const gross = BigInt(escrow.escrowJobs) * BigInt(escrow.escrowPriceMicros ?? "0");
-  const fee = (gross * MASUMI_FEE_PERCENT) / 100n;
+  const { gross, fee, net } = escrowTake(escrow.escrowJobs, escrow.escrowPriceMicros);
   const decided = calls.passDay + calls.failDay;
   return {
     callsDay: calls.callsDay,
@@ -76,7 +82,7 @@ export async function getOverviewStats(sql: Sql, apiId: string): Promise<Overvie
     escrowJobs: escrow.escrowJobs,
     escrowGrossMicros: gross.toString(),
     escrowFeeMicros: fee.toString(),
-    escrowNetMicros: (gross - fee).toString(),
+    escrowNetMicros: net.toString(),
   };
 }
 

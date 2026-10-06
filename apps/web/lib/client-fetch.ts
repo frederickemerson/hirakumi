@@ -17,6 +17,16 @@ export async function postJson<T>(url: string, body: unknown): Promise<T> {
   return handle<T>(res);
 }
 
+export async function deleteJson<T>(url: string): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(url, { method: "DELETE", headers: { accept: "application/json" } });
+  } catch {
+    throw new RequestError("We couldn't reach Hirakumi. Check your connection and try again.");
+  }
+  return handle<T>(res);
+}
+
 export async function getJson<T>(url: string): Promise<T> {
   let res: Response;
   try {

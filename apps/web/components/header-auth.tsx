@@ -23,7 +23,7 @@ export function HeaderAuth() {
   const pathname = usePathname() ?? "";
   // Seller pages only render for a signed-in seller and seed the session at hydration:
   // show nothing there until then rather than flash "Log in".
-  const view = auth.status === "in" ? "in" : auth.status === "unknown" && /^\/apis(\/|$)/.test(pathname) ? "pending" : "out";
+  const view = auth.status === "in" ? "in" : auth.status === "unknown" && /^\/(apis|account)(\/|$)/.test(pathname) ? "pending" : "out";
   return (
     <div className="grid items-center justify-items-end">
       <div data-auth-layer="out" aria-hidden={view !== "out" || undefined} inert={view !== "out"} className={cn(layer, view !== "out" && "pointer-events-none opacity-0")}>
@@ -144,6 +144,9 @@ function AccountMenu({ address }: { address: string }) {
             </Link>
             <Link role="menuitem" tabIndex={-1} href="/apis/new" onClick={() => close(false)} className={item}>
               List a new API
+            </Link>
+            <Link role="menuitem" tabIndex={-1} href="/account" onClick={() => close(false)} className={item}>
+              Account settings
             </Link>
             <button role="menuitem" tabIndex={-1} type="button" onClick={() => void onLogOut()} aria-busy={pending || undefined} disabled={pending} className={cn(item, "cursor-pointer border-t border-silver disabled:cursor-progress")}>
               {pending ? "Logging out…" : "Log out"}
