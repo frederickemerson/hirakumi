@@ -1,6 +1,7 @@
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { createDb, migrate } from "@hirakumi/db";
 import { createApp } from "./app";
+import { listen } from "./server";
 import { ChannelWatcher } from "./channelWatcher";
 import { demoBuyerFromEnv } from "./demoBuy";
 import { blockfrostEscrowChain } from "./escrowChain";
@@ -42,7 +43,7 @@ const watcher = escrowChain && config.packEscrow ? new ChannelWatcher({ sql, cha
 watcher?.start();
 if (!reconciler) console.warn("[gateway] BLOCKFROST_PROJECT_ID not set: pending tokens are activated only by the settle hook");
 
-const server = app.listen(config.port, () => {
+const server = listen(app, config.port, () => {
   console.log(`[gateway] listening on :${config.port} public=${config.publicBaseUrl} demo=${config.demoMode} ` +
     `probe=${config.probeIntervalMs / 1000}s escrow=${masumi ? "on" : "off"} reconcile=${reconciler ? "on" : "off"} packs=${config.packMode}${watcher ? ` watcher=${escrowChain?.operator ? "acting" : "observing"}` : ""}`);
 });

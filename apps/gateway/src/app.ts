@@ -1,4 +1,5 @@
 import express, { type Express } from "express";
+import { limitUrl } from "./server";
 import { getRuleByHash } from "@hirakumi/db";
 import { channelsRouter } from "./channels";
 import { creditsRouter } from "./credits";
@@ -14,6 +15,7 @@ export function createApp(d: AppDeps): Express {
   // leftmost X-Forwarded-For as req.ip and make per-client limits spoofable.
   app.set("trust proxy", 1);
   app.disable("x-powered-by");
+  app.use(limitUrl);
   app.use(express.json({ limit: "256kb" }));
   app.get("/healthz", (_req, res) => { res.json({ ok: true }); });
   app.use(internalRouter(d));
