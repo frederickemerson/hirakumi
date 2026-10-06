@@ -55,7 +55,8 @@ if (soko) {
 }
 const mode = selectMode(me);
 if (soko && mode.kind === "sokosumi") {
-  const inbox = createInbox({ pool, soko, webBaseUrl: config.webBaseUrl });
+  // Replies on a task: typed commands first; the LLM only maps free text to the choice the coworker offered.
+  const inbox = createInbox({ pool, soko, webBaseUrl: config.webBaseUrl, fetchSpec, llm, allowInsecure: process.env.ALLOW_INSECURE_UPSTREAM === "1" });
   startLoop("sokosumi-inbox", 5_000, () => inbox.poll());
   startLoop("sokosumi-outbox", 2_000, () => deliverMessages(pool, soko));
   startLoop("sokosumi-usage", 30_000, () => reportOnboardingUsage(pool, soko, config.onboardingCredits));

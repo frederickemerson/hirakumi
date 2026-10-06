@@ -3,7 +3,7 @@ import type { TaskStatus } from "../messages.js";
 /** Shapes verified against https://api.preprod.sokosumi.com/v1/openapi.json (fields we use only). */
 export type SokosumiActor = { type: "user" | "coworker" | "sokoBot" | string; id: string };
 export type SokosumiEvent = { id: string; taskId: string; createdAt: string; status?: string | null; comment?: string | null; actor?: SokosumiActor | null };
-export type SokosumiTask = { id: string; name: string; userId: string; organizationId: string | null; status: string };
+export type SokosumiTask = { id: string; name: string; description?: string | null; userId: string; organizationId: string | null; status: string };
 export type SokosumiCoworker = { id: string; name: string; isWhitelisted: boolean; capabilities: string[]; archivedAt: string | null };
 export type TaskEventBody = { status?: TaskStatus; comment: string };
 export type UsageInput = { userId: string; organizationId: string | null; idempotencyKey: string; credits: number; referenceId?: string };

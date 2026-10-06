@@ -3,7 +3,8 @@ import type pg from "pg";
 import { withTx } from "../db.js";
 import { PermanentError } from "../errors.js";
 import type { GatewayClient } from "../gateway.js";
-import { apiLink } from "../links.js";
+import { apiLink, reviewLink } from "../links.js";
+import { formatTusdm, SUGGESTED_PACK } from "../sokosumi/replies.js";
 import type { StructuredCall } from "../llm/claude.js";
 import { writeRuleText } from "../llm/ruleText.js";
 import { enqueueMessage } from "../messages.js";
@@ -35,7 +36,16 @@ export async function qaStep(deps: QaDeps, apiId: string): Promise<StepOutcome> 
       [apiId],
     );
     if (!ops.length) throw new PermanentError("No endpoints are switched on, so there is nothing to test. Turn on at least one endpoint.");
-    const { rows: [api] } = await deps.pool.query<{ name: string }>(`select name from apis where id = $1`, [apiId]);
+    const { rows: [api] } = await deps.pool.query<{ name: string; sokosumi_task_id: string | null }>(`select name, sokosumi_task_id from apis where id = $1`, [apiId]);
+    if (api.sokosumi_task_id) {
+      await enqueueMessage(deps.pool, {
+        apiId,
+        body: `Ownership proven. Running test calls on ${ops.length} endpoint(s) now; this takes about a minute.`,
+        taskStatus: "RUNNING",
+        dedupeKey: `qa_started:${apiId}`,
+        step: "Test calls",
+      });
+    }
     const samples = await sellerSamples(deps.pool, apiId);
     const summaries: OpQaSummary[] = [];
     const forText: { opId: string; description: string | null; rule: RuleDefinition }[] = [];
@@ -81,9 +91,14 @@ export async function qaStep(deps: QaDeps, apiId: string): Promise<StepOutcome> 
       });
       await enqueueMessage(c, {
         apiId,
-        body: `${qaSummaryLine(summaries)} Your promise to buyers: ${[...text.texts.values()].join(" ")} Review the price and publish: ${apiLink(deps.webBaseUrl, apiId)}`,
+        body: `${qaSummaryLine(summaries)} Your promise to buyers: ${[...text.texts.values()].join(" ")}` +
+          (api.sokosumi_task_id
+            ? ` Suggested price: ${formatTusdm(SUGGESTED_PACK.priceMicros)} tUSDM for ${SUGGESTED_PACK.calls} calls. Reply \`price ${formatTusdm(SUGGESTED_PACK.priceMicros)}\` to accept it, or another amount (like \`price 3.5 for 200 calls\`). ` +
+              `Then approve publishing with your wallet (one signature): ${reviewLink(deps.webBaseUrl, apiId)}`
+            : ` Review the price and publish: ${apiLink(deps.webBaseUrl, apiId)}`),
         taskStatus: "INPUT_REQUIRED",
         dedupeKey: `rule_built:${apiId}`,
+        step: "Write the promise",
       });
     });
   }, deps.now?.());

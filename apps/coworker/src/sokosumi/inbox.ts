@@ -1,37 +1,67 @@
 import { randomBytes } from "node:crypto";
 import type pg from "pg";
 import { withTx } from "../db.js";
-import { setupLink } from "../links.js";
-import { enqueueMessage } from "../messages.js";
-import type { SokosumiClient } from "./client.js";
+import type { StructuredCall } from "../llm/claude.js";
+import { createSpecFetcher } from "../openapi/fetchSpec.js";
+import type { SokosumiClient, SokosumiEvent } from "./client.js";
+import { handleBrief, handleReply, type ConversationDeps, type TaskRef } from "./conversation.js";
 
 export const INBOX_PAGE_LIMIT = 50;
 export const INBOX_MAX_PAGES = 3;
 const TERMINAL = new Set(["COMPLETED", "FAILED", "CANCELED", "CANCELLED", "DONE"]);
 
-export type InboxDeps = { pool: pg.Pool; soko: SokosumiClient; webBaseUrl: string };
+export type InboxDeps = {
+  pool: pg.Pool;
+  soko: SokosumiClient;
+  webBaseUrl: string;
+  fetchSpec?: (url: string) => Promise<string>;
+  llm?: StructuredCall | null;
+  allowInsecure?: boolean;
+};
+
+type Row = { task_id: string; sokosumi_user_id: string; setup_token: string; created_at: Date };
+
+const isComment = (e: SokosumiEvent) => e.actor?.type === "user" && typeof e.comment === "string" && e.comment.trim() !== "";
+const at = (e: SokosumiEvent) => Date.parse(e.createdAt);
 
 /**
- * Every task assigned to this coworker is an onboarding request (the assignment is the signal, not
- * the title). A task is new when we have no coworker_tasks row for it; the row insert is the dedupe.
+ * Every task assigned to this coworker is an onboarding request (the assignment is the signal, not the title).
+ * A task is new when we have no coworker_tasks row for it; the row insert is the dedupe. Its brief (name, description
+ * and any comments so far) may already hold the OpenAPI link. Later comments by the task's owner are replies, each
+ * acted on once (coworker_task_events is claimed before acting).
  */
 export function createInbox(deps: InboxDeps): { poll(): Promise<number> } {
   const ignored = new Set<string>();
+  const convo: ConversationDeps = {
+    pool: deps.pool,
+    webBaseUrl: deps.webBaseUrl,
+    fetchSpec: deps.fetchSpec ?? createSpecFetcher(),
+    llm: deps.llm ?? null,
+    allowInsecure: deps.allowInsecure ?? false,
+  };
   return {
     async poll() {
-      const taskIds = new Set<string>();
+      const byTask = new Map<string, SokosumiEvent[]>();
       let cursor: string | undefined;
       for (let page = 0; page < INBOX_MAX_PAGES; page++) {
         const { events, nextCursor } = await deps.soko.listEvents({ limit: INBOX_PAGE_LIMIT, ...(cursor ? { cursor } : {}) });
-        for (const e of events) if (e.taskId && e.actor?.type !== "coworker") taskIds.add(e.taskId);
+        for (const e of events) {
+          if (!e.taskId || e.actor?.type === "coworker") continue;
+          byTask.set(e.taskId, [...(byTask.get(e.taskId) ?? []), e]);
+        }
         if (!nextCursor || nextCursor === cursor) break;
         cursor = nextCursor;
       }
       let created = 0;
-      for (const taskId of taskIds) {
+      for (const [taskId, events] of byTask) {
         if (ignored.has(taskId)) continue;
-        const known = await deps.pool.query(`select 1 from coworker_tasks where task_id = $1`, [taskId]);
-        if (known.rowCount) continue;
+        const comments = events.filter(isComment).sort((a, b) => (at(a) || 0) - (at(b) || 0));
+        const { rows: [known] } = await deps.pool.query<Row>(
+          `select task_id, sokosumi_user_id, setup_token, created_at from coworker_tasks where task_id = $1`, [taskId]);
+        if (known) {
+          await handleReplies(convo, deps.soko, known, comments, ignored);
+          continue;
+        }
         const task = await deps.soko.getTask(taskId);
         if (TERMINAL.has(task.status.toUpperCase())) {
           ignored.add(taskId);
@@ -45,18 +75,42 @@ export function createInbox(deps: InboxDeps): { poll(): Promise<number> } {
             [taskId, task.userId, task.organizationId, task.name, token],
           );
           if (r.rowCount !== 1) return false;
-          await enqueueMessage(c, {
-            apiId: null,
-            taskId,
-            body: `Hi! I'll put your API on the agent market. Open this setup link and paste your OpenAPI URL (about 3 minutes, 4 clicks): ${setupLink(deps.webBaseUrl, token)}`,
-            taskStatus: "INPUT_REQUIRED",
-            dedupeKey: `setup:${taskId}`,
-          });
+          // Comments already on the task are part of its brief, not replies.
+          for (const e of comments) await c.query(`insert into coworker_task_events (event_id, task_id) values ($1, $2) on conflict do nothing`, [e.id, taskId]);
           return true;
         });
-        if (inserted) created++;
+        if (!inserted) continue;
+        created++;
+        const ownComments = comments.filter((e) => e.actor?.id === task.userId).map((e) => e.comment as string);
+        const brief = [task.name, task.description ?? "", ...ownComments].join("\n");
+        await handleBrief(convo, { taskId, sokosumiUserId: task.userId, setupToken: token }, brief);
       }
       return created;
     },
   };
+}
+
+async function handleReplies(convo: ConversationDeps, soko: SokosumiClient, row: Row, comments: SokosumiEvent[], ignored: Set<string>) {
+  const ref: TaskRef = { taskId: row.task_id, sokosumiUserId: row.sokosumi_user_id, setupToken: row.setup_token };
+  let checkedOpen = false;
+  for (const e of comments) {
+    // Only comments written after we took the task are replies (older ones were its brief).
+    if (!(at(e) > row.created_at.getTime())) continue;
+    const { rowCount } = await convo.pool.query(`select 1 from coworker_task_events where event_id = $1`, [e.id]);
+    if (rowCount) continue;
+    if (!checkedOpen) {
+      const task = await soko.getTask(row.task_id);
+      if (TERMINAL.has(task.status.toUpperCase())) {
+        ignored.add(row.task_id);
+        return;
+      }
+      checkedOpen = true;
+    }
+    // Claim, then act: a reply is acted on at most once, even across a crash.
+    const claimed = await convo.pool.query(`insert into coworker_task_events (event_id, task_id) values ($1, $2) on conflict do nothing`, [e.id, row.task_id]);
+    if (claimed.rowCount !== 1) continue;
+    // Only the task's owner (the Sokosumi user who is billed) may steer it; other participants are ignored.
+    if (e.actor?.id !== row.sokosumi_user_id) continue;
+    await handleReply(convo, ref, e.id, e.comment as string);
+  }
 }

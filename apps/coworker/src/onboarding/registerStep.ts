@@ -1,7 +1,7 @@
 import type pg from "pg";
 import { withTx } from "../db.js";
 import { PermanentError } from "../errors.js";
-import { apiLink, SOKOSUMI_LISTING_FORM } from "../links.js";
+import { apiLink, registryTokenLink, SOKOSUMI_LISTING_FORM, statusPageLink, tryPageLink } from "../links.js";
 import type { Listing } from "../llm/ruleText.js";
 import { enqueueMessage } from "../messages.js";
 import { finishStep, getStep, runStep, saveStepOutput, touchStep, type StepRow } from "../steps.js";
@@ -85,9 +85,14 @@ async function pollRegistration(deps: RegisterDeps, apiId: string, step: StepRow
       await finishStep(c, apiId, "register", { agentIdentifier: id });
       await enqueueMessage(c, {
         apiId,
-        body: `Your API is Live on the Masumi agent market and shows Online. Agent ID: ${id}. Buyers call it at ${deps.publicBaseUrl}/a/${apiId}. Your dashboard and buyer snippet: ${apiLink(deps.webBaseUrl, apiId)}. To also list it on Sokosumi, submit the prepared listing text at ${SOKOSUMI_LISTING_FORM}.`,
+        body: `Your API is Live on the Masumi agent market and shows Online. Agent ID: ${id}. Buyers call it at ${deps.publicBaseUrl}/a/${apiId}.\n` +
+          `Public status page: ${statusPageLink(deps.webBaseUrl, apiId)}\n` +
+          `Try it: ${tryPageLink(deps.webBaseUrl, apiId)}\n` +
+          `Registry token: ${registryTokenLink(id)}\n` +
+          `Your dashboard and buyer snippet: ${apiLink(deps.webBaseUrl, apiId)}. To also list it on Sokosumi, submit the prepared listing text at ${SOKOSUMI_LISTING_FORM}.`,
         taskStatus: "COMPLETED",
         dedupeKey: `live:${apiId}`,
+        step: "Register on Masumi",
       });
     });
     return;
@@ -110,6 +115,7 @@ export async function registerStep(deps: RegisterDeps, apiId: string): Promise<v
     body: "Publishing your API to the Masumi registry. This usually takes about a minute.",
     taskStatus: "RUNNING",
     dedupeKey: `registering:${apiId}`,
+    step: "Register on Masumi",
   });
   const step = await getStep(deps.pool, apiId, "register");
   const registrationId = step?.output?.registrationId;

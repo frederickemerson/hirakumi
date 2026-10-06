@@ -54,6 +54,7 @@ export async function parseStep(deps: ParseDeps, apiId: string): Promise<StepOut
         body: `I read your OpenAPI file and found ${parsed.operations.length} endpoints.${skippedNote} Writing descriptions for buyers now.`,
         taskStatus: "RUNNING",
         dedupeKey: `parsed:${apiId}`,
+        step: "Read your file",
       });
     });
   }, deps.now?.());

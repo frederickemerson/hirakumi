@@ -11,7 +11,7 @@ describe("migrate", () => {
     const rows = await db.sql<{ table_name: string }[]>`
       select table_name from information_schema.tables where table_schema = ${db.schema} order by table_name`;
     expect(rows.map((r) => r.table_name)).toEqual([
-      "apis", "calls", "challenges", "channel_leases", "coworker_tasks", "credit_tokens", "health_events", "jobs", "messages",
+      "apis", "calls", "challenges", "channel_leases", "coworker_task_events", "coworker_tasks", "credit_tokens", "health_events", "jobs", "messages",
       "onboard_steps", "operations", "pack_channels", "pack_quotes", "packs", "rules", "schema_migrations", "sellers", "test_inputs",
     ]);
   });

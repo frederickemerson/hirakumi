@@ -86,6 +86,10 @@ describe("registerStep (registering → live)", () => {
     const msgs = await messagesFor(db.pool, apiId);
     expect(msgs.map((m) => m.task_status)).toEqual(["RUNNING", "COMPLETED"]);
     expect(msgs[1].body).toMatch(/Agent ID: agent_abc/);
+    // The final comment: public status page, try page and the registry token.
+    expect(msgs[1].body).toContain(`Public status page: https://web.test/p/${apiId}\n`);
+    expect(msgs[1].body).toContain(`Try it: https://web.test/p/${apiId}/try\n`);
+    expect(msgs[1].body).toContain("Registry token: https://preprod.cardanoscan.io/token/agent_abc\n");
   });
 
   it("builds a listing the registry accepts from real QA output (long text, no tags, JSON example)", async () => {
