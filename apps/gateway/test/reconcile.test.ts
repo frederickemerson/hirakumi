@@ -32,6 +32,14 @@ describe("Reconciler", () => {
     for (const lookup of cases) await new Reconciler({ sql: h.sql, lookup }).tick();
     expect(await statusOf(id)).toBe("pending");
   });
+  it("revokes a pending payment that never landed after its validity window, so dead rows can't starve the queue", async () => {
+    const dead = await pendingWithTx("dd".repeat(32), 120);
+    const recent = await pendingWithTx("ee".repeat(32), 10);
+    const lookup: ChainLookup = async () => ({ found: false });
+    await new Reconciler({ sql: h.sql, lookup }).tick();
+    expect(await statusOf(dead)).toBe("revoked");
+    expect(await statusOf(recent)).toBe("pending");
+  });
   it("ignores tokens younger than minAgeSeconds (the settle hook gets the first chance)", async () => {
     await pendingWithTx("cc".repeat(32), 0);
     let calls = 0;

@@ -96,6 +96,12 @@ export async function activateTokenByPayment(sql: Sql, paymentPayloadHash: strin
   return rows.length === 1;
 }
 
+/** A pending payment whose transaction can no longer land: it can never buy anything. */
+export async function revokePendingToken(sql: Sql, id: string): Promise<boolean> {
+  const rows = await sql`update credit_tokens set status = 'revoked' where id = ${id} and status = 'pending' returning id`;
+  return rows.length === 1;
+}
+
 export async function activateTokenById(sql: Sql, id: string): Promise<boolean> {
   const rows = await sql`update credit_tokens set status = 'active' where id = ${id} and status = 'pending' returning id`;
   return rows.length === 1;
@@ -132,11 +138,12 @@ export async function markExhaustedIfEmpty(sql: Sql, tokenId: string): Promise<v
   await sql`update credit_tokens set status = 'exhausted' where id = ${tokenId} and status = 'active' and remaining = 0`;
 }
 
-export type PendingPayment = { id: string; tx_hash: string; pay_to: string; price_micros: string };
+export type PendingPayment = { id: string; tx_hash: string; pay_to: string; price_micros: string; age_seconds: number };
 
 export async function listPendingPayments(sql: Sql, minAgeSeconds: number): Promise<PendingPayment[]> {
   return sql<PendingPayment[]>`
-    select ct.id, ct.tx_hash, s.cardano_addr as pay_to, p.price_micros::text as price_micros
+    select ct.id, ct.tx_hash, s.cardano_addr as pay_to, p.price_micros::text as price_micros,
+           extract(epoch from now() - ct.created_at)::int as age_seconds
     from credit_tokens ct
     join packs p on p.id = ct.pack_id
     join apis a on a.id = ct.api_id

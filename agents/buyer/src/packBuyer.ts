@@ -41,6 +41,13 @@ export async function runPackDemo(deps: PackDemoDeps, o: PackDemoOptions): Promi
       deps.pending.delete(o.apiId);
       return null;
     }
+    if (res.status === 403) {
+      // Final: the gateway will never accept this saved payment (e.g. saved before recovery secrets existed).
+      deps.pending.delete(o.apiId);
+      throw new Error(
+        `The pack payment from ${saved.at} can't be recovered (the gateway refused it). It was cleared; run again to buy a new pack.`,
+      );
+    }
     if (!res.ok || typeof body.token !== "string" || typeof body.credits !== "number") {
       throw new Error(`Recovery failed: HTTP ${res.status}. Your saved payment is kept; try again later.`);
     }

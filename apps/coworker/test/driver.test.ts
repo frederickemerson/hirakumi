@@ -32,4 +32,20 @@ describe("driveOnce", () => {
     expect(log.error).toHaveBeenCalledWith(expect.stringContaining("registry down"));
     expect(handlers.parsed).not.toHaveBeenCalled();
   });
+
+  it("skips APIs whose onboarding failed for good, so they can't fill the 50-row window", async () => {
+    const seen: string[] = [];
+    const record = async (id: string) => { seen.push(id); };
+    const handlers = { intake: record, parsed: record, ownership_verified: record, registering: record };
+    const failed: string[] = [];
+    for (let i = 0; i < 50; i++) {
+      const id = await seedApi(db.pool, { state: "intake" });
+      await db.pool.query(`insert into onboard_steps (api_id, step, status, output) values ($1, 'parse', 'failed', '{"error":"x"}')`, [id]);
+      failed.push(id);
+    }
+    const fresh = await seedApi(db.pool, { state: "intake" });
+    await driveOnce(db.pool, handlers, new Set(), { error: () => {}, info: () => {} });
+    expect(seen).toContain(fresh);
+    expect(seen.filter((id) => failed.includes(id))).toEqual([]);
+  });
 });

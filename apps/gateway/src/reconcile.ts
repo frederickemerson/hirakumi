@@ -1,5 +1,11 @@
 import { USDM_PREPROD_ASSET } from "@x402/cardano";
-import { activateTokenById, listPendingPayments, type Sql } from "@hirakumi/db";
+import { activateTokenById, listPendingPayments, revokePendingToken, type Sql } from "@hirakumi/db";
+
+/**
+ * An x402 Cardano payment is valid for at most maxTimeoutSeconds (600 s) after it is signed. A pending payment
+ * still not on-chain an hour later can never land; revoke it so dead rows don't fill the oldest-first queue.
+ */
+export const PENDING_EXPIRY_SECONDS = 3600;
 
 export type ChainOutput = { address: string; amount: Array<{ unit: string; quantity: string }> };
 export type ChainLookup = (txHash: string) => Promise<{ found: false } | { found: true; outputs: ChainOutput[] }>;
@@ -54,7 +60,12 @@ export class Reconciler {
       for (const p of await listPendingPayments(this.d.sql, this.minAgeSeconds)) {
         checked += 1;
         const r = await this.d.lookup(p.tx_hash);
-        if (!r.found) continue;
+        if (!r.found) {
+          if (p.age_seconds > PENDING_EXPIRY_SECONDS && (await revokePendingToken(this.d.sql, p.id))) {
+            console.log(`[reconcile] token ${p.id} revoked: tx ${p.tx_hash} never reached the chain`);
+          }
+          continue;
+        }
         const paid = paidTo(r.outputs, p.pay_to, USDM_PREPROD_UNIT);
         if (paid >= BigInt(p.price_micros)) {
           if (await activateTokenById(this.d.sql, p.id)) activated += 1;

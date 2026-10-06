@@ -158,3 +158,14 @@ describe("status and input_schema", () => {
       ]);
   });
 });
+
+describe("clientKey", () => {
+  it("groups IPv6 clients by /64 so rotating addresses in one allocation can't bypass the limit", async () => {
+    const { clientKey } = await import("../src/mip003");
+    expect(clientKey("2001:db8:1:2:aaaa::1")).toBe(clientKey("2001:db8:1:2:ffff:ffff:ffff:ffff"));
+    expect(clientKey("2001:db8:1:2::1")).not.toBe(clientKey("2001:db8:1:3::1"));
+    expect(clientKey("203.0.113.7")).toBe("203.0.113.7");
+    expect(clientKey("::ffff:203.0.113.7")).toBe("203.0.113.7");
+    expect(clientKey(undefined)).toBe("unknown");
+  });
+});

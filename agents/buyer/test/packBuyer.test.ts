@@ -155,6 +155,18 @@ describe("runPackDemo when settlement times out", () => {
     expect(h.pending.get(API)).toBeUndefined();
   });
 
+  it("a refused recovery (403) is final: the saved payment is cleared with a clear message, not retried forever", async () => {
+    const gw = fakeGateway({ modes: ["pass"] });
+    const h = deps(gw);
+    h.pending.put(API, { packId: "pk_demo", paymentSignature: "OLD", recoverySecret: "", at: "2026-10-06T00:00:00Z" });
+    const base = h.make();
+    const fetch = async (url: string, init?: RequestInit) =>
+      url.endsWith("/recover") ? new Response('{"error":"recovery_not_allowed"}', { status: 403 }) : base.fetch(url, init);
+    await expect(runPackDemo({ ...base, fetch }, opts({ calls: 1 }))).rejects.toThrow(/can't be recovered/);
+    expect(h.pending.get(API)).toBeUndefined();
+    expect(h.buyPack).not.toHaveBeenCalled();
+  });
+
   it("forgets a saved payment the gateway never received and buys normally", async () => {
     const gw = fakeGateway({ modes: ["pass"] });
     const h = deps(gw);

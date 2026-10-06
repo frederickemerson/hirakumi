@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import { Router } from "express";
 import { inputHash, newId } from "@hirakumi/core";
 import { getJob, insertJob, type JobRow } from "@hirakumi/db";
@@ -34,6 +35,22 @@ export const PURCHASER_ID = /^(?:[0-9a-f]{2}){7,13}$/;
 
 /** start_job creates a Masumi payment request and a job row, so unauthenticated floods are capped per client. */
 const START_JOB_LIMIT = { max: 10, windowMs: 60_000 };
+
+/**
+ * Rate-limit key for a client address. IPv6 is grouped by /64, the usual per-customer allocation, so a client
+ * can't bypass the limit by rotating addresses inside it. IPv4-mapped IPv6 is treated as IPv4.
+ */
+export function clientKey(ip: string | undefined): string {
+  if (!ip) return "unknown";
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(ip);
+  if (mapped) return mapped[1];
+  if (isIP(ip) !== 6) return ip;
+  const [head, tail = ""] = ip.toLowerCase().split("::");
+  const left = head ? head.split(":") : [];
+  const right = tail ? tail.split(":") : [];
+  const groups = ip.includes("::") ? [...left, ...Array(8 - left.length - right.length).fill("0"), ...right] : left;
+  return `${groups.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, "")).join(":")}::/64`;
+}
 
 function createWindowLimiter(max: number, windowMs: number): (key: string, now?: number) => boolean {
   const hits = new Map<string, number[]>();
@@ -102,7 +119,7 @@ export function mip003Router(d: AppDeps): Router {
   const allowStart = createWindowLimiter(START_JOB_LIMIT.max, START_JOB_LIMIT.windowMs);
   r.post("/a/:apiId/start_job", async (req, res, next) => {
     try {
-      if (!allowStart(req.ip ?? "unknown")) {
+      if (!allowStart(clientKey(req.ip))) {
         res.status(429).json({ error: "too_many_requests", message: "Too many jobs started from your address. Try again in a minute." });
         return;
       }
