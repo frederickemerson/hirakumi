@@ -1,6 +1,7 @@
 import SwaggerParser from "@apidevtools/swagger-parser";
 import type { OpenAPI } from "openapi-types";
 import YAML, { YAMLParseError } from "yaml";
+import { firstServerUrl } from "@hirakumi/core";
 import { PermanentError } from "../errors.js";
 
 export class OpenApiError extends PermanentError {}
@@ -114,18 +115,10 @@ function requiresAuth(op: Json, doc: Json): boolean {
   return !security.some((s) => isRecord(s) && Object.keys(s).length === 0);
 }
 
-/** Parses an OpenAPI 3.x document (JSON or YAML text). Never fetches anything: external $refs are not resolved. */
-/** servers[0].url with {variables} replaced by their defaults (OpenAPI 3 server object). */
-function firstServerUrl(servers: unknown): string | null {
-  const first = Array.isArray(servers) ? servers[0] : undefined;
-  if (!isRecord(first) || typeof first.url !== "string" || !first.url.trim()) return null;
-  const vars = isRecord(first.variables) ? first.variables : {};
-  return first.url.trim().replace(/\{([^}]+)\}/g, (whole, name: string) => {
-    const v = vars[name];
-    return isRecord(v) && typeof v.default === "string" ? v.default : whole;
-  });
-}
-
+/**
+ * Parses an OpenAPI 3.x document (JSON or YAML text). Never fetches anything: external $refs are not resolved.
+ * servers[0] is read with the same helper the gateway's ownership check uses (@hirakumi/core firstServerUrl).
+ */
 export async function parseOpenApi(text: string): Promise<ParseResult> {
   let raw: unknown;
   try {

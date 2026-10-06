@@ -27,6 +27,14 @@ export type TaskRef = { taskId: string; sokosumiUserId: string; setupToken: stri
 
 const SUGGESTED_PRICE = `${formatTusdm(SUGGESTED_PACK.priceMicros)} tUSDM for ${SUGGESTED_PACK.calls} calls, and ${formatTusdm(SUGGESTED_PACK.escrowPriceMicros)} tUSDM per escrow job`;
 
+/**
+ * How ownership is proven: the seller adds the API's own code (an `x-hirakumi-verify` line, shown on the
+ * ownership page) at the root of the OpenAPI file they gave us, then signs once with their wallet.
+ * There is no file to download or host.
+ */
+export const OWNERSHIP_HOW =
+  "add the x-hirakumi-verify line from this page at the root of your OpenAPI file, then sign once with your Cardano wallet (no payment):";
+
 async function say(db: Db, task: TaskRef, key: string, body: string, o: { step?: HumanStep; status?: TaskStatus; apiId?: string | null } = {}) {
   await enqueueMessage(db, { apiId: o.apiId ?? null, taskId: task.taskId, body, taskStatus: o.status ?? null, dedupeKey: key, ...(o.step ? { step: o.step } : {}) });
 }
@@ -87,7 +95,7 @@ export async function handleReply(deps: ConversationDeps, task: TaskRef, eventId
     }
     await say(deps.pool, task, key, `${understood}${r.message}`, { apiId: api.id, step: "Choose endpoints", status: "RUNNING" });
     await say(deps.pool, task, `${key}:ownership`,
-      `Prove you own ${api.origin}. This step needs your Cardano wallet (one signature, no payment): ${ownershipLink(deps.webBaseUrl, api.id)}`,
+      `Prove you own ${api.origin}: ${OWNERSHIP_HOW} ${ownershipLink(deps.webBaseUrl, api.id)}`,
       { apiId: api.id, step: "Prove ownership", status: "INPUT_REQUIRED" });
     return;
   }
@@ -120,7 +128,7 @@ function helpFor(api: TaskApi, web: string): string {
     case "described":
       return "Choose the endpoints to sell: reply `sell 1` with the numbers from my list (for example `sell 1 2`).";
     case "endpoints_confirmed":
-      return `Next, prove you own the API. This step needs your Cardano wallet: ${ownershipLink(web, api.id)} (To change the endpoints first, reply \`sell\` with new numbers.)`;
+      return `Next, prove you own the API: ${OWNERSHIP_HOW} ${ownershipLink(web, api.id)} (To change the endpoints first, reply \`sell\` with new numbers.)`;
     case "ownership_verified":
       return "Test calls are running. I'll post the promise and a suggested price here when they're done.";
     case "rule_built":

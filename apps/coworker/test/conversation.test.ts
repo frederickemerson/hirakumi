@@ -145,7 +145,7 @@ describe("replies on a task", () => {
     const msgs = (await messagesForTask(t.id)).slice(1);
     expect(msgs).toEqual([
       { body: "Step 3 of 7, Choose endpoints: Selling GET /price. Per-job hires (Masumi escrow) run getPrice.", task_status: "RUNNING", api_id: apiId },
-      { body: `Step 4 of 7, Prove ownership: Prove you own https://price.example.dev. This step needs your Cardano wallet (one signature, no payment): ${WEB}/apis/${apiId}/ownership`, task_status: "INPUT_REQUIRED", api_id: apiId },
+      { body: `Step 4 of 7, Prove ownership: Prove you own https://price.example.dev: add the x-hirakumi-verify line from this page at the root of your OpenAPI file, then sign once with your Cardano wallet (no payment): ${WEB}/apis/${apiId}/ownership`, task_status: "INPUT_REQUIRED", api_id: apiId },
     ]);
   });
 
@@ -210,6 +210,16 @@ describe("replies on a task", () => {
     const { t, apiId, reply } = await setup("ownership_verified");
     await reply("how is it going?");
     expect((await messagesForTask(t.id)).at(-1)).toMatchObject({ body: "Test calls are running. I'll post the promise and a suggested price here when they're done.", api_id: apiId });
+  });
+
+  it("at the ownership step it says to add the field to the OpenAPI file, never to host a file", async () => {
+    const { t, apiId, reply } = await setup("endpoints_confirmed");
+    await reply("what now?");
+    const body = (await messagesForTask(t.id)).at(-1)?.body ?? "";
+    expect(body).toContain("add the x-hirakumi-verify line from this page at the root of your OpenAPI file, then sign once with your Cardano wallet");
+    expect(body).toContain(`${WEB}/apis/${apiId}/ownership`);
+    expect(body).not.toMatch(/well-known|challenge|download|upload/i);
+    expect(body).not.toMatch(/[–—]/);
   });
 
   it("a second link on a task that already has an API is not a second API", async () => {
