@@ -134,6 +134,32 @@ describe("AskHirakumi", () => {
     });
   });
 
+  it("turns the questions an answer lists into chips, and site paths into links", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(textResponse(
+        "I can't answer open questions right now, sorry. I can still answer these: How do I list my API? Do I need a wallet? The home page FAQ covers more, and /p/api_eejiaioyqt/try lets you try a live API.",
+      ))
+      .mockResolvedValueOnce(textResponse("Yes, a CIP-30 wallet."));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AskHirakumi />);
+    const { user, panel } = await openPanel();
+    await user.type(screen.getByRole("textbox", { name: "Your question" }), "Write me a poem{Enter}");
+    const log = within(panel).getByRole("log");
+    expect(await within(log).findByRole("link", { name: "/p/api_eejiaioyqt/try" })).toHaveAttribute("href", "/p/api_eejiaioyqt/try");
+    expect(within(log).getByRole("button", { name: "How do I list my API?" })).toBeInTheDocument();
+    await user.click(within(log).getByRole("button", { name: "Do I need a wallet?" }));
+    expect(await within(log).findByText("Yes, a CIP-30 wallet.")).toBeInTheDocument();
+    const [, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(JSON.parse(init.body as string).question).toBe("Do I need a wallet?");
+  });
+
+  it("lets the panel subtitle wrap on a narrow screen", async () => {
+    render(<AskHirakumi />);
+    const { panel } = await openPanel();
+    expect(within(panel).getByText("Answers about selling your API to agents")).not.toHaveClass("truncate");
+  });
+
   it("shows the server's message when a question is refused", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ error: "That's a lot of questions at once." }, 429)));
     render(<AskHirakumi />);

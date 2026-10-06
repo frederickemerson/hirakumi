@@ -1,9 +1,20 @@
 import { outputHash } from "@hirakumi/core";
 import { describe, expect, it } from "vitest";
 import { createBuyHandler } from "./try-buy";
-import { createReceiptsHandler, createTryHandler } from "./try-handler";
+import { createReceiptsHandler, createTryHandler, visitorKey } from "./try-handler";
 import type { TryPack } from "./try-repo";
 import { readBuyEvents } from "./try-stream";
+
+describe("visitorKey (audit M1)", () => {
+  const req = (headers: Record<string, string>) => new Request("https://web.hirakumi.test/api/try/api_1", { method: "POST", headers });
+  it("uses x-real-ip, which Vercel sets, over a client-supplied x-forwarded-for", () => {
+    expect(visitorKey(req({ "x-real-ip": "203.0.113.5", "x-forwarded-for": "10.0.0.1, 203.0.113.5" }))).toBe("203.0.113.5");
+  });
+  it("falls back to the left-most x-forwarded-for, then to one shared key", () => {
+    expect(visitorKey(req({ "x-forwarded-for": " 198.51.100.4 , 10.0.0.1" }))).toBe("198.51.100.4");
+    expect(visitorKey(req({}))).toBe("unknown");
+  });
+});
 
 type Call = { url: string; init: RequestInit };
 

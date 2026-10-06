@@ -14,5 +14,22 @@ export const SUGGESTED_QUESTIONS = [
   "What does an agent pay?",
 ] as const;
 
+/** More questions the offline FAQ answers word for word (not shown as starting chips). */
+export const EXTRA_QUESTIONS = ["What does a promise look like?", "Do I need a wallet?"] as const;
+
+/** The landing page FAQ, answered word for word offline too. */
+export const LANDING_QUESTIONS = [
+  "Who decides pass or fail?",
+  "What happens when my API goes down?",
+  "Is this on mainnet?",
+  "What does it cost?",
+] as const;
+
+/** Every question with a written answer. In an answer, each one shows as a chip that asks it. */
+export const OFFLINE_QUESTIONS: readonly string[] = [...SUGGESTED_QUESTIONS, ...EXTRA_QUESTIONS, ...LANDING_QUESTIONS];
+
+/** The live demo API's try page, linked from the offline answer. */
+export const TRY_DEMO_PATH = "/p/api_eejiaioyqt/try";
+
 export type AskRole = "user" | "assistant";
 export type AskTurn = { role: AskRole; content: string };

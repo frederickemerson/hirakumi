@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getSql } from "@/lib/db";
 import { CUT_OFF_NOTE } from "@/lib/ask/model";
-import { OFFLINE_DEFAULT, OFFLINE_FAQ } from "@/lib/ask/facts";
+import { buildInstructions, OFFLINE_DEFAULT, OFFLINE_FAQ } from "@/lib/ask/facts";
 import { ASK_LIMIT } from "@/lib/ask/rate-limit";
 import { MAX_QUESTION_CHARS, SUGGESTED_QUESTIONS } from "@/lib/ask/shared";
 import { resetDb } from "@/test/db";
@@ -195,10 +195,50 @@ describe("POST /api/ask limits and guards", () => {
     expect((await ask({ question: "hi" }, { cookie, ip: "192.0.2.200" })).status).toBe(429);
   });
 
+  it("answers 503 when the limit can't be checked, instead of answering unmetered (audit M1)", async () => {
+    delete process.env.OPENAI_API_KEY;
+    await getSql().unsafe("alter table ask_requests rename to ask_requests_gone");
+    try {
+      const res = await ask({ question: "How do I list my API?" });
+      expect(res.status).toBe(503);
+      expect((await res.json()).error).toBe("Ask is busy, try again shortly.");
+    } finally {
+      await getSql().unsafe("alter table ask_requests_gone rename to ask_requests");
+    }
+  });
+
+  it("keys a visitor by x-real-ip, so a forged x-forwarded-for can't buy a fresh allowance (audit M1)", async () => {
+    delete process.env.OPENAI_API_KEY;
+    for (let i = 0; i < ASK_LIMIT; i++) {
+      await ask({ question: "hi" }, { ip: "198.51.100.9", headers: { "x-forwarded-for": `10.9.9.${i}` } });
+    }
+    expect((await ask({ question: "hi" }, { ip: "198.51.100.9", headers: { "x-forwarded-for": "10.9.9.250" } })).status).toBe(429);
+  });
+
   it("doesn't count refused questions", async () => {
     delete process.env.OPENAI_API_KEY;
     for (let i = 0; i < ASK_LIMIT + 2; i++) await ask({ question: "" });
     expect((await ask({ question: "hi" })).status).toBe(200);
+  });
+});
+
+describe("Ask teaches the current ownership flow (audit I4)", () => {
+  const OLD_FLOW = /verification file|challenge file|download|\.well-known|unpaid agent|one file/i;
+
+  it("the model's facts describe x-hirakumi-verify in the OpenAPI file, folder scope, no redirects, 30 minutes, then the signature", () => {
+    const facts = buildInstructions(null);
+    expect(facts).not.toMatch(OLD_FLOW);
+    expect(facts).toContain('x-hirakumi-verify: "<code>"');
+    expect(facts).toMatch(/root of (your|their) OpenAPI file/);
+    expect(facts).toMatch(/same origin/);
+    expect(facts).toMatch(/folder/);
+    expect(facts).toMatch(/redirects are refused/i);
+    expect(facts).toMatch(/30 minutes/);
+    expect(facts).toMatch(/payout address/);
+  });
+
+  it("no offline answer mentions the old file", () => {
+    for (const a of [...Object.values(OFFLINE_FAQ), OFFLINE_DEFAULT]) expect(a).not.toMatch(OLD_FLOW);
   });
 });
 
@@ -222,6 +262,15 @@ describe("POST /api/ask without an OpenAI key", () => {
     const text = (await readChunks(await ask({ question: "Write me a poem" }))).join("");
     expect(text).toBe(OFFLINE_DEFAULT);
     expect(text).toContain("How do I list my API?");
+  });
+
+  it("answers what a promise looks like and whether you need a wallet, and says \"open questions\"", async () => {
+    expect(OFFLINE_FAQ["What does a promise look like?"]).toMatch(/JSON Schema/);
+    expect(OFFLINE_FAQ["Do I need a wallet?"]).toMatch(/CIP-30/);
+    const text = (await readChunks(await ask({ question: "do I need a wallet" }))).join("");
+    expect(text).toBe(OFFLINE_FAQ["Do I need a wallet?"]);
+    expect(OFFLINE_DEFAULT).toMatch(/open questions/);
+    expect(OFFLINE_DEFAULT).not.toMatch(/free questions/);
   });
 
   it("uses no em or en dashes in its written answers", () => {

@@ -1,4 +1,4 @@
-import { SUGGESTED_QUESTIONS } from "./shared";
+import { type EXTRA_QUESTIONS, type LANDING_QUESTIONS, type SUGGESTED_QUESTIONS, TRY_DEMO_PATH } from "./shared";
 
 /*
  * What "Ask Hirakumi" knows. Server-only by convention: import it from route code, never from a client component,
@@ -8,7 +8,8 @@ import { SUGGESTED_QUESTIONS } from "./shared";
  * - README.md (payment modes table, Sokosumi coworker, preprod only)
  * - docs/submission/writeup.md (credits only on pass, 422/503 behaviour, escrow channel, measured numbers, production path)
  * - app/page.tsx landing FAQ (who decides pass or fail, Down, mainnet, cost and business model, wallets)
- * - lib/session.ts login message ("costs nothing and moves no funds"), components/ownership-panel.tsx (30 minute file)
+ * - lib/session.ts login message ("costs nothing and moves no funds"), components/ownership-panel.tsx and
+ *   app/api/apis/[apiId]/ownership/verify/route.ts (x-hirakumi-verify, a passing check counts for 30 minutes)
  * - app/api/apis/[apiId]/pricing/route.ts and lib/money.ts (1 tUSDM minimum, 1 to 100,000 calls per pack)
  * - app/apis/[apiId]/review/page.tsx (at least 5 test calls per endpoint)
  */
@@ -32,7 +33,9 @@ HOW LISTING WORKS (the seller's steps)
 - A seller's APIs are listed at /apis.
 
 OWNERSHIP PROOF AND THE WALLET
-- Two checks prove an API belongs to the seller: a verification file the seller downloads and puts unchanged on their own server (it works once and expires 30 minutes after download), and one wallet signature.
+- Two steps prove an API belongs to the seller. First, the seller adds one line, x-hirakumi-verify: "<code>", at the root of their OpenAPI file, the file at the openapi_url they gave. Each API has its own code, shown on the ownership step.
+- The OpenAPI file must be on the same origin as the API (scheme, host and port). The proof is folder-scoped: it covers only APIs in the file's folder or below it. Redirects are refused, and so is a link with a ?query or #fragment.
+- A passing check counts for 30 minutes. Within that time the seller signs one message with their wallet, and that signature sets the payout address where buyers pay.
 - Any CIP-30 wallet on preprod works, such as Lace or Eternl. The wallet address is the seller's account and the place buyers pay.
 - Signing in and proving ownership only sign a message. Signing costs nothing and moves no funds. It is not a transaction.
 
@@ -92,18 +95,22 @@ export function buildInstructions(seller: { apis: string | null } | null): strin
 
 /* The offline FAQ: used when no OpenAI key is configured. It answers the suggested questions and the landing FAQ word for word. */
 
-const SUGGESTED_ANSWERS: Record<(typeof SUGGESTED_QUESTIONS)[number], string> = {
+const SUGGESTED_ANSWERS: Record<(typeof SUGGESTED_QUESTIONS)[number] | (typeof EXTRA_QUESTIONS)[number], string> = {
   "How do I list my API?":
-    "Sign in with your Cardano wallet, then paste the link to your OpenAPI 3 file at /apis/new. Hirakumi reads it and lists your endpoints. You choose which ones to sell, prove the API is yours with one file and one signature, then check the promise and set a pack price. Nothing is published until you press Publish.",
+    "Sign in with your Cardano wallet, then paste the link to your OpenAPI 3 file at /apis/new. Hirakumi reads it and lists your endpoints. You choose which ones to sell, prove the API is yours by adding a code to your OpenAPI file and signing once with your wallet, then check the promise and set a pack price. Nothing is published until you press Publish.",
   "Is my money safe?":
     "Today a pack payment settles straight to the seller's wallet, so Hirakumi never holds it. The gateway uses a buyer's credit only when an answer keeps the promise, and every call has a receipt. An escrow channel, where the money waits in a Cardano contract, is proven on preprod but not the default yet. Everything runs on preprod with test funds.",
   "Why do you need my wallet?":
     "Your wallet address is your account and the place buyers pay. To sign in and to prove an API is yours, you sign one message. Signing costs nothing and moves no funds. Any CIP-30 wallet on preprod works, such as Lace or Eternl.",
+  "What does a promise look like?":
+    "A JSON Schema rule per endpoint, built from Hirakumi's test calls: the fields a good answer has, their types and how fresh the data must be, for example a timestamp no older than 15 minutes. You read it and approve it before publishing, and its hash is published before any sale.",
+  "Do I need a wallet?":
+    "To sell, yes: any CIP-30 wallet on Cardano preprod, such as Lace or Eternl. It is your account and where buyers pay, and you only sign messages, which costs nothing. To look around or try the live demo API, no wallet is needed.",
   "What does an agent pay?":
     "The pack price the seller sets, paid once in USDM with x402. A pack costs at least 1 tUSDM, and the agent spends one credit per answer that keeps the promise. Stale, empty or failed answers cost nothing. Each API's public page shows its current pack.",
 };
 
-const LANDING_ANSWERS: Record<string, string> = {
+const LANDING_ANSWERS: Record<(typeof LANDING_QUESTIONS)[number], string> = {
   "Who decides pass or fail?":
     "Our gateway, against the rule your API published before the sale. Every paid call is logged with its verdict, and the buyer can read the log at /receipts.",
   "What happens when my API goes down?":
@@ -117,9 +124,9 @@ const LANDING_ANSWERS: Record<string, string> = {
 export const OFFLINE_FAQ: Record<string, string> = { ...SUGGESTED_ANSWERS, ...LANDING_ANSWERS };
 
 export const OFFLINE_DEFAULT =
-  "I can't answer free questions right now, sorry. I can still answer these: " +
+  "I can't answer open questions right now, sorry. I can still answer these: " +
   Object.keys(OFFLINE_FAQ).join(" ") +
-  " The home page FAQ covers more, and /p/api_eejiaioyqt/try lets you try a live API.";
+  " The home page FAQ covers more, and " + TRY_DEMO_PATH + " lets you try a live API.";
 
 const normalise = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 const OFFLINE_INDEX = new Map(Object.entries(OFFLINE_FAQ).map(([q, a]) => [normalise(q), a]));

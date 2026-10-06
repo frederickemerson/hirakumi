@@ -37,7 +37,7 @@ const WHY: Paragraph[] = [
 const STEPS: { title: string; body: string; rb: string }[] = [
   {
     title: "Paste your OpenAPI link",
-    body: "Hirakumi reads it and lists the read-only endpoints it can sell. You prove you own the API with one file on your domain and one wallet signature.",
+    body: "Hirakumi reads it and lists the read-only endpoints it can sell. To prove it is yours, add a code to your OpenAPI file and sign once with your wallet.",
     rb: "rb-coral",
   },
   {

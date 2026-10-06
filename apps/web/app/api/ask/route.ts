@@ -99,12 +99,13 @@ export async function POST(req: Request): Promise<Response> {
   const session = token ? readSessionToken(token) : null;
   const sql = getSql();
 
-  let allowed = true;
+  let allowed: boolean;
   try {
     allowed = await takeAskSlot(sql, askBucket(session?.sellerId ?? null, req));
   } catch (e) {
-    // Best effort: if the counter can't be read, answer anyway. Length and output caps still bound the cost.
+    // Fail closed: without the counter every question would be unmetered model spend.
     console.error("ask: rate limit unavailable", e instanceof Error ? e.message : e);
+    return errorJson(503, "Ask is busy, try again shortly.");
   }
   if (!allowed) return errorJson(429, "That's a lot of questions at once. Please try again in a few minutes.");
 

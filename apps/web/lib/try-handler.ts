@@ -1,4 +1,5 @@
 import { outputHash } from "@hirakumi/core";
+import { clientAddress } from "./client-address";
 import { errorJson, json, readJson, sameOrigin } from "./http";
 import { buildGatewayCall, describeTryResult, type TryReceipt } from "./try";
 import type { TryPack } from "./try-repo";
@@ -20,7 +21,7 @@ export type TryDeps = {
 };
 
 export function visitorKey(req: Request): string {
-  return (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || "unknown";
+  return clientAddress(req);
 }
 
 function parseBody(text: string): unknown {

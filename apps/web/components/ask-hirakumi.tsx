@@ -3,7 +3,7 @@
 import { ArrowUp, RotateCcw, X } from "lucide-react";
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Mascot } from "@/components/brand/mascot";
-import { MAX_HISTORY_MESSAGES, MAX_QUESTION_CHARS, SUGGESTED_QUESTIONS, type AskRole, type AskTurn } from "@/lib/ask/shared";
+import { MAX_HISTORY_MESSAGES, MAX_QUESTION_CHARS, OFFLINE_QUESTIONS, SUGGESTED_QUESTIONS, type AskRole, type AskTurn } from "@/lib/ask/shared";
 import { cn } from "@/lib/utils";
 
 /** Where the conversation is kept for the browser tab (sessionStorage), so it survives reloads and full navigations. */
@@ -133,7 +133,39 @@ function Avatar() {
   );
 }
 
-function Bubble({ m }: { m: Message }) {
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** A site path such as /apis/new or /p/api_x/try: not part of a URL, and not a template like /p/<apiId>. */
+const SITE_PATH = String.raw`(?<![\w/:.])\/[a-z0-9_-]+(?:\/[a-z0-9_-]+)*(?![\w/<-])`;
+const RICH = new RegExp(`(${OFFLINE_QUESTIONS.map(escapeRe).join("|")}|${SITE_PATH})`, "g");
+
+/** An answer's text with the questions Hirakumi can answer as chips that ask them, and site paths as links. */
+function RichText({ text, onAsk }: { text: string; onAsk?: (q: string) => void }) {
+  const parts = text.split(RICH);
+  if (parts.length === 1) return <>{text}</>;
+  return (
+    <>
+      {parts.map((part, i) => {
+        if (i % 2 === 0) return part;
+        if (part.startsWith("/")) {
+          return <a key={i} href={part} className="font-medium underline underline-offset-4">{part}</a>;
+        }
+        return (
+          <button
+            key={i}
+            type="button"
+            disabled={!onAsk}
+            onClick={() => onAsk?.(part)}
+            className="my-0.5 inline cursor-pointer rounded-[2px] border-2 border-ink bg-frost px-2 py-0.5 text-left font-medium transition-[transform,background-color] duration-100 ease-[var(--ease-press)] hover:bg-chalk active:scale-[0.97] disabled:cursor-default disabled:opacity-60"
+          >
+            {part}
+          </button>
+        );
+      })}
+    </>
+  );
+}
+
+function Bubble({ m, onAsk }: { m: Message; onAsk?: (q: string) => void }) {
   const mine = m.role === "user";
   return (
     <li className={cn("flex items-end gap-2 animate-bubble-in", mine && "justify-end")} aria-busy={m.status === "streaming" || undefined}>
@@ -153,7 +185,7 @@ function Bubble({ m }: { m: Message }) {
             ))}
           </span>
         ) : (
-          <p className="whitespace-pre-wrap">{m.content}</p>
+          <p className="whitespace-pre-wrap">{mine ? m.content : <RichText text={m.content} onAsk={onAsk} />}</p>
         )}
       </div>
     </li>
@@ -288,7 +320,7 @@ export function AskHirakumi() {
           <Avatar />
           <div className="min-w-0 flex-1">
             <h2 id={titleId} className="text-body font-semibold">Ask Hirakumi</h2>
-            <p className="truncate text-caption text-graphite">Answers about selling your API to agents</p>
+            <p className="text-caption text-graphite">Answers about selling your API to agents</p>
           </div>
           {messages.length > 0 && (
             <button
@@ -337,7 +369,7 @@ export function AskHirakumi() {
           )}
           <ol role="log" aria-live="polite" aria-relevant="additions text" aria-label="Conversation" className="space-y-3">
             {messages.map((m) => (
-              <Bubble key={m.id} m={m} />
+              <Bubble key={m.id} m={m} onAsk={busy ? undefined : (q) => void send(q)} />
             ))}
           </ol>
         </div>
