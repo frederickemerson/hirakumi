@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import request from "supertest";
 import { makeApp, ADMIN, NOW } from "./helpers.js";
 import { memoryModeStore, type ModeStore } from "../src/modeStore.js";
+import { PriceUnavailableError } from "../src/priceSource.js";
 
 describe("GET /price", () => {
   it("returns exactly symbol, usd, change24h, timestamp", async () => {
@@ -10,6 +11,13 @@ describe("GET /price", () => {
     expect(res.body).toEqual({ symbol: "ADA", usd: 0.2695, change24h: 1.25, timestamp: new Date(NOW - 60_000).toISOString() });
     expect(res.headers["x-price-source"]).toBe("coingecko");
     expect(res.headers["cache-control"]).toBe("no-store");
+  });
+
+  it("answers 503 instead of a made-up price when no real quote is available", async () => {
+    const prices = { get: async () => { throw new PriceUnavailableError("ADA"); } };
+    const res = await request(makeApp({ prices })).get("/price?symbol=ADA");
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBe("price_unavailable");
   });
 
   it("accepts lowercase symbols", async () => {

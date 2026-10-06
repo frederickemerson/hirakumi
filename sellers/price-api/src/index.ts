@@ -13,7 +13,7 @@ const app = createApp({
     fetch,
     now: Date.now,
     coingeckoApiKey: process.env.COINGECKO_API_KEY,
-    onError: (e) => log("CoinGecko failed; serving fallback price", e),
+    onError: (e) => log("price source failed (trying the next real source, else the last real quote)", e),
   }),
   modes: modeStoreFromEnv(process.env),
   now: Date.now,

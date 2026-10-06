@@ -1,6 +1,6 @@
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import { createHash, timingSafeEqual } from "node:crypto";
-import { isSupportedSymbol, SUPPORTED_SYMBOLS, type PriceSource } from "./priceSource.js";
+import { isSupportedSymbol, PriceUnavailableError, SUPPORTED_SYMBOLS, type PriceSource } from "./priceSource.js";
 import { isBreakMode, BREAK_MODES, type BreakMode, type ModeStore } from "./modeStore.js";
 import { buildOpenApi } from "./openapi.js";
 
@@ -63,7 +63,14 @@ export function createApp(deps: AppDeps): Express {
       res.json({});
       return;
     }
-    const quote = await deps.prices.get(raw);
+    let quote;
+    try {
+      quote = await deps.prices.get(raw);
+    } catch (err) {
+      if (!(err instanceof PriceUnavailableError)) throw err;
+      res.status(503).json({ error: "price_unavailable", message: "The upstream price feed is unavailable. Try again in a minute." });
+      return;
+    }
     res.set("X-Price-Source", quote.source);
     const timestamp = mode === "stale" ? new Date(deps.now() - STALE_AGE_MS).toISOString() : quote.timestamp;
     res.json({ symbol: quote.symbol, usd: quote.usd, change24h: quote.change24h, timestamp });
