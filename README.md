@@ -28,6 +28,7 @@ The pass/fail check runs on our gateway in every mode, against a rule whose hash
 - `agents/buyer/src/payClient.ts`: buyer agent using `@x402/fetch` `wrapFetchWithPayment`, `toClientCardanoSigner`, spend controls for `USDM_PREPROD_ASSET`
 - `agents/buyer/src/packBuyer.ts`, `agents/buyer/src/cli/pack.ts`: the pack-buyer demo agent
 - `apps/web/`: CIP-30 wallet signature for login and ownership (any CIP-30 wallet: Lace, Eternl, …); public status page and the try-it-live page
+  - Ownership proof is folder-scoped: the seller adds `x-hirakumi-verify: "<code>"` at the root of the OpenAPI file at their `openapi_url` (same origin as the API, no `?query` or `#fragment`, no redirects), which covers only APIs in that file's folder or below it.
 
 ### Masumi
 - `packages/masumi/`: payment-service and registry client (registration, payment requests, result submission, purchases)

@@ -140,6 +140,11 @@ describe("checkSpecBinding", () => {
     expect(checkSpecBinding({ ...base, openapiUrl: "https://h.com/openapi.json", pathPrefix: "/a%2Fb" }))
       .toMatchObject({ ok: false, reason: "bad_url" });
   });
+  it("refuses a spec link with a query or fragment: it could be a proxy or a route that serves anything (audit I1)", () => {
+    for (const openapiUrl of ["https://h.com/proxy?u=https://evil.com/openapi.json", "https://h.com/openapi.json?v=2", "https://h.com/openapi.json#x"]) {
+      expect(checkSpecBinding({ ...base, openapiUrl, pathPrefix: "/" })).toMatchObject({ ok: false, reason: "bad_url" });
+    }
+  });
   it("normalises dot segments before comparing", () => {
     expect(checkSpecBinding({ ...base, openapiUrl: "https://h.com/team-a/../team-b/openapi.json", pathPrefix: "/team-a" }))
       .toMatchObject({ ok: false, reason: "outside_directory" });

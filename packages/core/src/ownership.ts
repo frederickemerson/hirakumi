@@ -123,6 +123,9 @@ export function checkSpecBinding(a: { openapiUrl: string; origin: string; pathPr
   if (spec.origin !== origin.origin) {
     return { ok: false, reason: "origin_mismatch", detail: `The OpenAPI file is on ${spec.origin}, but the API runs on ${origin.origin}. They must be the same.` };
   }
+  if (spec.search !== "" || spec.hash !== "" || /[?#]/.test(a.openapiUrl)) {
+    return { ok: false, reason: "bad_url", detail: "The OpenAPI link has a ?query or #fragment. Use the plain path to your OpenAPI file." };
+  }
   if (AMBIGUOUS_PATH.test(spec.pathname)) {
     return { ok: false, reason: "bad_url", detail: "The OpenAPI link has an encoded slash, dot or a ';' in its path. Use a plain path." };
   }

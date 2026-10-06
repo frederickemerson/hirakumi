@@ -5,8 +5,8 @@ import { stepPrefix } from "../src/humanSteps.js";
 import { findLinks, formatCommand, LinkError, parseCommand, tusdmToMicros, validateOpenApiUrl } from "../src/sokosumi/replies.js";
 
 describe("validateOpenApiUrl (same rules as the web setup form)", () => {
-  it("normalises a good link and drops the fragment", () => {
-    expect(validateOpenApiUrl(" https://price.example.dev/openapi.json#top ", false)).toEqual({
+  it("normalises a good link", () => {
+    expect(validateOpenApiUrl(" https://price.example.dev/openapi.json ", false)).toEqual({
       url: "https://price.example.dev/openapi.json", origin: "https://price.example.dev", hostname: "price.example.dev",
     });
   });
@@ -16,6 +16,9 @@ describe("validateOpenApiUrl (same rules as the web setup form)", () => {
     ["http://price.example.dev/openapi.json", "must start with https://"],
     ["https://user:pw@price.example.dev/openapi.json", "Remove the username and password"],
     [`https://x.dev/${"a".repeat(2100)}`, "too long"],
+    // audit I1: a query or a content-serving route would prove the whole host from one file
+    ["https://victim.example/proxy?u=https://evil.example/openapi.json", "Remove the ?query from the link."],
+    ["https://price.example.dev/openapi.json#top", "Remove the #fragment from the link."],
   ])("refuses %j", (input, message) => {
     expect(() => validateOpenApiUrl(input, false)).toThrow(LinkError);
     expect(() => validateOpenApiUrl(input, false)).toThrow(message);

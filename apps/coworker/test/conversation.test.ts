@@ -62,7 +62,7 @@ const comment = (taskId: string, user: string, text: string, createdAt = future(
 
 describe("a new task whose brief holds the OpenAPI link", () => {
   it("first-time seller: reads the file (SSRF-safe fetcher), lists endpoints, suggests a price, asks for the one sign-in", async () => {
-    const t = await newTask({ description: "Please put https://price.example.dev/openapi.json#x on sale." });
+    const t = await newTask({ description: "Please put https://price.example.dev/openapi.json on sale." });
     const { soko, setEvents } = fakeSoko({ [t.id]: t.task });
     setEvents([{ id: `evt_${rand()}`, taskId: t.id, createdAt: past, status: "READY", actor: { type: "user", id: t.user } }]);
     const fetchSpec = vi.fn().mockResolvedValue(PRICE_SPEC);

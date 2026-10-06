@@ -184,6 +184,7 @@ export function OwnershipPanel({ apiId, openapiUrl, code, initiallyPassed }: {
           </div>
           <p className="text-body">Your OpenAPI file:</p>
           <code className="block break-all rounded-[2px] bg-ink p-3 text-body text-cream">{openapiUrl}</code>
+          <p className="text-caption text-graphite">The code proves the folder this file is served from, so your API must run on the same host, in that folder or below it.</p>
           {passed ? (
             <InlineStatus>Found your code.</InlineStatus>
           ) : (

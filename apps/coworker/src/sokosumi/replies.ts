@@ -26,6 +26,11 @@ export function validateOpenApiUrl(raw: unknown, allowInsecure: boolean): { url:
   if (u.username || u.password) {
     throw new LinkError("Remove the username and password from the link. Hirakumi only supports public API descriptions.");
   }
+  // The proof is scoped to the folder the file is served from, so the link must be a plain file path:
+  // a query (a proxy such as /fetch?u=...) or a route that serves any content would prove the whole host.
+  if (u.search !== "") throw new LinkError("Remove the ?query from the link. Use the plain path to your OpenAPI file.");
+  if (u.hash !== "") throw new LinkError("Remove the #fragment from the link. Use the plain path to your OpenAPI file.");
+  u.search = "";
   u.hash = "";
   return { url: u.toString(), origin: u.origin, hostname: u.hostname };
 }
