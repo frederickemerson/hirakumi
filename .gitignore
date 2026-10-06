@@ -16,3 +16,4 @@ deploy/masumi.env
 .playwright-mcp/
 **/.tokens.json*
 **/.pending-payments.json*
+**/.escrow-keys.json*

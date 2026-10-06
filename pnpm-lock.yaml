@@ -35,6 +35,9 @@ importers:
       '@hirakumi/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@hirakumi/escrow':
+        specifier: workspace:*
+        version: link:../../packages/escrow
       '@hirakumi/masumi':
         specifier: workspace:*
         version: link:../../packages/masumi
