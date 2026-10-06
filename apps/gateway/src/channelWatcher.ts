@@ -46,13 +46,19 @@ export class ChannelWatcher {
     const events: WatchEvent[] = [];
     try {
       // Finding G2: every channel, page by page (a fixed first page let 200 old rows hide newer ones).
+      // Only channels the chain positively reported as unknown may expire; an API error proves nothing.
+      const confirmedUnseen: string[] = [];
       for await (const ch of allChannels(this.d.sql, ["pending"])) {
-        const v = await verifyChannelLock(this.d.sql, this.d.chain, ch).catch(() => "unseen" as const);
+        const v = await verifyChannelLock(this.d.sql, this.d.chain, ch).catch((e) => {
+          console.error(`[watcher] verify ${ch.channel_id}:`, (e as Error).message);
+          return "error" as const;
+        });
+        if (v === "unseen") confirmedUnseen.push(ch.channel_id);
         if (v === "locked") events.push({ channelId: ch.channel_id, action: "verified" });
         if (v === "refused") events.push({ channelId: ch.channel_id, action: "refused" });
       }
       // After the verification pass, so a watcher that was down still verifies locks that landed meanwhile.
-      for (const id of await expireUnseenLocks(this.d.sql, UNSEEN_LOCK_EXPIRY_SECONDS)) {
+      for (const id of await expireUnseenLocks(this.d.sql, UNSEEN_LOCK_EXPIRY_SECONDS, confirmedUnseen)) {
         console.warn(`[watcher] channel ${id}: lock never seen on-chain, refused`);
         events.push({ channelId: id, action: "refused" });
       }

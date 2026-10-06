@@ -122,12 +122,16 @@ export async function* allChannels(sql: Sql, statuses: ChannelStatus[], limit = 
 /**
  * Finding G2: a paid channel whose lock never showed up on-chain (never verified) is refused after
  * `olderThanSeconds`, so dead locks don't pile up in the pending pass. Verified-then-rolled-back channels
- * (lock_output_index set) are not touched. Returns the channel ids it refused.
+ * (lock_output_index set) are not touched. With `onlyIds`, only those channels can expire: the watcher passes
+ * the ones the chain positively reported as unknown in this tick, so a chain-API outage never refuses a lock
+ * that is really on-chain. Returns the channel ids it refused.
  */
-export async function expireUnseenLocks(sql: Sql, olderThanSeconds = 3600): Promise<string[]> {
+export async function expireUnseenLocks(sql: Sql, olderThanSeconds = 3600, onlyIds?: string[]): Promise<string[]> {
+  if (onlyIds && onlyIds.length === 0) return [];
   const rows = await sql<{ channel_id: string }[]>`
     update pack_channels set status = 'refused', refused_reason = 'lock_never_seen', updated_at = now()
     where status = 'pending' and lock_output_index is null and created_at < now() - (${olderThanSeconds} * interval '1 second')
+      ${onlyIds ? sql`and channel_id = any(${onlyIds})` : sql``}
     returning channel_id`;
   return rows.map((r) => r.channel_id);
 }
@@ -146,10 +150,15 @@ export async function revertChannelToPending(sql: Sql, channelId: string): Promi
   return rows.length === 1;
 }
 
-/** Finding G4: a Close was rolled back and the pack sits Open at `at` again: the channel is usable again. */
+/**
+ * Finding G4: a Close was rolled back and the pack sits Open at `at` again. A Close the watcher submitted itself
+ * (it stamps `last_action_at`, and a Close is its first action on a channel) answered a close request, so the
+ * channel goes back to `close_requested` and the watcher closes again. A Close the buyer made directly reopens
+ * the channel as `locked`, usable again.
+ */
 export async function reopenChannel(sql: Sql, channelId: string, at: { txHash: string; index: number }): Promise<boolean> {
   const rows = await sql`
-    update pack_channels set status = 'locked', utxo_tx_hash = ${at.txHash}, utxo_output_index = ${at.index}, close_tx_hash = null,
+    update pack_channels set status = case when last_action_at is not null then 'close_requested' else 'locked' end, utxo_tx_hash = ${at.txHash}, utxo_output_index = ${at.index}, close_tx_hash = null,
       raise_tx_hashes = '{}', onchain_accepted = null, contest_end_ms = null, updated_at = now()
     where channel_id = ${channelId} and status = 'closing'
     returning channel_id`;
