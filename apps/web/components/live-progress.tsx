@@ -3,7 +3,7 @@
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { StepList } from "@/components/step-list";
-import { progressKey, type ApiProgress } from "@/lib/progress";
+import { PROGRESS_EVENT, progressKey, type ApiProgress } from "@/lib/progress";
 
 export const POLL_MIN_MS = 1_000;
 export const POLL_MAX_MS = 5_000;
@@ -55,7 +55,10 @@ export function useApiProgress(apiId: string, initial: ApiProgress): ApiProgress
         const changed = nextKey !== key;
         key = nextKey;
         delay = nextDelay(delay, changed);
-        if (changed) setProgress(next);
+        if (changed) {
+          setProgress(next);
+          window.dispatchEvent(new CustomEvent<ApiProgress>(PROGRESS_EVENT, { detail: next }));
+        }
         if (next.state !== initial.state || next.failure !== initial.failure) {
           stopped = true;
           startTransition(() => {

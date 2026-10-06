@@ -28,6 +28,12 @@ export function progressFor(api: Pick<Api, "id" | "state">, timeline: Timeline, 
   };
 }
 
+/**
+ * Fired on window by the waiting-screen poller (components/live-progress.tsx) with the new ApiProgress
+ * as detail, so the guide panel follows along without polling a second time.
+ */
+export const PROGRESS_EVENT = "hirakumi:progress";
+
 /** A cheap fingerprint of everything a poller reacts to. */
 export function progressKey(p: ApiProgress): string {
   return JSON.stringify([p.state, p.failure, p.timeline.items.map((i) => [i.status, i.progress?.done ?? null])]);

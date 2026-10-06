@@ -2,11 +2,14 @@ import Link from "next/link";
 import { CloudDoodle, SmallCloudDoodle } from "@/components/brand/doodles";
 import { Mascot } from "@/components/brand/mascot";
 import { Floaters } from "@/components/landing/floaters";
+import { CountUp } from "@/components/landing/count-up";
 import { Marquee } from "@/components/landing/marquee";
+import { Parallax } from "@/components/landing/parallax";
 import { Receipt } from "@/components/landing/receipt";
 import { Reveal } from "@/components/landing/reveal";
 import { ScrubText, type Paragraph } from "@/components/landing/scrub-text";
 import { SmoothScroll } from "@/components/landing/smooth-scroll";
+import { StepLine } from "@/components/landing/step-line";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -54,13 +57,11 @@ const LIVE_TODAY = [
   "Monitoring with a public status page",
 ];
 
-const PROOF: { value: string; label: string }[] = [
-  { value: "9.4 to 16.5 s", label: "for a pack payment to settle on-chain" },
-  { value: "2.00 tUSDM", label: "received by the seller, exactly, straight to their wallet" },
-  { value: "0.3 s", label: "per paid call, end to end" },
-  { value: "HTTP 422", label: "for a stale answer, with no credit used" },
-  { value: "Refunded", label: "escrow job whose answer broke the promise, on-chain and automatic" },
-  { value: "2,244 req/s", label: "on the paid path in a local load test, not preprod, with exact credit accounting" },
+/* Speed first. Each number counts in as its row scrolls into view; `from` is where the count starts. */
+const PROOF: { value: number; decimals: number; from: number; unit: string; label: string }[] = [
+  { value: 9.4, decimals: 1, from: 0, unit: "s", label: "for an agent's payment to settle on Cardano" },
+  { value: 0.3, decimals: 1, from: 0, unit: "s", label: "per paid call, end to end" },
+  { value: 0, decimals: 0, from: 1, unit: "credits", label: "charged for a stale or broken answer" },
 ];
 
 const FAQ: { q: string; a: string }[] = [
@@ -123,7 +124,9 @@ export default function Home() {
               </Link>
             </div>
           </div>
-          <Receipt className="animate-rise [animation-delay:240ms]" />
+          <Parallax distance={36}>
+            <Receipt className="animate-rise [animation-delay:240ms]" />
+          </Parallax>
         </div>
       </section>
 
@@ -140,22 +143,26 @@ export default function Home() {
           <H2>How it works</H2>
           <p className="mt-4 text-body-lg">Three steps. Nothing is published until you approve the promise and the price.</p>
         </Reveal>
-        <Reveal as="ol" stagger={0.1} className="mt-12 grid gap-10 md:grid-cols-3 md:gap-8">
-          {STEPS.map((s, i) => (
-            <li key={s.title} data-reveal className="flex flex-col gap-4">
-              <span className={cn("rb-border flex size-10 items-center justify-center rounded-[2px] border-2 bg-frost text-body-lg font-semibold tabular-nums shadow-hard-sm", s.rb)}>
-                {i + 1}
-              </span>
-              <h3 className="text-sub font-semibold">{s.title}</h3>
-              <p className="text-body-lg text-graphite">{s.body}</p>
-              {i === 1 && (
-                <pre className="mt-1 overflow-x-auto rounded-[2px] border-2 border-ink bg-ink p-4 text-caption leading-relaxed text-sky">{`"usd":       { "type": "number" }
+        {/* The line through the step numbers fills as the steps scroll by (StepLine). */}
+        <div className="relative mt-12">
+          <StepLine />
+          <Reveal as="ol" stagger={0.1} className="relative grid gap-10 md:grid-cols-3 md:gap-8">
+            {STEPS.map((s, i) => (
+              <li key={s.title} data-reveal className="grid grid-cols-[2.5rem_minmax(0,1fr)] content-start gap-x-4 gap-y-3 md:flex md:flex-col md:gap-4">
+                <span data-step-badge className={cn("rb-border flex size-10 items-center justify-center rounded-[2px] border-2 bg-frost text-body-lg font-semibold tabular-nums shadow-hard-sm", i === 1 ? "row-span-3" : "row-span-2", s.rb)}>
+                  {i + 1}
+                </span>
+                <h3 className="col-start-2 self-center text-sub font-semibold md:self-auto">{s.title}</h3>
+                <p className="col-start-2 text-body-lg text-graphite">{s.body}</p>
+                {i === 1 && (
+                  <pre className="col-start-2 mt-1 overflow-x-auto rounded-[2px] border-2 border-ink bg-ink p-4 text-caption leading-relaxed text-sky">{`"usd":       { "type": "number" }
 "timestamp": { "type": "string",
                "maxAgeSeconds": 900 }`}</pre>
-              )}
-            </li>
-          ))}
-        </Reveal>
+                )}
+              </li>
+            ))}
+          </Reveal>
+        </div>
       </section>
 
       {/* Trust: where the money sits today, and what is proven but not yet the default. */}
@@ -212,14 +219,17 @@ export default function Home() {
       {/* Proof: what was measured, nothing else. */}
       <section id="proof" className="scroll-mt-10 border-t-2 border-ink py-20 sm:py-28">
         <Reveal className="max-w-2xl">
-          <H2>Measured on preprod</H2>
-          <p className="mt-4 text-body-lg">Cardano preprod, 6 October 2026. Test funds, real transactions. The load test ran on a local copy of the stack, not on preprod.</p>
+          <H2>Fast, and fair</H2>
+          <p className="mt-4 text-body-lg">Measured on Cardano preprod with test funds.</p>
         </Reveal>
-        <Reveal as="dl" stagger={0.07} className="mt-12 grid gap-x-8 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
+        <Reveal as="dl" stagger={0.08} className="mt-12 grid gap-y-10 sm:grid-cols-3 sm:gap-x-8">
           {PROOF.map((p) => (
-            <div key={p.value} data-reveal className="border-t-2 border-ink pt-4">
-              <dd className="text-h font-light leading-none tabular-nums sm:text-h-lg">{p.value}</dd>
-              <dt className="mt-3 max-w-[22rem] text-body-lg text-graphite">{p.label}</dt>
+            <div key={p.label} data-reveal data-stat className="flex flex-col border-t-2 border-ink pt-5">
+              <dt className="order-2 mt-4 max-w-[18rem] text-body-lg text-graphite">{p.label}</dt>
+              <dd className="order-1 flex items-baseline gap-3 whitespace-nowrap font-light leading-none">
+                <CountUp value={p.value} from={p.from} decimals={p.decimals} className="text-[3.5rem] lg:text-[5rem]" />
+                <span className="text-h-sm lg:text-h">{p.unit}</span>
+              </dd>
             </div>
           ))}
         </Reveal>

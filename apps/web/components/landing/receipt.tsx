@@ -76,7 +76,7 @@ export function Receipt({ className }: { className?: string }) {
         <dl className="px-5 pt-4 pb-4 text-body">
           <div className="space-y-2">
             <Line label="Pack">{`${PACK} calls for 2.00 tUSDM`}</Line>
-            <Line label="Paid to">seller wallet in 16.5 s</Line>
+            <Line label="Paid to">seller wallet in 9.4 s</Line>
           </div>
           <div className="mt-3 border-t border-dotted border-silver pt-3">
             <dt className="text-caption uppercase tracking-[0.04em] text-graphite">

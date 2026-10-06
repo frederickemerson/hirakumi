@@ -5,7 +5,7 @@ const ITEMS = [
   "Pack prices in USDM",
   "Paid on Cardano",
   "Listed on Masumi and Sokosumi",
-  "Settled in 9.4 to 16.5 s",
+  "Settles in 9.4 s",
   "A receipt for every call",
   "Public status page",
 ];
