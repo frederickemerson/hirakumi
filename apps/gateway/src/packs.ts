@@ -10,10 +10,11 @@ import {
   activateTokenByPayment, findTokenByTx, getChannelByLockTx, insertPendingToken, openChannelFromQuote, rotateTokenById, type PackRow,
 } from "@hirakumi/db";
 import { PACK_ESCROW } from "@hirakumi/escrow";
-import { buyerKeys, escrowExtra, quoteFor, quoteKey, verifyChannelLock, type BuyerKeys } from "./escrowPacks";
+import { buyerKeys, escrowExtra, hybridBuyerKeys, quoteFor, quoteKey, settlementPreference, verifyChannelLock, type BuyerKeys } from "./escrowPacks";
 import type { AppDeps } from "./deps";
 import { downBody, ruleUrl } from "./http";
 import { primaryRule, type LoadedApi } from "./registry";
+import { canEscrow, settlementFor, type PackSettlement } from "./settlement";
 
 export const PACK_ROUTE = "POST /a/:apiId/packs/:packId";
 const PACK_PATH = /^\/a\/([^/]+)\/packs\/([^/]+)$/;
@@ -83,6 +84,7 @@ function packExtra(d: AppDeps, loaded: LoadedApi, pack: PackRow): Record<string,
 }
 
 const escrowMode = (d: AppDeps) => d.config.packMode === "escrow" && d.config.packEscrow !== null;
+const hybridMode = (d: AppDeps) => d.config.packMode === "hybrid";
 
 function adapterKeys(ctx: HTTPRequestContext): BuyerKeys {
   const keys = buyerKeys((n) => ctx.adapter.getHeader(n));
@@ -90,12 +92,27 @@ function adapterKeys(ctx: HTTPRequestContext): BuyerKeys {
   return keys;
 }
 
-async function escrowQuote(d: AppDeps, ctx: HTTPRequestContext) {
+function adapterHybridKeys(ctx: HTTPRequestContext): BuyerKeys | null {
+  const keys = hybridBuyerKeys((n) => ctx.adapter.getHeader(n));
+  if (typeof keys === "string") throw new Error(keys); // the guard answers 400 before x402 runs
+  return keys;
+}
+
+async function escrowQuote(d: AppDeps, ctx: HTTPRequestContext, keys: BuyerKeys = adapterKeys(ctx)) {
   const { loaded, pack } = await resolvePack(d, ctx.path);
   const rule = primaryRule(loaded);
   if (!rule) throw new Error(`no published promise for ${loaded.api.id}`);
-  return { loaded, pack, quote: await quoteFor(d.sql, d.config.packEscrow!, loaded, pack, rule.hash, adapterKeys(ctx)) };
+  return { loaded, pack, quote: await quoteFor(d.sql, d.config.packEscrow!, loaded, pack, rule.hash, keys) };
 }
+
+type Chosen = { loaded: LoadedApi; pack: PackRow; keys: BuyerKeys | null; settlement: PackSettlement };
+
+const KEY_ERRORS: Record<string, string> = {
+  receipt_key_required: "Escrow packs need X-Hirakumi-Receipt-Key: the 32-byte ed25519 public key (hex) you will sign IOUs with.",
+  bad_receipt_key: "X-Hirakumi-Receipt-Key must be a normal ed25519 public key (not small order).",
+  bad_refund_address: "Escrow packs need X-Hirakumi-Refund-Address: a preprod address with a key payment credential.",
+  bad_settlement: "X-Hirakumi-Settlement must be escrow, or left out to let Hirakumi choose.",
+};
 
 export function packRouter(d: AppDeps): Router {
   const server = new x402ResourceServer(d.facilitator).register(NETWORK, new ExactCardanoScheme());
@@ -120,13 +137,48 @@ export function packRouter(d: AppDeps): Router {
     console.warn(`[packs] settlement failed, credit token stays pending: ${ctx.error.message}`);
   });
 
+  /**
+   * PACK_MODE=hybrid: one settlement per request. x402 resolves payTo, price and the unpaid body with the same
+   * context, so all three read one answer; across requests settlementFor keeps it stable (settlement_decisions).
+   */
+  const perRequest = new WeakMap<object, Promise<Chosen>>();
+  const chosen = (ctx: HTTPRequestContext): Promise<Chosen> => {
+    let hit = perRequest.get(ctx.adapter);
+    if (!hit) {
+      hit = (async () => {
+        const { loaded, pack } = await resolvePack(d, ctx.path);
+        const keys = adapterHybridKeys(ctx);
+        const wantsEscrow = settlementPreference((n) => ctx.adapter.getHeader(n)) === "escrow";
+        return { loaded, pack, keys, settlement: await settlementFor(d, loaded, pack, keys, wantsEscrow) };
+      })();
+      perRequest.set(ctx.adapter, hit);
+    }
+    return hit;
+  };
+
   const routes: RoutesConfig = {
     [PACK_ROUTE]: {
       accepts: {
         scheme: "exact",
         network: NETWORK,
-        payTo: async (ctx: HTTPRequestContext) => escrowMode(d) ? PACK_ESCROW.address : (await resolvePack(d, ctx.path)).loaded.api.pay_to,
+        payTo: async (ctx: HTTPRequestContext) => {
+          if (escrowMode(d)) return PACK_ESCROW.address;
+          if (hybridMode(d)) {
+            const c = await chosen(ctx);
+            return c.settlement.mode === "escrow" ? PACK_ESCROW.address : c.loaded.api.pay_to;
+          }
+          return (await resolvePack(d, ctx.path)).loaded.api.pay_to;
+        },
         price: async (ctx: HTTPRequestContext) => {
+          if (hybridMode(d)) {
+            const { loaded, pack, keys, settlement } = await chosen(ctx);
+            const extra = { ...packExtra(d, loaded, pack), settlement };
+            if (settlement.mode === "escrow") {
+              const { quote } = await escrowQuote(d, ctx, keys!);
+              return { amount: pack.price_micros, asset: USDM_PREPROD_ASSET, extra: { ...extra, ...escrowExtra(quote) } };
+            }
+            return { amount: pack.price_micros, asset: USDM_PREPROD_ASSET, extra };
+          }
           if (escrowMode(d)) {
             const { loaded, pack, quote } = await escrowQuote(d, ctx);
             return { amount: pack.price_micros, asset: USDM_PREPROD_ASSET, extra: { ...packExtra(d, loaded, pack), ...escrowExtra(quote) } };
@@ -140,6 +192,28 @@ export function packRouter(d: AppDeps): Router {
       description: "A pack of credits for a Hirakumi API. A credit is used only when a response keeps the published promise.",
       mimeType: "application/json",
       unpaidResponseBody: async (ctx: HTTPRequestContext) => {
+        if (hybridMode(d)) {
+          const { loaded, pack, keys, settlement } = await chosen(ctx);
+          const base = { error: "payment_required", mode: settlement.mode, settlement, ...packExtra(d, loaded, pack), price: pack.price_micros, asset: USDM_PREPROD_ASSET };
+          if (settlement.mode === "escrow") {
+            const { quote } = await escrowQuote(d, ctx, keys!);
+            const { script: _script, ...offer } = escrowExtra(quote);
+            return {
+              contentType: "application/json",
+              body: {
+                ...base, escrowAddress: PACK_ESCROW.address, ...offer,
+                message: `Settlement: escrow, because: ${settlement.reasons.join(", ")}. Pay once to lock ${pack.calls} calls in escrow. The seller is paid only for calls you sign IOUs for; the rest comes back to you on Settle.`,
+              },
+            };
+          }
+          return {
+            contentType: "application/json",
+            body: {
+              ...base,
+              message: `Settlement: direct, because: ${settlement.reasons.join(", ")}. Pay once to get ${pack.calls} credits. A credit is used only when a response keeps the promise.`,
+            },
+          };
+        }
         const { loaded, pack } = await resolvePack(d, ctx.path);
         if (escrowMode(d)) {
           const { quote } = await escrowQuote(d, ctx);
@@ -191,18 +265,24 @@ export function packRouter(d: AppDeps): Router {
       const snap = d.health.get(loaded.api.id);
       if (snap?.health === "down") { res.status(503).json(downBody(d.config, snap)); return; }
       if (!primaryRule(loaded)) { res.status(503).json({ error: "promise_not_published" }); return; }
+      // A buyer who demands escrow gets escrow or a refusal, never a quiet direct offer.
+      const preference = settlementPreference((n) => req.header(n));
+      if (preference === "bad_settlement") { res.status(400).json({ error: preference, message: KEY_ERRORS[preference] }); return; }
+      if (preference === "escrow" && !escrowMode(d) && !(hybridMode(d) && canEscrow(d, pack))) {
+        res.status(503).json({ error: "escrow_unavailable", message: "This pack can't be bought in escrow right now. Leave out X-Hirakumi-Settlement to buy it direct." });
+        return;
+      }
       if (escrowMode(d)) {
         const keys = buyerKeys((n) => req.header(n));
-        if (keys === "receipt_key_required") {
-          res.status(400).json({ error: keys, message: "Escrow packs need X-Hirakumi-Receipt-Key: the 32-byte ed25519 public key (hex) you will sign IOUs with." }); return;
-        }
-        if (keys === "bad_receipt_key") {
-          res.status(400).json({ error: keys, message: "X-Hirakumi-Receipt-Key must be a normal ed25519 public key (not small order)." }); return;
-        }
-        if (keys === "bad_refund_address") {
-          res.status(400).json({ error: keys, message: "Escrow packs need X-Hirakumi-Refund-Address: a preprod address with a key payment credential." }); return;
-        }
+        if (typeof keys === "string") { res.status(400).json({ error: keys, message: KEY_ERRORS[keys] }); return; }
         if (BigInt(pack.price_micros) % BigInt(pack.calls) !== 0n) { res.status(503).json({ error: "pack_not_escrowable" }); return; }
+        res.locals.buyerKeys = keys;
+      }
+      if (hybridMode(d)) {
+        // No escrow headers: a plain x402 buyer, settled direct. Any escrow header: both must be valid.
+        const keys = hybridBuyerKeys((n) => req.header(n));
+        if (typeof keys === "string") { res.status(400).json({ error: keys, message: KEY_ERRORS[keys] }); return; }
+        if (preference === "escrow" && keys === null) { res.status(400).json({ error: "receipt_key_required", message: KEY_ERRORS.receipt_key_required }); return; }
         res.locals.buyerKeys = keys;
       }
       res.locals.loaded = loaded;
@@ -239,9 +319,12 @@ export function packRouter(d: AppDeps): Router {
         return;
       }
       if (recoveryHash === null) res.once("finish", rememberPendingToken(header, token));
-      if (escrowMode(d)) {
+      // Hybrid: x402 matched this payment against this request's offer, so a payTo at the escrow is an escrow pack.
+      const escrowPaid = escrowMode(d) || (hybridMode(d) && payload.accepted?.payTo === PACK_ESCROW.address);
+      if (escrowPaid) {
         // The quote this payment answered: x402 already matched its datum byte for byte.
-        const keys = res.locals.buyerKeys as BuyerKeys;
+        const keys = res.locals.buyerKeys as BuyerKeys | null;
+        if (!keys) { res.status(409).json({ error: "quote_not_found", message: "Escrow packs need X-Hirakumi-Receipt-Key and X-Hirakumi-Refund-Address." }); return; }
         const accepted = payload.accepted?.extra as { channelId?: unknown } | undefined;
         const channelId = typeof accepted?.channelId === "string" ? accepted.channelId : "";
         const opened = await openChannelFromQuote(d.sql, { quoteKey: quoteKey(loaded.api.id, pack.id, keys), channelId, creditTokenId: ins.id, lockTxHash: txHash });
@@ -254,7 +337,7 @@ export function packRouter(d: AppDeps): Router {
         });
         return;
       }
-      res.status(200).json({ token, credits: pack.calls, apiId: loaded.api.id, tokenId: ins.id });
+      res.status(200).json({ token, credits: pack.calls, apiId: loaded.api.id, tokenId: ins.id, ...(hybridMode(d) ? { mode: "direct" } : {}) });
     } catch (e) { next(e); }
   };
 

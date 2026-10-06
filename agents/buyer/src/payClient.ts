@@ -4,6 +4,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { toClientCardanoSigner, USDM_PREPROD_ASSET } from "@x402/cardano";
 import { ExactCardanoScheme } from "@x402/cardano/exact/client";
 import type { SpendControls } from "@x402/core/client";
+import { PACK_ESCROW } from "@hirakumi/escrow";
 
 export function spendControlsFor(maxPackMicros: bigint): SpendControls {
   if (maxPackMicros <= 0n) throw new Error("maxPackMicros must be positive");
@@ -23,7 +24,11 @@ export class SerialPayer {
 }
 
 export type PackPurchase = { token: string; credits: number; apiId: string; txHash: string | null };
-export type EscrowPurchase = PackPurchase & { channelId: string; channelUrl: string | null };
+/**
+ * What buyEscrowPack bought. A hybrid gateway may settle the pack direct (extra.settlement.mode): then `mode` is
+ * "direct" and there is no channel. The mode is the one our check approved, never the gateway's later word.
+ */
+export type EscrowPurchase = PackPurchase & { mode: "escrow" | "direct"; channelId: string | null; channelUrl: string | null };
 
 /** Called with the offer x402 is about to pay; throw to refuse (the payment is never signed). */
 export type OfferCheck = (requirements: { scheme: string; network: string; asset: string; amount: string; payTo: string; extra?: Record<string, unknown> }) => void;
@@ -73,10 +78,13 @@ export function createPackPayer(cfg: { mnemonic: string; blockfrostProjectId: st
   client.register("cardano:*", new ExactCardanoScheme(signer));
   // Every purchase installs a check here: it sees the exact requirements before anything is signed.
   let offerCheck: OfferCheck | null = null;
+  // The requirement the current purchase's check accepted (and so the one that gets signed).
+  let approved: Parameters<OfferCheck>[0] | null = null;
   client.onBeforePaymentCreation(async ({ selectedRequirements }) => {
     if (!offerCheck) return;
     try {
       offerCheck(selectedRequirements as Parameters<OfferCheck>[0]);
+      approved = selectedRequirements as Parameters<OfferCheck>[0];
     } catch (e) {
       return { abort: true, reason: (e as Error).message };
     }
@@ -99,13 +107,14 @@ export function createPackPayer(cfg: { mnemonic: string; blockfrostProjectId: st
     address,
     /**
      * Escrow pack: sends our IOU key and refund address on both the unpaid and the paid request, and pays only
-     * if `check` accepts the 402's datum.
+     * if `check` accepts the 402's offer. A hybrid gateway may offer direct instead; `check` decides whether to pay.
      */
     buyEscrowPack(
-      buyUrl: string, keys: { receiptKey: string; refundAddress: string }, check: OfferCheck, hooks: { onSigned?: SignedHook } = {},
+      buyUrl: string, keys: { receiptKey: string; refundAddress: string; settlement?: "escrow" }, check: OfferCheck, hooks: { onSigned?: SignedHook } = {},
     ): Promise<EscrowPurchase> {
       return serial.run(async () => {
         lastSignature = null;
+        approved = null;
         offerCheck = check;
         const recoverySecret = randomBytes(32).toString("base64url");
         const hook = hooks.onSigned;
@@ -116,6 +125,7 @@ export function createPackPayer(cfg: { mnemonic: string; blockfrostProjectId: st
             headers: {
               "content-type": "application/json", accept: "application/json",
               "x-hirakumi-receipt-key": keys.receiptKey, "x-hirakumi-refund-address": keys.refundAddress,
+              ...(keys.settlement ? { "x-hirakumi-settlement": keys.settlement } : {}),
               "x-hirakumi-recovery": createHash("sha256").update(recoverySecret).digest("hex"),
             },
             body: "{}",
@@ -123,14 +133,16 @@ export function createPackPayer(cfg: { mnemonic: string; blockfrostProjectId: st
           const text = await res.text();
           if (!res.ok) throw new PackPurchaseError(res.status, text, lastSignature, recoverySecret);
           const body = JSON.parse(text) as { token?: unknown; credits?: unknown; apiId?: unknown; channelId?: unknown; channelUrl?: unknown };
-          if (typeof body.token !== "string" || typeof body.credits !== "number" || typeof body.apiId !== "string" || typeof body.channelId !== "string") {
+          const escrow = (approved as Parameters<OfferCheck>[0] | null)?.payTo === PACK_ESCROW.address;
+          if (typeof body.token !== "string" || typeof body.credits !== "number" || typeof body.apiId !== "string" || (escrow && typeof body.channelId !== "string")) {
             throw new PackPurchaseError(res.status, text);
           }
           let txHash: string | null = null;
           try { txHash = http.getPaymentSettleResponse((name) => res.headers.get(name))?.transaction ?? null; } catch { txHash = null; }
           return {
-            token: body.token, credits: body.credits, apiId: body.apiId, txHash, channelId: body.channelId,
-            channelUrl: typeof body.channelUrl === "string" ? body.channelUrl : null,
+            token: body.token, credits: body.credits, apiId: body.apiId, txHash, mode: escrow ? "escrow" : "direct",
+            channelId: escrow ? body.channelId as string : null,
+            channelUrl: escrow && typeof body.channelUrl === "string" ? body.channelUrl : null,
           };
         } catch (e) {
           // Nothing was signed, so nothing can land on-chain: the caller may forget the channel.

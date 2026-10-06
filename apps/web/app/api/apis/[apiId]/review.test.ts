@@ -34,7 +34,7 @@ describe("pricing and publish", () => {
   beforeEach(async () => {
     await resetDb();
     reloadApi.mockClear();
-    setGatewayForTests({ checkChallenge: vi.fn(), reloadApi, getHealth: vi.fn() } as Gateway);
+    setGatewayForTests({ checkChallenge: vi.fn(), reloadApi, getHealth: vi.fn(), getSettlement: vi.fn(async () => []) } as Gateway);
   });
   afterEach(() => setGatewayForTests(null));
 

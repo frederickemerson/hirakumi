@@ -34,8 +34,14 @@ export async function getOrCreateQuote(sql: Sql, key: string, fresh: () => Quote
         max_calls = excluded.max_calls, unsigned_allowance = excluded.unsigned_allowance,
         contest_period_ms = excluded.contest_period_ms, close_fee_budget_lovelace = excluded.close_fee_budget_lovelace,
         datum_cbor = excluded.datum_cbor, expires_at = excluded.expires_at, consumed_at = null, created_at = now()
+      where pack_quotes.consumed_at is not null or pack_quotes.expires_at <= now()
       returning *`;
-    return row;
+    if (row) return row;
+    // A concurrent 402 for the same key inserted first: its quote stands, so both 402s offer one datum.
+    const [winner] = await tx<QuoteRow[]>`
+      select * from pack_quotes where quote_key = ${key} and consumed_at is null and expires_at > now()`;
+    if (!winner) throw new Error(`quote ${key} vanished`);
+    return winner;
   });
 }
 

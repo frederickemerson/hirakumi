@@ -7,6 +7,7 @@ import {
 import { getOpenVerifyCode, getOwnershipTarget, insertCall } from "@hirakumi/db";
 import { demoBuyPack } from "./demoBuy";
 import type { AppDeps } from "./deps";
+import { canEscrow, forgetSettlementSignals, policyFor } from "./settlement";
 import { runOperation } from "./upstream";
 
 export type OwnershipReason =
@@ -104,7 +105,29 @@ export function internalRouter(d: AppDeps): Router {
 
   r.post("/internal/apis/:apiId/reload", (req, res) => {
     d.registry.invalidate(req.params.apiId);
+    forgetSettlementSignals(d.sql, req.params.apiId);
     res.json({ ok: true });
+  });
+
+  /**
+   * How a buyer who sends escrow headers would settle each pack right now (the public API page shows it).
+   * Hybrid: the policy on live data; a 402 stores its own answer. direct / escrow: fixed by PACK_MODE, no reasons.
+   */
+  r.get("/internal/apis/:apiId/settlement", async (req, res, next) => {
+    try {
+      const loaded = await d.registry.get(req.params.apiId);
+      if (!loaded) { res.status(404).json({ error: "api_not_found" }); return; }
+      const mode = d.config.packMode;
+      const packs = await Promise.all(loaded.packs.map(async (pack) => {
+        if (mode === "direct" || (mode === "escrow" && !d.config.packEscrow)) return { packId: pack.id, mode: "direct", reasons: [] };
+        if (mode === "escrow") return { packId: pack.id, mode: "escrow", reasons: [] };
+        const p = await policyFor(d, loaded, pack, true);
+        return p.mode === "escrow" && !canEscrow(d, pack)
+          ? { packId: pack.id, mode: "direct", reasons: p.reasons, recommended: "escrow" }
+          : { packId: pack.id, mode: p.mode, reasons: p.reasons };
+      }));
+      res.json({ packMode: mode, packs });
+    } catch (e) { next(e); }
   });
 
   r.get("/internal/apis/:apiId/health", async (req, res, next) => {

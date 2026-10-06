@@ -114,6 +114,21 @@ describe("TryConsole", () => {
     expect(screen.getByText(/credits left in the live pack/)).toHaveTextContent("99 credits left");
   });
 
+  it("shows how the pack settles and why, once the gateway says (PACK_MODE=hybrid)", async () => {
+    const stream = controlledStream();
+    vi.stubGlobal("fetch", vi.fn((url: string) => Promise.resolve(url.endsWith("/buy") ? stream.response : kept(99))));
+    render(<TryConsole apiId="api_1" ops={[op]} initialPack={null} liveBuy />);
+    await userEvent.click(screen.getByRole("button", { name: "Buy a pack live" }));
+    await stream.send({ phase: "paying", packId: "pk_1", calls: 100, priceMicros: "2000000", wallet: "addr_test1q" });
+    expect(screen.queryByTestId("settlement")).toBeNull();
+    await stream.send({ phase: "settling", settlement: { mode: "escrow", reasons: ["new seller"] } });
+    expect(screen.getByTestId("settlement")).toHaveTextContent("Settlement: escrow, because: new seller");
+    await stream.send({ phase: "settled", txHash: TX, credits: 100, ms: 21_400, recovered: false });
+    await stream.close();
+    expect(await screen.findByText("Promise kept. One credit used.")).toBeInTheDocument();
+    expect(screen.getByTestId("settlement")).toHaveTextContent("Settlement: escrow, because: new seller");
+  });
+
   it("reuses a pack the gateway already holds instead of buying again", async () => {
     const stream = controlledStream();
     vi.stubGlobal("fetch", vi.fn((url: string) => Promise.resolve(url.endsWith("/buy") ? stream.response : kept(41))));

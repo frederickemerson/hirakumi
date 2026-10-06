@@ -14,7 +14,7 @@ const stateOf = async (id: string) => (await getSql()<{ state: string }[]>`selec
 describe("adversarial: seller isolation (IDOR)", () => {
   beforeEach(async () => {
     await resetDb();
-    setGatewayForTests({ checkChallenge: vi.fn(), reloadApi: vi.fn(async () => undefined), getHealth: vi.fn() } as Gateway);
+    setGatewayForTests({ checkChallenge: vi.fn(), reloadApi: vi.fn(async () => undefined), getHealth: vi.fn(), getSettlement: vi.fn(async () => []) } as Gateway);
   });
   afterEach(() => setGatewayForTests(null));
 
@@ -38,7 +38,7 @@ describe("adversarial: seller isolation (IDOR)", () => {
 describe("adversarial: CSRF on body-less state changes", () => {
   beforeEach(async () => {
     await resetDb();
-    setGatewayForTests({ checkChallenge: vi.fn(), reloadApi: vi.fn(async () => undefined), getHealth: vi.fn() } as Gateway);
+    setGatewayForTests({ checkChallenge: vi.fn(), reloadApi: vi.fn(async () => undefined), getHealth: vi.fn(), getSettlement: vi.fn(async () => []) } as Gateway);
   });
   afterEach(() => setGatewayForTests(null));
 

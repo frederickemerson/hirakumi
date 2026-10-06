@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTestDb, type TestDb } from "../src/testing";
 import {
-  allChannels, deleteStaleQuotes, expireUnseenLocks, getChannel, listChannels, markChannelLocked, reopenChannel, revertChannelToPending,
+  allChannels, deleteStaleQuotes, expireUnseenLocks, getChannel, getOrCreateQuote, listChannels, markChannelLocked, reopenChannel, revertChannelToPending,
   updateChannel,
 } from "../src/channels";
 
@@ -91,5 +91,27 @@ describe("deleteStaleQuotes", () => {
     await quote("recent", "now() - interval '1 hour'", "null");
     expect(await deleteStaleQuotes(db.sql)).toBe(1);
     expect((await db.sql<{ quote_key: string }[]>`select quote_key from pack_quotes order by quote_key`).map((r) => r.quote_key)).toEqual(["old_paid", "recent"]);
+  });
+});
+
+describe("getOrCreateQuote under concurrency", () => {
+  const fresh = (i: number) => () => ({
+    quote_key: "q1", channel_id: `${i}`.padStart(64, "0"), api_id: "api_a", pack_id: "pk_a", receipt_key: "rk", refund_address: "refund",
+    seller_address: "seller", fee_address: "fee", fee_bps: 300, price_micros: "2000000", price_per_call_micros: "20000", max_calls: 100,
+    unsigned_allowance: 1, contest_period_ms: "180000", close_fee_budget_lovelace: "700000", datum_cbor: `d8${i}`, ttlSeconds: 600,
+  });
+
+  it("gives every concurrent 402 for one key the same quote (a later insert never overwrites a live one)", async () => {
+    const out = await Promise.all(Array.from({ length: 30 }, (_, i) => getOrCreateQuote(db.sql, "q1", fresh(i))));
+    expect(new Set(out.map((q) => q.channel_id)).size).toBe(1);
+  });
+
+  it("replaces a consumed or expired quote", async () => {
+    const a = await getOrCreateQuote(db.sql, "q1", fresh(1));
+    await db.sql`update pack_quotes set consumed_at = now() where quote_key = 'q1'`;
+    const b = await getOrCreateQuote(db.sql, "q1", fresh(2));
+    expect(b.channel_id).not.toBe(a.channel_id);
+    await db.sql`update pack_quotes set expires_at = now() - interval '1 second' where quote_key = 'q1'`;
+    expect((await getOrCreateQuote(db.sql, "q1", fresh(3))).channel_id).toBe(fresh(3)().channel_id);
   });
 });

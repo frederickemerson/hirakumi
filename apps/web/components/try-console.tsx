@@ -8,6 +8,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { formatTusdm } from "@/lib/money";
 import { coerceInput, type TryField, type TryKind, type TryReceipt, type TryResult } from "@/lib/try";
 import { cardanoscanTx, readBuyEvents, type BuyEvent } from "@/lib/try-stream";
+import { settlementLine } from "@/lib/settlement";
 import { cn } from "@/lib/utils";
 
 export type TryOp = {
@@ -91,6 +92,7 @@ export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReas
   const [history, setHistory] = useState<Outcome[]>([]);
   const [pack, setPack] = useState<TryPackView | null>(initialPack);
   const [purchase, setPurchase] = useState<Purchase | null>(null);
+  const [settlement, setSettlement] = useState<{ mode: "direct" | "escrow"; reasons: string[] } | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const slot = useRef<HTMLDivElement>(null);
 
@@ -155,6 +157,7 @@ export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReas
     const startedAt = Date.now();
     setBusy("buy");
     setPurchase({ phase: "paying", startedAt });
+    setSettlement(null);
     const controller = new AbortController();
     let stall = setTimeout(() => controller.abort(), BUY_STALL_MS);
     const touch = () => { clearTimeout(stall); stall = setTimeout(() => controller.abort(), BUY_STALL_MS); };
@@ -172,6 +175,7 @@ export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReas
         touch();
         const next = applyEvent(e, startedAt);
         if (next) setPurchase(next);
+        if (e.phase === "settling" && e.settlement) setSettlement(e.settlement);
         if (e.phase === "settled" || e.phase === "ready") {
           bought = { credits: e.credits, txHash: e.txHash, pending: e.phase === "ready" ? e.pending : false };
           finished = true;
@@ -311,8 +315,8 @@ export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReas
                     ) : (
                       <>
                         A real x402 payment{packPrice ? ` of ${formatTusdm(packPrice.priceMicros)} tUSDM for ${packPrice.calls} calls` : ""} on Cardano preprod,
-                        from Hirakumi&apos;s demo wallet, locked in escrow. Settles in 20 to 60 s, then makes your call. The wallet signs for each
-                        answer it checked against the promise; the seller is paid only for those.
+                        from Hirakumi&apos;s demo wallet. Hirakumi settles it direct or in escrow and says why. Settles in 20 to 60 s, then
+                        makes your call. In escrow the wallet signs for each answer it checked against the promise; the seller is paid only for those.
                       </>
                     )}
                   </p>
@@ -326,7 +330,7 @@ export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReas
         {/* The result slot keeps its height, so progress and results land in place instead of pushing the page. */}
         <div ref={slot} aria-live="polite" className="min-w-0 scroll-mt-6 lg:sticky lg:top-6">
           <div className="flex min-h-[26rem] flex-col gap-4">
-            {purchase && <PurchaseCard purchase={purchase} now={now} />}
+            {purchase && <PurchaseCard purchase={purchase} now={now} settlement={settlement} />}
             {busy === "call" ? (
               <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-[2px] border-2 border-ink bg-frost p-6 text-center">
                 <p className="flex items-center gap-3 text-body-lg font-medium">
@@ -404,7 +408,9 @@ function Step({ state, label, time }: { state: StepState; label: React.ReactNode
 }
 
 /** Paying, Settling on Cardano, Settled in N s: three fixed rows that change in place. */
-function PurchaseCard({ purchase: p, now }: { purchase: Purchase; now: number }) {
+function PurchaseCard({ purchase: p, now, settlement }: {
+  purchase: Purchase; now: number; settlement?: { mode: "direct" | "escrow"; reasons: string[] } | null;
+}) {
   if (p.phase === "ready") {
     return (
       <div className="rounded-[2px] border-2 border-ink bg-ice p-5 animate-rise">
@@ -429,6 +435,7 @@ function PurchaseCard({ purchase: p, now }: { purchase: Purchase; now: number })
         <Step state={settling} label="Settling on Cardano" time={p.phase === "settling" ? seconds(now - p.settlingAt) : undefined} />
         <Step state={settled} label={p.phase === "settled" ? `Settled in ${seconds(p.ms)}${p.recovered ? " (recovered)" : ""}` : "Settled"} />
       </ol>
+      {settlement && <p className="mt-2 text-body text-graphite" data-testid="settlement">{settlementLine(settlement)}</p>}
       {p.phase === "settled" && (
         <div className="mt-3 border-t border-ink pt-3 animate-rise">
           <p className="text-body">{p.credits} credits bought.</p>

@@ -36,6 +36,23 @@ export function buyerKeys(
   return { receiptKey, refundAddress };
 }
 
+/**
+ * PACK_MODE=hybrid: null when the buyer sent neither header (a plain x402 buyer: direct). Either header present
+ * means the buyer wants escrow, so both are then checked exactly as in escrow mode.
+ */
+export function hybridBuyerKeys(header: (name: string) => string | undefined): ReturnType<typeof buyerKeys> | null {
+  const blank = (n: string) => !header(n)?.trim();
+  if (blank("x-hirakumi-receipt-key") && blank("x-hirakumi-refund-address")) return null;
+  return buyerKeys(header);
+}
+
+/** `x-hirakumi-settlement`: blank means no preference, "escrow" means the buyer demands escrow. */
+export function settlementPreference(header: (name: string) => string | undefined): "escrow" | null | "bad_settlement" {
+  const v = header("x-hirakumi-settlement")?.trim().toLowerCase() ?? "";
+  if (!v) return null;
+  return v === "escrow" ? "escrow" : "bad_settlement";
+}
+
 export const quoteKey = (apiId: string, packId: string, b: BuyerKeys) =>
   sha256Hex(`${apiId}|${packId}|${b.receiptKey}|${b.refundAddress}`);
 

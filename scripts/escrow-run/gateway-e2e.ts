@@ -5,7 +5,8 @@
 //   pnpm --filter @hirakumi/buyer pack -- --api <apiId> --escrow --calls 3
 //   pnpm --filter @hirakumi/buyer pack -- --api <apiId> --escrow --close --wait
 //
-// Env: ENV_FILE / ESCROW_RUN_SECRETS as for run.ts; E2E_PORT (default 4599); E2E_FEE_BPS (default 300).
+// Env: ENV_FILE / ESCROW_RUN_SECRETS as for run.ts; E2E_PORT (default 4599); E2E_FEE_BPS (default 300);
+// E2E_PACK_MODE (escrow, default, or hybrid: the seeded API is new and its pack 2 tUSDM, so the policy picks escrow).
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { createDb } from "@hirakumi/db";
 import { createTestDb } from "@hirakumi/db/testing";
@@ -41,7 +42,7 @@ const config: GatewayConfig = {
   facilitatorUrl: process.env.FACILITATOR_URL ?? "https://x402.preprod.dev.ecosyseng.cf-deployments.org",
   upstreamTimeoutMs: 15_000,
   blockfrostProjectId: need("BLOCKFROST_PROJECT_ID"),
-  packMode: "escrow",
+  packMode: process.env.E2E_PACK_MODE === "hybrid" ? "hybrid" : "escrow",
   packEscrow: {
     feeAddress, feeBps: Number(process.env.E2E_FEE_BPS ?? 300), closerVkh: walletFor(operatorMnemonic).vkh, operatorMnemonic,
     contestPeriodMs: 180_000, closeFeeBudgetLovelace: 700_000, leaseSeconds: 30, raiseMarginMs: 60_000,

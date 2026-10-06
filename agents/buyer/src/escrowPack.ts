@@ -7,10 +7,13 @@ import {
   MAX_CLOSE_FEE_BUDGET, MAX_CONTEST_PERIOD_MS, MIN_CONTEST_PERIOD_MS, PACK_ESCROW, decodePackDatum, encodePackDatum, newReceiptKey,
   signCloseRequest, signReceipt, validateDatumForLock, type PackDatum,
 } from "@hirakumi/escrow";
-import { safeJson, type FetchLike } from "./gatewayClient.js";
+import { formatMicros, safeJson, type FetchLike } from "./gatewayClient.js";
+import { directPackCheck } from "./payClient.js";
 import { writePrivateJson } from "./tokenStore.js";
 
 export const MAX_FEE_BPS = 1000n;
+/** We pay a seller directly (no escrow, no refund) for at most this much per pack: 5 tUSDM. */
+export const DEFAULT_MAX_DIRECT_MICROS = 5_000_000n;
 
 export class EscrowOfferError extends Error {}
 
@@ -63,6 +66,32 @@ export function checkEscrowOffer(req: Requirement, lim: OfferLimits, expect?: Ex
   return d;
 }
 
+/**
+ * How a 402 offer settles. A hybrid gateway says so in `extra.settlement.mode`; anything but "direct" (including
+ * no word at all, a PACK_MODE=escrow gateway) is held to the full escrow check.
+ */
+export function offerMode(req: Requirement): "direct" | "escrow" {
+  return (req.extra?.settlement as { mode?: unknown } | undefined)?.mode === "direct" ? "direct" : "escrow";
+}
+
+/** The plain reasons a hybrid gateway gave, for logs. */
+export function offerReasons(req: Requirement): string[] {
+  const r = (req.extra?.settlement as { reasons?: unknown } | undefined)?.reasons;
+  return Array.isArray(r) ? r.filter((x): x is string => typeof x === "string") : [];
+}
+
+/**
+ * A direct offer from a hybrid gateway: exactly the chosen pack's price, a plain tUSDM transfer (not to the
+ * escrow), and no more than our direct cap. Above the cap we only pay in escrow, where unused calls refund.
+ */
+export function checkDirectOffer(req: Requirement, expect: { priceMicros: bigint }, maxDirectMicros = DEFAULT_MAX_DIRECT_MICROS): void {
+  directPackCheck({ amount: expect.priceMicros })(req);
+  if (req.payTo === PACK_ESCROW.address) throw new EscrowOfferError("refusing to pay: a direct pack must not pay the escrow address");
+  if (BigInt(req.amount) > maxDirectMicros) {
+    throw new EscrowOfferError(`refusing to pay: ${formatMicros(req.amount)} tUSDM direct is above our direct cap of ${formatMicros(maxDirectMicros)} tUSDM`);
+  }
+}
+
 // ---------------------------------------------------------------- the IOU key store
 
 export type EscrowChannel = {
@@ -83,6 +112,8 @@ export type EscrowChannel = {
   abandoned?: boolean;
   /** The gateway accepted a close for this channel (it now settles on-chain): it no longer blocks a new purchase. */
   closeRequested?: boolean;
+  /** A hybrid gateway settled this pack direct: a plain credit token, no channel, nothing to sign or close. */
+  direct?: boolean;
 };
 
 /**
@@ -122,6 +153,7 @@ export class IouKeyStore {
     const have = a[slot];
     if (have && have.refundAddress === refundAddress && !have.channelId && !have.token && !have.disputed) return have;
     if (have?.channelId) a[`${slot}#${have.channelId}`] = have;
+    else if (have?.token || have?.pendingPayment) a[`${slot}#direct-${have.createdAt}`] = have;
     const k = newReceiptKey();
     const c: EscrowChannel = {
       apiId, packId, channelId: null, secretKey: k.secretKey, publicKey: k.publicKey, refundAddress, token: null, ruleHash: null,

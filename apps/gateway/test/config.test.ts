@@ -4,7 +4,7 @@ import { estimatedDowntimeSeconds, loadConfig } from "../src/config";
 const env = {
   DATABASE_URL: "postgres://x", PUBLIC_BASE_URL: "https://api.hirakumi.app/", INTERNAL_TOKEN: "change-me-32-bytes",
   FACILITATOR_URL: "https://x402.preprod.dev.ecosyseng.cf-deployments.org",
-  // Escrow packs are the default, so a working config names the fee address and the closer key.
+  // Hybrid is the default; with the fee address and the closer key it can also escrow.
   HIRAKUMI_FEE_ADDRESS: "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s", ESCROW_CLOSER_VKH: "cd".repeat(28),
 };
 
@@ -44,10 +44,11 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...env, PAYMENT_SERVICE_URL: "http://ps/api/v1", PAYMENT_SERVICE_TOKEN: "t" }).masumi)
       .toEqual({ baseUrl: "http://ps/api/v1", token: "t" });
   });
-  it("PACK_MODE defaults to escrow, which needs a fee address and a closer key; direct stays as a fallback", () => {
-    expect(loadConfig(env)).toMatchObject({ packMode: "escrow" });
+  it("PACK_MODE defaults to hybrid and boots without escrow settings; escrow needs a fee address and a closer key", () => {
+    expect(loadConfig(env)).toMatchObject({ packMode: "hybrid", packEscrow: { closerVkh: "cd".repeat(28) } });
     const bare = { ...env, HIRAKUMI_FEE_ADDRESS: "", ESCROW_CLOSER_VKH: "" };
-    expect(() => loadConfig(bare)).toThrow(/HIRAKUMI_FEE_ADDRESS/);
+    expect(loadConfig(bare)).toMatchObject({ packMode: "hybrid", packEscrow: null });
+    expect(() => loadConfig({ ...bare, PACK_MODE: "escrow" })).toThrow(/HIRAKUMI_FEE_ADDRESS/);
     expect(loadConfig({ ...bare, PACK_MODE: "direct" })).toMatchObject({ packMode: "direct", packEscrow: null });
     const fee = "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s";
     expect(() => loadConfig({ ...bare, PACK_MODE: "escrow", HIRAKUMI_FEE_ADDRESS: fee })).toThrow(/OPERATOR_MNEMONIC/);
@@ -56,5 +57,24 @@ describe("loadConfig", () => {
       feeAddress: fee, feeBps: 300, closerVkh: "ab".repeat(28), contestPeriodMs: 180_000, closeFeeBudgetLovelace: 700_000, operatorMnemonic: null,
     });
     expect(() => loadConfig({ ...env, PACK_MODE: "both" })).toThrow(/PACK_MODE/);
+  });
+  it("PACK_MODE=hybrid: escrow settings when all are set, else none (hybrid then settles direct)", () => {
+    const fee = "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s";
+    const bare = { ...env, HIRAKUMI_FEE_ADDRESS: "", ESCROW_CLOSER_VKH: "" };
+    expect(loadConfig({ ...bare, PACK_MODE: "hybrid" })).toMatchObject({ packMode: "hybrid", packEscrow: null });
+    expect(loadConfig({ ...bare, PACK_MODE: "hybrid", HIRAKUMI_FEE_ADDRESS: fee })).toMatchObject({ packMode: "hybrid", packEscrow: null });
+    const c = loadConfig({ ...env, PACK_MODE: "hybrid", HIRAKUMI_FEE_ADDRESS: fee, ESCROW_CLOSER_VKH: "ab".repeat(28) });
+    expect(c.packEscrow).toMatchObject({ feeAddress: fee, closerVkh: "ab".repeat(28) });
+    // Set but wrong is a mistake, not a missing prerequisite.
+    expect(() => loadConfig({ ...env, PACK_MODE: "hybrid", HIRAKUMI_FEE_ADDRESS: "addr1qmainnet", ESCROW_CLOSER_VKH: "ab".repeat(28) })).toThrow(/HIRAKUMI_FEE_ADDRESS/);
+    expect(() => loadConfig({ ...env, PACK_MODE: "hybrid", HIRAKUMI_FEE_ADDRESS: fee, ESCROW_CLOSER_VKH: "xyz" })).toThrow(/ESCROW_CLOSER_VKH/);
+  });
+  it("settlement thresholds: 2 tUSDM, 99%, 7 days by default; each overridable; nonsense refused", () => {
+    expect(loadConfig(env).settlement).toEqual({ escrowFromMicros: 2_000_000n, minUptimePct: 99, minListingDays: 7 });
+    expect(loadConfig({ ...env, SETTLEMENT_ESCROW_FROM_MICROS: "5000000", SETTLEMENT_MIN_UPTIME_PCT: "99.5", SETTLEMENT_MIN_LISTING_DAYS: "3" }).settlement)
+      .toEqual({ escrowFromMicros: 5_000_000n, minUptimePct: 99.5, minListingDays: 3 });
+    expect(() => loadConfig({ ...env, SETTLEMENT_ESCROW_FROM_MICROS: "2.5" })).toThrow(/SETTLEMENT_ESCROW_FROM_MICROS/);
+    expect(() => loadConfig({ ...env, SETTLEMENT_MIN_UPTIME_PCT: "101" })).toThrow(/SETTLEMENT_MIN_UPTIME_PCT/);
+    expect(() => loadConfig({ ...env, SETTLEMENT_MIN_LISTING_DAYS: "-1" })).toThrow(/SETTLEMENT_MIN_LISTING_DAYS/);
   });
 });

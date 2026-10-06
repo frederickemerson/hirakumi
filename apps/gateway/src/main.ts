@@ -26,7 +26,8 @@ if (!masumi) console.warn("[gateway] PAYMENT_SERVICE_URL/TOKEN not set: start_jo
 const escrowChain = config.packEscrow && config.blockfrostProjectId
   ? blockfrostEscrowChain({ baseUrl: process.env.BLOCKFROST_BASE_URL?.trim() || BLOCKFROST_PREPROD, projectId: config.blockfrostProjectId }, config.packEscrow.operatorMnemonic)
   : null;
-if (config.packEscrow && !escrowChain) console.warn("[gateway] PACK_MODE=escrow without BLOCKFROST_PROJECT_ID: escrow locks are never verified");
+if (config.packMode === "escrow" && !escrowChain) console.warn("[gateway] PACK_MODE=escrow without BLOCKFROST_PROJECT_ID: escrow locks are never verified");
+if (config.packMode === "hybrid" && !escrowChain) console.warn("[gateway] PACK_MODE=hybrid without escrow settings or BLOCKFROST_PROJECT_ID: every pack settles direct (the 402 still says what the policy recommends)");
 if (config.packEscrow && !config.packEscrow.operatorMnemonic) console.warn("[gateway] OPERATOR_MNEMONIC not set: the ChannelWatcher only observes (no Close / Raise / Settle)");
 const demoBuyer = demoBuyerFromEnv(process.env);
 if (!demoBuyer) console.warn("[gateway] BUYER_MNEMONIC or BLOCKFROST_PROJECT_ID not set: \"Buy a pack live\" answers 503");

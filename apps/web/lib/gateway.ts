@@ -1,4 +1,5 @@
 import { env } from "./env";
+import type { PackSettlement } from "./settlement";
 
 /** Why the OpenAPI check passed or failed (apps/gateway/src/internal.ts OwnershipReason). */
 export type ChallengeReason =
@@ -11,6 +12,8 @@ export type Gateway = {
   checkChallenge(apiId: string): Promise<ChallengeCheck>;
   reloadApi(apiId: string): Promise<void>;
   getHealth(apiId: string): Promise<GatewayHealth>;
+  /** How each pack settles now for a buyer who can escrow (the gateway's PACK_MODE and settlement policy). */
+  getSettlement(apiId: string): Promise<PackSettlement[]>;
 };
 
 /** `userMessage` is safe to show the seller; `message` is for logs. */
@@ -29,13 +32,13 @@ export function createGateway(opts: { baseUrl: string; token: string; fetchImpl?
   const doFetch = opts.fetchImpl ?? fetch;
   const timeoutMs = opts.timeoutMs ?? 20_000;
 
-  async function call(method: "GET" | "POST", path: string): Promise<Response> {
+  async function call(method: "GET" | "POST", path: string, ms = timeoutMs): Promise<Response> {
     let res: Response;
     try {
       res = await doFetch(`${base}${path}`, {
         method,
         headers: { authorization: `Bearer ${opts.token}`, accept: "application/json" },
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: AbortSignal.timeout(ms),
       });
     } catch (e) {
       throw new GatewayError(UNREACHABLE, `gateway ${method} ${path} failed: ${String(e)}`);
@@ -81,6 +84,22 @@ export function createGateway(opts: { baseUrl: string; token: string; fetchImpl?
         checkedAt: typeof b.checkedAt === "string" ? b.checkedAt : null,
         lastReasons: Array.isArray(b.lastReasons) ? b.lastReasons.filter((r): r is string => typeof r === "string") : [],
       };
+    },
+    async getSettlement(apiId) {
+      const path = `/internal/apis/${encodeURIComponent(apiId)}/settlement`;
+      // A public page waits on this: a short timeout, and the caller leaves the line out on any error.
+      const b = await body(await call("GET", path, 3_000), path);
+      if (!Array.isArray(b.packs)) throw new GatewayError(UNREADABLE, `gateway ${path} bad settlement`);
+      const mode = (v: unknown) => (v === "direct" || v === "escrow" ? v : null);
+      return b.packs.flatMap((p: Record<string, unknown>) => {
+        const m = mode(p?.mode);
+        if (typeof p?.packId !== "string" || !m || !Array.isArray(p.reasons)) return [];
+        const recommended = mode(p.recommended);
+        return [{
+          packId: p.packId, mode: m, reasons: p.reasons.filter((r): r is string => typeof r === "string"),
+          ...(recommended ? { recommended } : {}),
+        }];
+      });
     },
   };
 }

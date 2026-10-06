@@ -12,7 +12,7 @@ import { POST as verify } from "./verify/route";
 import { POST as walletChallenge } from "./wallet-challenge/route";
 
 function fakeGateway(check: Gateway["checkChallenge"]): Gateway {
-  return { checkChallenge: check, reloadApi: vi.fn(async () => undefined), getHealth: vi.fn() };
+  return { checkChallenge: check, reloadApi: vi.fn(async () => undefined), getHealth: vi.fn(), getSettlement: vi.fn(async () => []) };
 }
 const PASS: ChallengeCheck = { ok: true, reason: "verified", triedUrl: "https://price.example.dev/openapi.json", detail: "Found your code. The OpenAPI file is verified." };
 

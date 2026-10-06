@@ -2,11 +2,16 @@
 import { ruleHash, type RuleDefinition } from "@hirakumi/core";
 import { choosePack, formatMicros, parseCreditsRequired, safeJson, type FetchLike } from "./gatewayClient.js";
 import { PackPurchaseError, PaymentNotSentError, type EscrowPurchase, type OfferCheck } from "./payClient.js";
-import { EscrowOfferError, checkEscrowOffer, escrowCall, requestEscrowClose, type EscrowChannel, type IouKeyStore } from "./escrowPack.js";
+import {
+  DEFAULT_MAX_DIRECT_MICROS, EscrowOfferError, checkDirectOffer, checkEscrowOffer, escrowCall, offerMode, offerReasons, requestEscrowClose,
+  type EscrowChannel, type IouKeyStore,
+} from "./escrowPack.js";
 
 export type EscrowFlowDeps = {
   fetch: FetchLike;
-  buyEscrowPack: (buyUrl: string, keys: { receiptKey: string; refundAddress: string }, check: OfferCheck) => Promise<EscrowPurchase>;
+  buyEscrowPack: (
+    buyUrl: string, keys: { receiptKey: string; refundAddress: string; settlement?: "escrow" }, check: OfferCheck,
+  ) => Promise<EscrowPurchase>;
   store: IouKeyStore;
   refundAddress: string;
   log: (line: string) => void;
@@ -16,6 +21,10 @@ export type EscrowFlowDeps = {
 export type EscrowFlowOptions = {
   gatewayUrl: string; apiId: string; opId: string; query: Record<string, string>; calls: number; intervalMs: number;
   maxPackMicros: bigint; pendingTimeoutMs: number; pendingPollMs: number;
+  /** A hybrid gateway may settle direct; we pay that only up to this (default 5 tUSDM). */
+  maxDirectMicros?: bigint;
+  /** Send X-Hirakumi-Settlement: escrow and refuse any direct offer: unused credits always come back. */
+  requireEscrow?: boolean;
 };
 export type EscrowFlowSummary = { channelId: string | null; passed: number; signed: number; notMet: number; disputed: boolean; stoppedFor: string | null };
 
@@ -49,11 +58,12 @@ function storedFor(store: IouKeyStore, apiId: string, packIds: string[]): Escrow
  * when we kept the signed payment; otherwise refuse to buy another pack until the user closes it.
  */
 async function resumeUnaccounted(deps: EscrowFlowDeps, apiId: string): Promise<EscrowChannel | undefined> {
-  const open = deps.store.list(apiId).filter((c) => c.channelId && !c.token && !c.abandoned && !c.closeRequested);
+  const open = deps.store.list(apiId).filter((c) => (c.channelId || c.pendingPayment) && !c.token && !c.abandoned && !c.closeRequested);
   for (const c of open) {
     const pp = c.pendingPayment;
+    const what = c.channelId ? `channel ${c.channelId}` : "a direct pack";
     if (pp) {
-      deps.log(`Recovering the token for the escrow payment from ${pp.at} (channel ${c.channelId})...`);
+      deps.log(`Recovering the token for the payment from ${pp.at} (${what})...`);
       try {
         const res = await deps.fetch(`${pp.buyUrl.replace(/\/+$/, "")}/recover`, {
           method: "POST",
@@ -64,15 +74,15 @@ async function resumeUnaccounted(deps: EscrowFlowDeps, apiId: string): Promise<E
           c.token = body.token;
           c.pendingPayment = null;
           deps.store.put(c);
-          deps.log(`Recovered the token for channel ${c.channelId}.`);
+          deps.log(`Recovered the token for ${what}.`);
           return c;
         }
-        deps.log(`Recovery for channel ${c.channelId} failed: HTTP ${res.status}.`);
+        deps.log(`Recovery for ${what} failed: HTTP ${res.status}.`);
       } catch {
-        deps.log(`Recovery for channel ${c.channelId} failed: the gateway did not answer.`);
+        deps.log(`Recovery for ${what} failed: the gateway did not answer.`);
       }
     }
-    throw new Error(`An earlier escrow payment for channel ${c.channelId} has no token yet. Run --close (or retry later). Not buying another pack.`);
+    throw new Error(`An earlier payment for ${what} has no token yet. ${c.channelId ? "Run --close (or retry later)" : "Retry later"}. Not buying another pack.`);
   }
   return undefined;
 }
@@ -98,45 +108,72 @@ export async function runEscrowPack(deps: EscrowFlowDeps, o: EscrowFlowOptions):
   } else {
     const pack = choosePack(offer, o.maxPackMicros);
     const ch = deps.store.ensure(o.apiId, pack.packId, deps.refundAddress, deps.now());
-    deps.log(`Buying escrow pack ${pack.packId}: ${pack.calls} calls for ${formatMicros(pack.price)} tUSDM, locked at the pack_escrow script.`);
+    deps.log(`Buying pack ${pack.packId}: ${pack.calls} calls for ${formatMicros(pack.price)} tUSDM, with an IOU key so the gateway may settle it in escrow.`);
     deps.log(`IOU key ${ch.publicKey.slice(0, 16)}…, refunds to ${deps.refundAddress}`);
     const expected = { calls: pack.calls, priceMicros: BigInt(pack.price), ruleHash: offer.ruleHash };
+    // What our check approved: the gateway's later answer never changes it.
+    let approved: "direct" | "escrow" | null = null;
     const check: OfferCheck = (req) => {
+      approved = null;
+      const reasons = offerReasons(req);
+      if (offerMode(req) === "direct") {
+        if (o.requireEscrow) throw new EscrowOfferError("refusing to pay: we asked for escrow and the gateway offered direct");
+        checkDirectOffer(req, expected, o.maxDirectMicros ?? DEFAULT_MAX_DIRECT_MICROS);
+        deps.log(`Settlement: direct${reasons.length ? `, because: ${reasons.join(", ")}` : ""}. Paying the seller ${formatMicros(req.amount)} tUSDM.`);
+        approved = "direct";
+        return;
+      }
       const d = checkEscrowOffer(req, { receiptKey: ch.publicKey, refundAddress: deps.refundAddress, maxPackMicros: o.maxPackMicros }, expected);
+      if (reasons.length) deps.log(`Settlement: escrow, because: ${reasons.join(", ")}.`);
       deps.log(`Datum checked: ${d.maxCalls} × ${formatMicros(d.pricePerCall)} tUSDM, fee ${d.feeBps} bps, contest ${Number(d.contestPeriod) / 1000}s, channel ${d.channelId}`);
       // Record the channel BEFORE paying: if the answer is lost after the lock lands, we can still close it.
       ch.channelId = d.channelId;
       ch.ruleHash = `sha256:${d.ruleHash}`;
       save(ch);
+      approved = "escrow";
     };
     let p: EscrowPurchase;
     try {
-      p = await deps.buyEscrowPack(pack.buyUrl, { receiptKey: ch.publicKey, refundAddress: deps.refundAddress }, check);
+      p = await deps.buyEscrowPack(
+        pack.buyUrl, { receiptKey: ch.publicKey, refundAddress: deps.refundAddress, ...(o.requireEscrow ? { settlement: "escrow" as const } : {}) }, check,
+      );
     } catch (e) {
       if (e instanceof PaymentNotSentError) {
         // Nothing was signed, so no lock can land: forget the channel (the key stays unused).
         ch.channelId = null;
         ch.ruleHash = null;
         save(ch);
-      } else if (e instanceof PackPurchaseError && e.paymentSignature && e.recoverySecret && ch.channelId) {
+      } else if (e instanceof PackPurchaseError && e.paymentSignature && e.recoverySecret && (ch.channelId || approved === "direct")) {
         ch.pendingPayment = { paymentSignature: e.paymentSignature, recoverySecret: e.recoverySecret, buyUrl: pack.buyUrl, at: deps.now().toISOString() };
+        if (approved === "direct") { ch.direct = true; ch.ruleHash = offer.ruleHash; }
         save(ch);
-        deps.log(`The lock payment for channel ${ch.channelId} was sent but the purchase failed (HTTP ${e.status}). It is saved: run again to recover the token, or --close to get the refund.`);
+        deps.log(`The payment${ch.channelId ? ` for channel ${ch.channelId}` : ""} was sent but the purchase failed (HTTP ${e.status}). It is saved: run again to recover the token${ch.channelId ? ", or --close to get the refund" : ""}.`);
       }
       throw e;
     }
-    if (!ch.channelId) throw new EscrowOfferError("the purchase completed without our datum check");
-    ch.token = p.token;
-    ch.pendingPayment = null;
-    if (p.channelId !== ch.channelId) {
-      // Keep the datum's channel id: that is the lock on-chain and the only one our IOUs may be bound to.
-      ch.disputed = true;
+    if (approved === "direct") {
+      // A plain credit token: calls are still checked locally, there is nothing to sign or close.
+      ch.direct = true;
+      ch.token = p.token;
+      ch.ruleHash = offer.ruleHash;
+      ch.pendingPayment = null;
       save(ch);
-      throw new EscrowOfferError(`gateway returned channel ${p.channelId} but the lock's datum is ${ch.channelId}`);
+      deps.log(`Paid direct: ${p.txHash ? `https://preprod.cardanoscan.io/transaction/${p.txHash}` : "(no tx header)"}  ${p.credits} credits`);
+      c = ch;
+    } else {
+      if (!ch.channelId) throw new EscrowOfferError("the purchase completed without our datum check");
+      ch.token = p.token;
+      ch.pendingPayment = null;
+      if (p.channelId !== ch.channelId) {
+        // Keep the datum's channel id: that is the lock on-chain and the only one our IOUs may be bound to.
+        ch.disputed = true;
+        save(ch);
+        throw new EscrowOfferError(`gateway returned channel ${p.channelId} but the lock's datum is ${ch.channelId}`);
+      }
+      save(ch);
+      deps.log(`Locked: ${p.txHash ? `https://preprod.cardanoscan.io/transaction/${p.txHash}` : "(no tx header)"}  channel ${p.channelUrl ?? p.channelId}`);
+      c = ch;
     }
-    save(ch);
-    deps.log(`Locked: ${p.txHash ? `https://preprod.cardanoscan.io/transaction/${p.txHash}` : "(no tx header)"}  channel ${p.channelUrl ?? p.channelId}`);
-    c = ch;
   }
   s.channelId = c.channelId;
 
