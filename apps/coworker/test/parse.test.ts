@@ -52,3 +52,39 @@ describe("toOpId", () => {
     expect(toOpId(undefined, "GET", "/history/{symbol}")).toBe("get_history_symbol");
   });
 });
+
+describe("parseOpenApi: paths that leave the proven folder (audit C1)", () => {
+  const spec = (paths: string[]) =>
+    JSON.stringify({
+      openapi: "3.0.3",
+      info: { title: "Attacker", version: "1" },
+      servers: [{ url: "/~attacker" }],
+      paths: Object.fromEntries(
+        ["/ok", ...paths].map((p) => [p, { get: { operationId: `op${Math.random().toString(36).slice(2)}`, responses: { "200": { description: "ok" } } } }]),
+      ),
+    });
+
+  it.each([
+    "/../~victim/data",
+    "/%2e%2e/~victim/data",
+    "/%2E%2E/~victim/data",
+    "/.%2e/~victim/data",
+    "/a/./b",
+    "/a/%2E/b",
+    "/a;b",
+    "/a\\..\\b",
+    "/a%2fb",
+    "/a%2F..%2Fb",
+    "/a%5cb",
+  ])("skips %j and says why", async (path) => {
+    const r = await parseOpenApi(spec([path]));
+    expect(r.operations.map((o) => o.path)).toEqual(["/ok"]);
+    expect(r.skipped).toEqual([{ method: "GET", path, reason: expect.stringMatching(/^its path has (a dot segment|a ';'|a backslash|an encoded slash)/) }]);
+  });
+
+  it("keeps ordinary paths with dots inside a segment", async () => {
+    const r = await parseOpenApi(spec(["/v1.2/data.json", "/files/{name}", "/a..b"]));
+    expect(r.operations.map((o) => o.path)).toEqual(["/ok", "/v1.2/data.json", "/files/{name}", "/a..b"]);
+    expect(r.skipped).toEqual([]);
+  });
+});

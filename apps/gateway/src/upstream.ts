@@ -1,4 +1,4 @@
-import { safeFetch, UpstreamBlockedError, UpstreamTimeoutError, UpstreamTooLargeError, type UpstreamResult } from "@hirakumi/core";
+import { safeFetch, urlWithinBase, UpstreamBlockedError, UpstreamTimeoutError, UpstreamTooLargeError, type UpstreamResult } from "@hirakumi/core";
 import type { ApiRow, OperationRow } from "@hirakumi/db";
 import type { LoadedOp } from "./registry";
 
@@ -22,6 +22,11 @@ export function buildUpstreamRequest(
   });
   const prefix = api.path_prefix.replace(/\/+$/, "");
   const url = new URL(api.origin.replace(/\/+$/, "") + prefix + path);
+  // Defence in depth (audit C1): URL parsing collapses dot segments and can even move the host, so check the
+  // result, not the parts. Every upstream call (paid calls, escrow jobs, previews, QA, monitor) is built here.
+  if (!urlWithinBase(url, api.origin, api.path_prefix)) {
+    throw new Error(`blocked: the endpoint path ${op.path} resolves outside the API's folder (${prefix || "/"}) on ${new URL(api.origin).origin}`);
+  }
   const method = op.method.toUpperCase();
   const headers: Record<string, string> = { accept: "application/json", "user-agent": "hirakumi-gateway/0.1" };
   // Shared input convention (P3 contract addition 3): `{name}` fields fill the path, a field named

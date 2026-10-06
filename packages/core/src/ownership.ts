@@ -80,6 +80,33 @@ const AMBIGUOUS_PATH = /%2f|%5c|%2e|;/i;
 const asDir = (path: string) => (path.endsWith("/") ? path : `${path}/`);
 
 /**
+ * Why an endpoint path could step outside the folder its base path was proven for, or null when it is plain.
+ * URLs collapse "." and ".." segments (also when written %2e, any case), and some servers also treat "\",
+ * ";" or an encoded "/" or "\" as separators. Appended to a proven base path, any of these could reach
+ * another tenant's folder on the same host.
+ */
+export function unsafePathReason(path: string): string | null {
+  if (path.includes("\\")) return "its path has a backslash";
+  if (/%2f|%5c/i.test(path)) return "its path has an encoded slash";
+  if (path.includes(";")) return "its path has a ';'";
+  if (path.split("/").some((seg) => /^\.{1,2}$/.test(seg.replace(/%2e/gi, ".")))) return "its path has a dot segment (. or ..)";
+  return null;
+}
+
+/** True when a built upstream URL is on the API's origin and at or under its proven base path. */
+export function urlWithinBase(url: URL, origin: string, pathPrefix: string): boolean {
+  let base: URL;
+  try {
+    base = new URL(pathPrefix || "/", origin);
+  } catch {
+    return false;
+  }
+  if (url.origin !== base.origin) return false;
+  const prefix = base.pathname.replace(/\/+$/, "");
+  return prefix === "" || url.pathname === prefix || url.pathname.startsWith(`${prefix}/`);
+}
+
+/**
  * The security binding between the spec the seller edited and the API Hirakumi will sell:
  * 1. the spec is served from the API's origin (scheme, host and port);
  * 2. the API's base path (path_prefix, and the spec's current servers[0] when given) lies at or under

@@ -1,7 +1,7 @@
 import SwaggerParser from "@apidevtools/swagger-parser";
 import type { OpenAPI } from "openapi-types";
 import YAML, { YAMLParseError } from "yaml";
-import { firstServerUrl } from "@hirakumi/core";
+import { firstServerUrl, unsafePathReason } from "@hirakumi/core";
 import { PermanentError } from "../errors.js";
 
 export class OpenApiError extends PermanentError {}
@@ -152,6 +152,12 @@ export async function parseOpenApi(text: string): Promise<ParseResult> {
       const op = item[m];
       if (!isRecord(op)) continue;
       const method = m.toUpperCase() as HttpMethod;
+      // The proof covers one folder; a path like /../other would make the upstream URL leave it.
+      const unsafe = unsafePathReason(path);
+      if (unsafe) {
+        skipped.push({ method, path, reason: `${unsafe}, which could reach outside your API's folder` });
+        continue;
+      }
       if (requiresAuth(op, doc)) {
         skipped.push({ method, path, reason: "needs authentication (not supported yet)" });
         continue;

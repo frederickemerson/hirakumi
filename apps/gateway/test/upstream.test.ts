@@ -39,6 +39,21 @@ describe("buildUpstreamRequest", () => {
   it.each([[".."], ["."], [""], ["%2e%2e"]])("refuses the dot-segment or empty path parameter %j (stays inside the verified prefix)", (id) => {
     expect(() => buildUpstreamRequest({ origin: "https://a.example", path_prefix: "/v1" }, { method: "GET", path: "/items/{id}" }, { id })).toThrow(/path parameter/);
   });
+  it.each([["/../~victim/data"], ["/%2e%2e/~victim/data"], ["/%2E%2E/~victim/data"]])(
+    "blocks an operation path %j that leaves the proven folder (audit C1)",
+    (path) => {
+      expect(() => buildUpstreamRequest({ origin: "https://host", path_prefix: "/~attacker" }, { method: "GET", path }, {}))
+        .toThrow(/outside the API's folder/);
+    },
+  );
+  it("blocks a stored path that would change the host (audit C1)", () => {
+    expect(() => buildUpstreamRequest({ origin: "https://host", path_prefix: "" }, { method: "GET", path: "@evil.example/x" }, {}))
+      .toThrow(/outside the API's folder/);
+  });
+  it("still allows the base path itself and paths under it", () => {
+    expect(buildUpstreamRequest({ origin: "https://host", path_prefix: "/~attacker" }, { method: "GET", path: "" }, {}).url).toBe("https://host/~attacker");
+    expect(buildUpstreamRequest({ origin: "https://host", path_prefix: "/~attacker" }, { method: "GET", path: "/data" }, {}).url).toBe("https://host/~attacker/data");
+  });
   it("fails on a missing path parameter", () => {
     expect(() => buildUpstreamRequest({ origin: "https://a.example", path_prefix: "/" }, { method: "GET", path: "/p/{id}" }, {})).toThrow(/id/);
   });
@@ -79,6 +94,16 @@ describe("runOperation", () => {
   it("blocked origin", async () => {
     expect(await runOperation({ origin: "https://169.254.169.254", path_prefix: "/" }, op(), { symbol: "ADA" }, { timeoutMs: 200 }))
       .toMatchObject({ execution: "blocked", verdict: "n/a" });
+  });
+  it("a path that leaves the proven folder is blocked with a reason and never reaches the network (audit C1)", async () => {
+    stub.setMode("ok");
+    const before = stub.hits();
+    const evil = op();
+    evil.row = { ...evil.row, path: "/%2e%2e/price" };
+    const o = await runOperation({ origin: stub.origin, path_prefix: "/~attacker" }, evil, { symbol: "ADA" }, { timeoutMs: 500 });
+    expect(o).toMatchObject({ execution: "blocked", verdict: "n/a", result: null });
+    expect(o.reasons[0]).toMatch(/outside the API's folder/);
+    expect(stub.hits()).toBe(before);
   });
   it("probe header is sent only for probes", async () => {
     stub.setMode("ok");
