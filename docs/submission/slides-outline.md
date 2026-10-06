@@ -13,7 +13,7 @@
 4. **Demo:** the video (embedded) or 3 screenshots: 402 with price and promise hash → Cardanoscan pack tx → 422 "credits unchanged" + Down.
 5. **How it fits Masumi:** table "Masumi already has → Hirakumi adds":
    registry NFT → one-step registration from OpenAPI; `/availability` health check → answers from real test calls; escrow auto-refund → an acceptance rule decides whether a result is submitted; MIP-004 hashes → rule hash published before purchase; Sokosumi coworkers → the onboarding coworker plus health alerts.
-6. **Architecture:** gateway (Express on EC2: x402 packs, credits, MIP-003, monitor) · Masumi payment service (registry, escrow) · Postgres · Caddy · coworker · Next.js dashboard on Vercel · `@x402/*` 2.26.0 on Cardano preprod with the hosted facilitator. Optional box: Chainlink CRE scorer (simulation) → ScoreRegistry on Base Sepolia.
+6. **Architecture:** gateway (Express on EC2: x402 packs, credits, MIP-003, monitor) · Masumi payment service (registry, escrow) · Postgres · Caddy · coworker · Next.js dashboard on Vercel · `@x402/*` 2.26.0 on Cardano preprod with the hosted facilitator.
 7. **Business model:**
    - Onboarding fee: billed in Sokosumi credits, about $10–20 per API.
    - Take rate on packs: 3% (second output if x402 supports it, else billed monthly).

@@ -11,12 +11,15 @@ Hirakumi is a Sokosumi coworker that takes a read-only OpenAPI API to market in 
 - **Credits only on pass:** a paid call atomically reserves one credit (`UPDATE … WHERE remaining > 0 RETURNING`), proxies upstream, and checks the response against a JSON Schema rule (ajv plus a `maxAgeSeconds` freshness keyword). Pass → commit and 200. Fail → release and 422 with the failing paths.
 - **Masumi:** registration on the Masumi registry through our own payment-service node; MIP-003 endpoints (`start_job`, `status`, `availability`, `input_schema`); MIP-004 input and output hashes; escrow jobs where a failing result is simply not submitted, so Masumi's automatic refund after `submitResultTime` protects the buyer.
 - **Truthful health:** an in-process monitor runs saved test inputs against the full rule (10s interval in demo mode). After 2 failures `/availability` returns 503, so the Masumi registry marks the agent Offline, and the paid routes answer 503 before any payment.
-- **Sokosumi coworker:** onboarding state machine with one LLM step (Claude, structured output, no tools) for descriptions and plain-English rule text; health alerts as comments on the seller's task.
-- **Chainlink CRE (stretch, simulation):** a CRE workflow run in simulation (cron trigger, HTTP with consensus) probes each live API's `/availability` and the seller endpoint, then writes uptime and pass-rate scores to a `ScoreRegistry` consumer contract on Base Sepolia via `writeReport`.
-- **Measured on preprod:** (measured: pack payment seconds), (measured: added gateway latency p50 ms), (measured: seconds from break to Down).
+- **Sokosumi coworker:** onboarding state machine with LLM steps (OpenAI `gpt-5.5`, structured output via `responses.parse`, no tools) that infer the promise from real test calls and write plain-English rule text; health alerts as comments on the seller's task.
+- **Receipts:** every credit call is logged with verdict, rule hash and MIP-004 style input/output hashes; the token holder reads them at `GET /a/<apiId>/receipts`.
+- **Measured on preprod (6 Oct 2026):** x402 pack payments settled in 16.5 s and 9.4 s, paid straight to the seller; paid calls through the gateway returned in about 0.3 s end to end; an escrow job that passed was locked, answered and verified within about 2 minutes; one whose answer was stale was refused, nothing was submitted and Masumi's refund unlocked automatically.
+
+## Who you trust
+Buyers pick their trust level. Packs are fast and cheap: the money goes to the seller on Cardano at purchase, and Hirakumi's gateway counts the credits, using one only when a response passes a rule whose hash was published before payment. That part is off-chain, so buyers can audit it through their receipts, but a wrongly charged credit is not refunded by the chain. Escrow needs much less trust: Masumi's contract holds the money, and if we don't deliver a passing result, Cardano refunds the buyer automatically, even if Hirakumi is offline. The pass/fail check itself runs on our gateway in both modes.
 
 ## Deployment and scaling
-- Today: one AWS EC2 instance (ap-southeast-1) with Docker Compose (gateway, Masumi payment service, Postgres, Caddy for HTTPS, coworker) plus Vercel for the dashboard and the demo seller.
+- Today: one AWS EC2 instance (us-east-1) with Docker Compose (gateway, Masumi payment service and its Postgres, Caddy for HTTPS, coworker, demo seller API), Neon Postgres for application data, and Vercel for the dashboard.
 - Scale-out: the gateway is stateless apart from Postgres and in-memory health, so it scales horizontally behind Caddy with health state moved to Postgres or Redis; one payment-service node serves many sellers; credit checks are one indexed lookup plus one atomic update, with no on-chain step per call.
 - Production path: mainnet USDM, packs paid into escrow for buyer protection, a 3% take rate as a second output, and drift detection.
 

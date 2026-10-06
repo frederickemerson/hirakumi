@@ -13,8 +13,8 @@
 ## T-15 min: screen
 - [ ] 1920×1080, browser zoom 125%, terminal font ≥ 18pt, dark theme, Do Not Disturb on, Slack/Discord closed.
 - [ ] No secrets on screen: no `.env`, no `vercel env`, shell history cleared (`clear`), the ADMIN_TOKEN curl uses `$ADMIN_TOKEN`.
-- [ ] Browser tabs, in order: (1) slides; (2) Sokosumi task; (3) Hirakumi web setup/review; (4) Hirakumi API overview; (5) Masumi agent explorer filtered to "Hirakumi"; (6) preprod.cardanoscan.io (buyer address); (7) payment-service escrow view; (8) Base Sepolia ScoreRegistry on sepolia.basescan.org (only if CRE shipped).
-- [ ] Terminal A (buyer): `pnpm --filter @hirakumi/buyer pack -- --api $DEMO_API_ID --calls 30 --interval 2000` typed but not run.
+- [ ] Browser tabs, in order: (1) slides; (2) Sokosumi task; (3) Hirakumi web setup/review; (4) Hirakumi API overview; (5) the agent's registry token on preprod.cardanoscan.io (the masumi.network explorer does not index the payment-service 0.29 registry yet); (6) preprod.cardanoscan.io (buyer address); (7) payment-service escrow view.
+- [ ] Terminal A (buyer): `pnpm --filter @hirakumi/buyer run pack -- --api $DEMO_API_ID --calls 30 --interval 2000` typed but not run.
 - [ ] Terminal B (seller): the break curl typed but not run.
 
 ## Takes
