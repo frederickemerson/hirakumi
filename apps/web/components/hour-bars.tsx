@@ -2,21 +2,15 @@
 
 import { useState } from "react";
 import type { HourState, StatusHour } from "@/lib/repo/status";
+import { hourLabel } from "@/lib/status-labels";
 import { cn } from "@/lib/utils";
 
-export const HOUR_STATE_LABEL: Record<HourState, string> = { up: "Live", degraded: "Some checks failed", down: "Down", no_data: "No checks" };
 const STATE_CLASS: Record<HourState, string> = {
   up: "bg-sky",
   degraded: "bg-canary",
   down: "bg-coral",
   no_data: "bg-chalk",
 };
-
-export const hhmm = (d: Date) => `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")} UTC`;
-
-export function hourLabel(h: StatusHour): string {
-  return `${hhmm(new Date(h.start))}: ${HOUR_STATE_LABEL[h.state]}${h.probes ? ` (${h.passed} of ${h.probes} checks passed)` : ""}`;
-}
 
 /**
  * 24 hourly health bars. Hover shows a tooltip on desktop; on a phone, tapping a bar writes its label

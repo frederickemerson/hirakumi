@@ -1,6 +1,7 @@
 import { formatHealthReasons } from "@hirakumi/core";
 import type { Incident } from "@/lib/repo/stats";
-import { hhmm, HourBars } from "@/components/hour-bars";
+import { HourBars } from "@/components/hour-bars";
+import { hhmm } from "@/lib/status-labels";
 import type { PublicStatus } from "@/lib/repo/status";
 
 const pct = (n: number | null) => (n === null ? "No data yet" : `${n}%`);

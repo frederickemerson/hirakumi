@@ -20,7 +20,7 @@ export function OverviewStatGrid({ stats }: { stats: OverviewStats }) {
         note={`${stats.passDay} passed, ${stats.failDay} didn't (no credit used)`} />
       <Stat label="Received from packs" value={`${formatTusdm(stats.packEarningsMicros)} tUSDM`} note={`${stats.packSales} packs sold`} />
       <Stat label="Received from single jobs" value={`${formatTusdm(stats.escrowNetMicros)} tUSDM`}
-        note={`${stats.escrowJobs} jobs, ${formatTusdm(stats.escrowGrossMicros)} paid, Masumi kept ${formatTusdm(stats.escrowFeeMicros)}`} />
+        note={`${stats.escrowJobs} ${stats.escrowJobs === 1 ? "job" : "jobs"}, ${formatTusdm(stats.escrowGrossMicros)} paid, Masumi kept ${formatTusdm(stats.escrowFeeMicros)}`} />
     </div>
   );
 }

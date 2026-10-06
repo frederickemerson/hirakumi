@@ -289,7 +289,7 @@ function OfferCard({ offer, body }: { offer: Offer; body: unknown }) {
       <ul style={stagger(1)} className="animate-rise space-y-3 border-t border-ink pt-4">
         {offer.packs.map((p) => (
           <li key={p.packId} className="rounded-[2px] border-2 border-ink bg-frost p-4">
-            <p className="text-h-sm font-medium tabular-nums">{offerHeadline(p)}</p>
+            <p className="text-sub font-medium tabular-nums sm:text-h-sm">{offerHeadline(p)}</p>
             <p className="mt-1 text-body text-graphite">
               Paid once on Cardano preprod. A credit is used only when the answer keeps the promise.
             </p>
