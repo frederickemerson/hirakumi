@@ -59,7 +59,7 @@ export function Receipt({ className }: { className?: string }) {
         prev = r.left;
         const at = (i * ROW_STEP_MS) / 1000 + 0.22;
         tl.to(n, { v: r.left, duration: 0.18, snap: "v", onUpdate: () => { el.textContent = String(Math.round(n.v)); } }, at);
-        tl.fromTo(el, { scale: 1.14 }, { scale: 1, duration: 0.34, ease: "back.out(2.2)" }, at);
+        tl.fromTo(el, { scale: 1.08 }, { scale: 1, duration: 0.3, ease: "power2.out" }, at);
       });
     },
     { scope: root },
@@ -76,11 +76,11 @@ export function Receipt({ className }: { className?: string }) {
         <dl className="px-5 pt-4 pb-4 text-body">
           <div className="space-y-2">
             <Line label="Pack">{`${PACK} calls for 2.00 tUSDM`}</Line>
-            <Line label="Paid to">seller wallet in 16.5 s</Line>
+            <Line label="Paid to">seller wallet in 9.4 s</Line>
           </div>
           <div className="mt-3 border-t border-dotted border-silver pt-3">
             <dt className="text-caption uppercase tracking-[0.04em] text-graphite">
-              Promise for <span className="font-medium text-ink">GET /price</span>
+              A good answer to <span className="font-medium text-ink">GET /price</span> has
             </dt>
             <dd className="mt-1">symbol, usd, change24h and a timestamp under 15 min old</dd>
           </div>
@@ -110,7 +110,7 @@ export function Receipt({ className }: { className?: string }) {
         </div>
       </div>
       <figcaption className="mt-4 text-body text-graphite">
-        Every answer is checked against the promise before a credit moves. Buyers can audit every call at /receipts.
+        Every answer is checked against that rule before a credit is used. Stale, empty and failed answers are free.
       </figcaption>
     </figure>
   );

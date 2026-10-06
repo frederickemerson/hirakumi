@@ -2,7 +2,7 @@
 
 import { useGSAP } from "@gsap/react";
 import { gsap } from "gsap";
-import { createElement, useRef, type ReactNode } from "react";
+import { createElement, useRef, type CSSProperties, type ReactNode } from "react";
 import { motionAllowed, withScrollTrigger } from "@/lib/motion";
 
 gsap.registerPlugin(useGSAP);
@@ -19,10 +19,13 @@ type Props = {
 };
 
 /**
- * Snaps its children into place once as they scroll into view: opacity settles fast, the vertical
- * travel lands with a small overshoot, so the element reads as "clicking in" rather than drifting.
+ * Settles its children into place once as they scroll into view.
+ *
+ * The hidden starting state is plain CSS (globals.css, `html.js [data-reveal-root]`), gated by the
+ * `js` class that app/layout.tsx sets before first paint. So the server HTML never flashes visible
+ * and then vanishes on hydration, and without JavaScript or with reduced motion everything is shown.
  * Mark children with data-reveal to stagger them; otherwise the wrapper itself moves.
- * Only transform and opacity change, so nothing shifts layout.
+ * Only transform and opacity change, with a plain ease-out (no overshoot).
  */
 export function Reveal({ children, className, as = "div", id, y = 18, stagger = 0.07 }: Props) {
   const ref = useRef<HTMLElement | null>(null);
@@ -30,15 +33,30 @@ export function Reveal({ children, className, as = "div", id, y = 18, stagger = 
     () => {
       const el = ref.current;
       if (!el || !motionAllowed()) return;
-      withScrollTrigger();
+      const ScrollTrigger = withScrollTrigger();
       const marked = Array.from(el.querySelectorAll<HTMLElement>("[data-reveal]"));
       const targets = marked.length > 0 ? marked : [el];
-      gsap.set(targets, { autoAlpha: 0, y });
-      const tl = gsap.timeline({ scrollTrigger: { trigger: el, start: "top 86%", once: true } });
-      tl.to(targets, { autoAlpha: 1, duration: 0.3, ease: "power2.out", stagger, overwrite: "auto" }, 0);
-      tl.to(targets, { y: 0, duration: 0.5, ease: "back.out(1.4)", stagger, overwrite: "auto" }, 0);
+      const reveal = () => {
+        // Hand the hidden state from CSS to inline styles, then release the CSS gate and animate.
+        gsap.set(targets, { opacity: 0, y });
+        el.setAttribute("data-revealed", "");
+        gsap.to(targets, {
+          opacity: 1,
+          y: 0,
+          duration: 0.55,
+          ease: "power3.out",
+          stagger,
+          overwrite: "auto",
+          clearProps: "opacity,transform",
+        });
+      };
+      ScrollTrigger.create({ trigger: el, start: "top 95%", once: true, onEnter: reveal });
     },
     { scope: ref },
   );
-  return createElement(as, { ref, className, id }, children);
+  return createElement(
+    as,
+    { ref, className, id, "data-reveal-root": "", style: { "--reveal-y": `${y}px` } as CSSProperties },
+    children,
+  );
 }

@@ -3,6 +3,7 @@ import type pg from "pg";
 import { withTx, type Db } from "./db.js";
 import { PermanentError } from "./errors.js";
 import { enqueueMessage } from "./messages.js";
+import type { HumanStep } from "./humanSteps.js";
 
 export const MAX_ATTEMPTS = 3;
 export type StepName = "parse" | "describe" | "qa" | "register";
@@ -12,6 +13,14 @@ export type StepRow = {
   attempts: number;
   output: Record<string, unknown> | null;
   updated_at: Date;
+};
+
+/** The web stepper name for each driven step (used on Sokosumi task comments). */
+export const HUMAN_STEP_OF: Record<StepName, HumanStep> = {
+  parse: "Read your file",
+  describe: "Describe endpoints",
+  qa: "Test calls",
+  register: "Register on Masumi",
 };
 
 export const STEP_LABELS: Record<StepName, string> = {
@@ -129,6 +138,7 @@ export async function runStep(
           body: `I had to stop at "${STEP_LABELS[step]}": ${text}`,
           taskStatus: "INPUT_REQUIRED",
           dedupeKey: `failed:${apiId}:${step}:${randomUUID()}`,
+          step: HUMAN_STEP_OF[step],
         });
       }
       return outcome;

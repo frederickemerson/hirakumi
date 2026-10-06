@@ -8,10 +8,10 @@ const columns = [
     title: "Product",
     links: [
       { href: "/#how", label: "How it works" },
-      { href: "/#trust", label: "Where the money sits" },
+      { href: "/#trust", label: "How the money is protected" },
       { href: DEMO_API, label: "Live status page" },
       { href: `${DEMO_API}/try`, label: "Try a live API" },
-      { href: "/login", label: "Put your API on the market" },
+      { href: "/login", label: "List your API" },
     ],
   },
   {
@@ -30,13 +30,13 @@ export function SiteFooter() {
     <footer className="border-t border-ink bg-frost">
       <div className="mx-auto grid w-full max-w-[1200px] gap-10 px-4 py-14 md:grid-cols-[1.4fr_1fr_1fr]">
         <div className="space-y-4">
-          <Link href="/" className="flex items-center gap-2 text-body-lg font-semibold">
+          <Link href="/" className="flex items-center gap-2.5 text-body-lg font-bold tracking-tight">
             <Mascot className="h-8" />
             <span>Hirakumi</span>
           </Link>
           <p className="max-w-xs text-body text-graphite">
-            開く <span className="text-ink">hiraku</span>, to open. Hirakumi puts your API on the AI-agent market on Cardano and
-            charges buyers only for answers that keep your promise.
+            開く <span className="text-ink">hiraku</span>, to open. Hirakumi makes your API payable by AI agents on Cardano.
+            Buyers pay nothing for answers that break your promise.
           </p>
         </div>
         {columns.map((col) => (

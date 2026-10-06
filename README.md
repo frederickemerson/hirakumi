@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/brand/logo.png" alt="Hirakumi" width="420"></p>
+
 # Hirakumi (開く)
 
 Turn any read-only OpenAPI API into a paid supplier for AI agents on Cardano. Buyers pay once for a pack of calls with x402, and a credit is used **only when the response passes the published promise**. Built for TOKEN2049 Origins, Cardano "Agentic Commerce" track. Preprod only.
@@ -17,7 +19,7 @@ Turn any read-only OpenAPI API into a paid supplier for AI agents on Cardano. Bu
 | If Hirakumi disappears | Buyer closes and settles alone and gets everything unsigned back | Remaining credits can't be used | No result, so Cardano refunds |
 | Cost | One lock plus one close/settle per pack | ~0.014 ADA overhead per call | A full payment and minutes per job |
 
-The pass/fail check runs on our gateway in every mode, against a rule whose hash is published before payment. The escrow channel is the validator in `contracts/pack-escrow` (Aiken, Plutus V3, 164 tests), proven end to end on preprod with the previous validator version (the security fixes of 6 Oct changed the script address; the re-run is pending, see `docs/submission/submission-checklist.md`).
+The pass/fail check runs on our gateway in every mode, against a rule whose hash is published before payment. The escrow channel is the validator in `contracts/pack-escrow` (Aiken, Plutus V3, 175 tests), proven end to end on preprod, including after the 6 Oct security fixes that changed its script address (see `docs/submission/submission-checklist.md`).
 
 ## Where each technology is used
 
@@ -30,6 +32,7 @@ The pass/fail check runs on our gateway in every mode, against a rule whose hash
 ### Masumi
 - `packages/masumi/`: payment-service and registry client (registration, payment requests, result submission, purchases)
 - `apps/gateway/`: MIP-003 endpoints (`start_job`, `status`, `availability`, `input_schema`), MIP-004 hashing via `packages/core/`
+  - `start_job` allows 10 requests per minute per client address. Sokosumi calls `start_job` with only a `Content-Type` header (no key, no signature, and MIP-003 defines none), and its backend uses a few shared IPs. Set `START_JOB_TRUSTED_CIDRS` (comma-separated IPv4/IPv6 CIDRs, empty by default) to give each address in those ranges 600 per minute. The gateway trusts exactly one proxy (Caddy), so a client can't fake its address with `X-Forwarded-For`.
 - `agents/buyer/src/escrowBuyer.ts`, `agents/buyer/src/cli/escrow.ts`: escrow buyer agent
 - `apps/coworker/`: Sokosumi coworker (onboarding, health alerts); LLM steps use OpenAI structured output (`gpt-5.5`, `responses.parse`)
 - `docker-compose.yml`: the official Masumi payment-service node
@@ -52,6 +55,9 @@ pnpm --filter @hirakumi/price-api dev                                   # demo s
 pnpm --filter @hirakumi/buyer run pack -- --api <apiId> --calls 10      # buy a pack, call with credits ("run": plain `pack` is pnpm's own command)
 pnpm --filter @hirakumi/buyer run escrow -- --api <apiId>                # one escrow job
 ```
+### Sell an API from a Sokosumi task
+Assign a task to the Hirakumi coworker and put your OpenAPI link in its description (or reply with it). The coworker reads the file through the SSRF-safe fetch and posts each of the web's 7 steps as a task comment. Replies it understands: `sell 1 2` (choose endpoints; add `readonly` for endpoints that may change data), `price 2` or `price 3.5 for 200 calls` (pack price, before publishing). Free text is mapped to the offered choice by one structured LLM step and then validated the same way. Signing in, proving ownership and approving the publish need your wallet, so for those it posts one deep link to that exact web step; a `publish` comment is refused. A first-time seller signs in once through the setup link; after that the Sokosumi account is linked to the wallet and new tasks start at once. When the API is Live the task gets the status page, try page and registry token links and is set `COMPLETED`.
+
 Break the demo seller (needs `ADMIN_TOKEN`):
 ```bash
 curl -XPOST $PRICE_API_URL/admin/break -H "Authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' -d '{"mode":"empty"}'   # or "stale", "ok"

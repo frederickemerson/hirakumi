@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 
 const links = [
   { href: "/#how", label: "How it works" },
-  { href: "/#trust", label: "Trust" },
+  { href: "/#trust", label: "Money" },
   { href: "/#proof", label: "Proof" },
   { href: "/#faq", label: "FAQ" },
 ];
@@ -15,7 +15,7 @@ export function SiteHeader() {
   return (
     <header className="border-b border-ink bg-frost">
       <div className="mx-auto flex h-16 w-full max-w-[1200px] items-center justify-between gap-4 px-4">
-        <Link href="/" className="flex shrink-0 items-center gap-2 text-body-lg font-semibold">
+        <Link href="/" className="flex shrink-0 items-center gap-2.5 text-body-lg font-bold tracking-tight">
           <Mascot className="h-8" />
           <span>Hirakumi</span>
         </Link>
@@ -31,8 +31,7 @@ export function SiteHeader() {
             Log in
           </Link>
           <Link href="/login" className={cn(buttonVariants({ variant: "nav", size: "sm" }), "min-h-9")}>
-            <span className="sm:hidden">List your API</span>
-            <span className="hidden sm:inline">Put your API on the market</span>
+            List your API
           </Link>
         </div>
       </div>

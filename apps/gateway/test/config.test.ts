@@ -21,6 +21,14 @@ describe("loadConfig", () => {
     expect(c).toMatchObject({ port: 5000, demoMode: true, probeIntervalMs: 10_000, thresholds: { failsToDown: 2, passesToHeal: 2 } });
     expect(estimatedDowntimeSeconds(c)).toBe(20);
   });
+  it("START_JOB_TRUSTED_CIDRS: empty by default, a comma list of IPv4/IPv6 CIDRs, rejects anything else", () => {
+    expect(loadConfig(env).startJobTrustedCidrs).toEqual([]);
+    expect(loadConfig({ ...env, START_JOB_TRUSTED_CIDRS: " 203.0.113.0/24 , 2001:DB8::/32,192.0.2.7 " }).startJobTrustedCidrs)
+      .toEqual(["203.0.113.0/24", "2001:db8::/32", "192.0.2.7/32"]);
+    for (const bad of ["203.0.113.0/33", "2001:db8::/129", "example.com/24", "10.0.0.0/8x", "0.0.0.0/0", "::/0"]) {
+      expect(() => loadConfig({ ...env, START_JOB_TRUSTED_CIDRS: bad })).toThrow(/START_JOB_TRUSTED_CIDRS/);
+    }
+  });
   it("names a missing variable", () => {
     expect(() => loadConfig({ ...env, FACILITATOR_URL: "" })).toThrow(/FACILITATOR_URL/);
   });

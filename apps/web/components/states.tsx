@@ -1,17 +1,15 @@
 import type { ReactNode } from "react";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
-import { AutoRefresh } from "./auto-refresh";
 import { Elapsed } from "./elapsed";
 
 /**
- * Something is happening on the server: a spinner, what it is, how long it has been going,
- * and the page refreshes itself until it is done.
+ * Something is happening on the server: a spinner, what it is and how long it has been going.
+ * Pair it with <LiveProgress>, which polls and moves the seller on when it is done.
  */
 export function WaitingState({ title, detail, since, children }: { title: string; detail?: string; since?: Date | string | null; children?: ReactNode }) {
   return (
     <div role="status" aria-live="polite" className="space-y-3 rounded-[2px] border-2 border-ink bg-frost p-6">
-      <AutoRefresh everyMs={2000} />
       <p className="flex items-center gap-3 font-medium">
         <Spinner className="size-3.5" />
         <span>{title}</span>

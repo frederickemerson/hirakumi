@@ -41,11 +41,11 @@ export default async function TryApiPage({ params }: { params: Promise<{ apiId: 
         </div>
         <p className="max-w-2xl text-body-lg text-graphite">
           {hasDemoCredits
-            ? `Each paid try uses one real credit from a demo pack bought on Cardano preprod (${creditsLeft} left). The credit is only used when the answer keeps the promise.`
+            ? "Each paid try uses one real credit from a demo pack bought on Cardano preprod. The credit is only used when the answer keeps the promise."
             : "This API has no demo credits left, so you can see the payment offer an agent gets, but not a paid answer."}
         </p>
       </div>
-      <TryConsole apiId={apiId} ops={ops} hasDemoCredits={hasDemoCredits} />
+      <TryConsole apiId={apiId} ops={ops} hasDemoCredits={hasDemoCredits} initialCredits={creditsLeft} />
       <RegistryCard agentIdentifier={api.agentIdentifier} agentBaseUrl={`${env.publicBaseUrl()}/a/${apiId}`} />
     </section>
   );

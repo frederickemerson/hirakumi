@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { API_STATES } from "./types";
 import {
-  cardanoscanTxUrl, healthLabel, humanizeStep, JOB_STATUS_LABEL, PACK_STATUS_LABEL, shortAddress,
+  cardanoscanTxUrl, healthLabel, JOB_STATUS_LABEL, PACK_STATUS_LABEL, shortAddress,
   STATE_LABEL, STEP_STATUS_LABEL,
 } from "./copy";
 
@@ -27,8 +27,7 @@ describe("copy", () => {
     expect(cardanoscanTxUrl("abc123")).toBe("https://preprod.cardanoscan.io/transaction/abc123");
   });
 
-  it("shortens long addresses and humanizes step names", () => {
+  it("shortens long addresses", () => {
     expect(shortAddress("addr_test1qqqqqqqqqqqqqqqqqqqqqqqqqqqqzzzzzz")).toBe("addr_test1qq…zzzzzz");
-    expect(humanizeStep("qa_tests")).toBe("Qa tests");
   });
 });

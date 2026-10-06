@@ -1,11 +1,11 @@
 import { redirect } from "next/navigation";
 import { ReviewPanel } from "@/components/review-panel";
+import { LiveProgress } from "@/components/live-progress";
 import { ErrorState, WaitingState } from "@/components/states";
-import { StepList } from "@/components/step-list";
 import { getSql } from "@/lib/db";
-import { firstFailedStep, stepForState } from "@/lib/flow";
+import { stepForState } from "@/lib/flow";
 import { loadApiPage } from "@/lib/page-auth";
-import { listOnboardSteps } from "@/lib/repo/apis";
+import { loadProgress } from "@/lib/repo/progress";
 import { getPack } from "@/lib/repo/packs";
 import { listLatestRules } from "@/lib/repo/rules";
 
@@ -16,9 +16,8 @@ export default async function ReviewPage({ params }: { params: Promise<{ apiId: 
   const heading = <h1 className="text-h font-medium uppercase">Review and publish</h1>;
 
   if (api.state === "ownership_verified") {
-    const steps = await listOnboardSteps(sql, apiId);
-    const failure = firstFailedStep(steps);
-    const running = steps.find((s) => s.status === "running");
+    const progress = await loadProgress(sql, api);
+    const failure = progress.failure;
     return (
       <section className="space-y-6">
         {heading}
@@ -26,9 +25,9 @@ export default async function ReviewPage({ params }: { params: Promise<{ apiId: 
           <ErrorState title="Your test calls didn't pass" detail={failure} />
         ) : (
           <WaitingState title="Running test calls on your API"
-            detail="Hirakumi calls each endpoint at least 5 times to learn what a good response looks like. This page updates by itself."
-            since={running?.updatedAt ?? null}>
-            <StepList steps={steps} />
+            detail="Hirakumi calls each endpoint at least 5 times to learn what a good answer looks like. This page updates by itself."
+            since={progress.timeline.current?.since ?? null}>
+            <LiveProgress apiId={apiId} initial={progress} />
           </WaitingState>
         )}
       </section>

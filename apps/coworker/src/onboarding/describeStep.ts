@@ -6,6 +6,8 @@ import type { StructuredCall } from "../llm/claude.js";
 import { describeOperations } from "../llm/describe.js";
 import { enqueueMessage } from "../messages.js";
 import type { OpForLlm } from "../openapi/parse.js";
+import { chooseEndpointsPrompt } from "../sokosumi/conversation.js";
+import { listOps } from "../sokosumi/sellerActions.js";
 import { finishStep, getStep, runStep, type StepOutcome } from "../steps.js";
 
 export type DescribeDeps = { pool: pg.Pool; llm: StructuredCall; webBaseUrl: string; now?: () => Date };
@@ -25,11 +27,16 @@ export async function describeStep(deps: DescribeDeps, apiId: string): Promise<S
         await c.query(`update operations set description = $3, side_effects_likely = $4 where api_id = $1 and op_id = $2`, [apiId, opId, d.description, d.sideEffectsLikely]);
       }
       await finishStep(c, apiId, "describe", { sellable, usedFallback });
+      // A Sokosumi task can choose by reply (`sell 1 2`), so it gets the numbered list; the dashboard has the web picker.
+      const { rows: [api] } = await c.query<{ sokosumi_task_id: string | null }>(`select sokosumi_task_id from apis where id = $1`, [apiId]);
       await enqueueMessage(c, {
         apiId,
-        body: `Found ${ops.length} endpoints; ${sellable} look sellable (read-only). Pick the ones to sell and confirm they have no side effects: ${apiLink(deps.webBaseUrl, apiId)}`,
+        body: api?.sokosumi_task_id
+          ? chooseEndpointsPrompt(await listOps(c, apiId), sellable, deps.webBaseUrl, apiId)
+          : `Found ${ops.length} endpoints; ${sellable} look sellable (read-only). Pick the ones to sell and confirm they have no side effects: ${apiLink(deps.webBaseUrl, apiId)}`,
         taskStatus: "INPUT_REQUIRED",
         dedupeKey: `described:${apiId}`,
+        step: "Describe endpoints",
       });
     });
   }, deps.now?.());

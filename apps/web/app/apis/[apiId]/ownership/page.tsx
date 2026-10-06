@@ -4,13 +4,14 @@ import { OwnershipPanel } from "@/components/ownership-panel";
 import { getSql } from "@/lib/db";
 import { stepForState } from "@/lib/flow";
 import { loadApiPage } from "@/lib/page-auth";
-import { hasPassedHttpChallenge } from "@/lib/repo/challenges";
+import { findCurrentHttpChallenge } from "@/lib/repo/challenges";
 
 export default async function OwnershipPage({ params }: { params: Promise<{ apiId: string }> }) {
   const { apiId } = await params;
   const { api } = await loadApiPage(apiId, `/apis/${apiId}/ownership`);
   if (api.state !== "endpoints_confirmed") redirect(`/apis/${apiId}/${stepForState(api.state)}`);
-  const passed = await hasPassedHttpChallenge(getSql(), apiId);
+  const challenge = await findCurrentHttpChallenge(getSql(), apiId);
+  const passed = !!challenge?.passedAt;
   return (
     <section className="space-y-6">
       <div className="space-y-3">
@@ -19,7 +20,8 @@ export default async function OwnershipPage({ params }: { params: Promise<{ apiI
           Two quick checks stop anyone from selling someone else&apos;s API: a file on your server, and one signature from your wallet.
         </p>
       </div>
-      <OwnershipPanel apiId={apiId} fileUrl={`${api.origin}${httpChallengePath(apiId)}`} initiallyPassed={passed} />
+      <OwnershipPanel apiId={apiId} fileUrl={`${api.origin}${httpChallengePath(apiId)}`} initiallyPassed={passed}
+        challengeExpiresAt={challenge ? new Date(challenge.expiresAt).toISOString() : null} />
     </section>
   );
 }

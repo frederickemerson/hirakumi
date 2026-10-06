@@ -66,6 +66,52 @@ describe("start_job hardening (audit I1, I3)", () => {
   });
 });
 
+describe("start_job trusted CIDRs (START_JOB_TRUSTED_CIDRS)", () => {
+  // Sokosumi's backend calls start_job with no signature or key (only Content-Type), so its source address is the
+  // only signal. The gateway trusts exactly one proxy, so req.ip is the last X-Forwarded-For hop Caddy appended.
+  const from = (ip: string) =>
+    request(h.app).post(`/a/${h.seeded.apiId}/start_job`).set("x-forwarded-for", ip).send({ input_data: { symbol: "ADA" }, identifier_from_purchaser: PID });
+  const reharness = async (cidrs: string[]) => {
+    runner.stop();
+    await h.close();
+    h = await makeHarness({ config: { startJobTrustedCidrs: cidrs } });
+    runner = new JobRunner({ sql: h.sql, registry: h.registry, masumi: h.masumi, config: h.config });
+  };
+
+  it("an address inside a trusted range gets the higher limit; others keep 10 per minute", async () => {
+    await reharness(["203.0.113.0/24", "2001:db8:5::/48"]);
+    for (let i = 0; i < 15; i++) expect((await from(i % 2 ? "203.0.113.9" : "203.0.113.200")).status).toBe(200);
+    for (let i = 0; i < 12; i++) expect((await from("2001:db8:5:7::1")).status).toBe(200);
+    for (let i = 0; i < 10; i++) expect((await from("198.51.100.4")).status).toBe(200);
+    expect((await from("198.51.100.4")).status).toBe(429);
+  });
+  it("a client can't claim a trusted address by prepending it to X-Forwarded-For", async () => {
+    await reharness(["203.0.113.0/24"]);
+    for (let i = 0; i < 10; i++) expect((await from("203.0.113.9, 198.51.100.4")).status).toBe(200);
+    expect((await from("203.0.113.9, 198.51.100.4")).status).toBe(429);
+  });
+  it("is off by default: nobody gets more than 10 per minute", async () => {
+    for (let i = 0; i < 10; i++) expect((await from("203.0.113.9")).status).toBe(200);
+    expect((await from("203.0.113.9")).status).toBe(429);
+  });
+});
+
+describe("trustedAddressMatcher", () => {
+  it("matches IPv4, IPv6 and IPv4-mapped IPv6 against the list", async () => {
+    const { trustedAddressMatcher } = await import("../src/mip003");
+    const trusted = trustedAddressMatcher(["10.1.0.0/16", "2001:db8::/32", "192.0.2.7/32"]);
+    expect(trusted("10.1.200.3")).toBe(true);
+    expect(trusted("::ffff:10.1.2.3")).toBe(true);
+    expect(trusted("10.2.0.1")).toBe(false);
+    expect(trusted("2001:db8:ffff::1")).toBe(true);
+    expect(trusted("2001:db9::1")).toBe(false);
+    expect(trusted("192.0.2.7")).toBe(true);
+    expect(trusted("192.0.2.8")).toBe(false);
+    expect(trusted(undefined)).toBe(false);
+    expect(trustedAddressMatcher([])("10.1.0.1")).toBe(false);
+  });
+});
+
 describe("JobRunner", () => {
   async function newJob(): Promise<string> {
     return (await start({ input_data: { symbol: "ADA" }, identifier_from_purchaser: PID })).body.job_id as string;
