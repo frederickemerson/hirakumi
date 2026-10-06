@@ -1,11 +1,12 @@
 import { callOperation, choosePack, formatMicros, type CallOutcome, type CreditsRequired, type FetchLike } from "./gatewayClient.js";
-import type { PackPurchase } from "./payClient.js";
-import type { TokenStore } from "./tokenStore.js";
+import { PackPurchaseError, type PackPurchase } from "./payClient.js";
+import type { PendingStore, TokenStore } from "./tokenStore.js";
 
 export type PackDemoDeps = {
   fetch: FetchLike;
   buyPack: (buyUrl: string) => Promise<PackPurchase>;
   tokens: TokenStore;
+  pending: PendingStore;
   log: (line: string) => void;
   sleep: (ms: number) => Promise<void>;
   now: () => number;
@@ -27,12 +28,46 @@ export async function runPackDemo(deps: PackDemoDeps, o: PackDemoOptions): Promi
   const s: PackDemoSummary = { bought: false, txHash: null, passed: 0, notMet: 0, upstreamErrors: 0, down: 0, lastRemaining: null, creditAccountingOk: true };
   const target = { gatewayUrl: o.gatewayUrl, apiId: o.apiId, opId: o.opId, query: o.query };
 
+  /** A payment from an earlier run whose settlement timed out: re-key its token instead of paying again. */
+  const recover = async (): Promise<string | null> => {
+    const saved = deps.pending.get(o.apiId);
+    if (!saved) return null;
+    deps.log(`Recovering the pack payment from ${saved.at} (its settlement timed out)...`);
+    const url = `${o.gatewayUrl.replace(/\/+$/, "")}/a/${encodeURIComponent(o.apiId)}/packs/${encodeURIComponent(saved.packId)}/recover`;
+    const res = await deps.fetch(url, { method: "POST", headers: { "payment-signature": saved.paymentSignature, accept: "application/json" } });
+    const body = (await res.json().catch(() => ({}))) as { token?: unknown; credits?: unknown; status?: unknown };
+    if (res.status === 404) {
+      deps.log("The gateway never received that payment, so nothing was paid. Buying a new pack.");
+      deps.pending.delete(o.apiId);
+      return null;
+    }
+    if (!res.ok || typeof body.token !== "string" || typeof body.credits !== "number") {
+      throw new Error(`Recovery failed: HTTP ${res.status}. Your saved payment is kept; try again later.`);
+    }
+    deps.log(`Recovered: ${body.credits} credits${body.status === "pending" ? " (still confirming on-chain)" : ""}.`);
+    deps.tokens.put(o.apiId, { token: body.token, packId: saved.packId, credits: body.credits, txHash: null, boughtAt: saved.at });
+    deps.pending.delete(o.apiId);
+    s.lastRemaining = body.credits;
+    return body.token;
+  };
+
   const buy = async (offer: CreditsRequired): Promise<string> => {
+    const recovered = await recover();
+    if (recovered) return recovered;
     const pack = choosePack(offer, o.maxPackMicros);
     deps.log(`402 credits_required. Promise ${offer.ruleHash} (${offer.ruleUrl})`);
     deps.log(`Buying pack ${pack.packId}: ${pack.calls} calls for ${formatMicros(pack.price)} tUSDM, one Cardano preprod payment (about 20-60s)...`);
     const started = deps.now();
-    const p = await deps.buyPack(pack.buyUrl);
+    let p: PackPurchase;
+    try {
+      p = await deps.buyPack(pack.buyUrl);
+    } catch (e) {
+      if (e instanceof PackPurchaseError && e.settlementFailed && e.paymentSignature) {
+        deps.pending.put(o.apiId, { packId: pack.packId, paymentSignature: e.paymentSignature, at: new Date(deps.now()).toISOString() });
+        deps.log("The payment didn't confirm in time, but it may still land on-chain. It is saved: Run the same command again in a minute to recover your credits. You won't pay twice.");
+      }
+      throw e;
+    }
     deps.log(
       `Paid in ${((deps.now() - started) / 1000).toFixed(1)}s: ${p.credits} credits.` +
         (p.txHash ? ` Tx https://preprod.cardanoscan.io/transaction/${p.txHash}` : " (no receipt header)"),

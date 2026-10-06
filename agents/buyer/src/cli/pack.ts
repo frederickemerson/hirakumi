@@ -4,7 +4,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { resolve } from "node:path";
 import { need } from "../env.js";
 import { createPackPayer } from "../payClient.js";
-import { TokenStore } from "../tokenStore.js";
+import { PendingStore, TokenStore } from "../tokenStore.js";
 import { runPackDemo } from "../packBuyer.js";
 
 const { values } = parseArgs({ args: cliArgs(),
@@ -30,11 +30,12 @@ const payer = createPackPayer({
   maxPackMicros,
 });
 const tokens = new TokenStore(resolve(import.meta.dirname, "../../.tokens.json"));
+const pending = new PendingStore(resolve(import.meta.dirname, "../../.pending-payments.json"));
 if (values.fresh) tokens.delete(values.api);
 
 console.log(`Buyer wallet ${payer.address}  spend cap ${maxPackMicros} micros per payment`);
 const summary = await runPackDemo(
-  { fetch, buyPack: payer.buyPack, tokens, log: (l) => console.log(l), sleep: (ms) => sleep(ms), now: Date.now },
+  { fetch, buyPack: payer.buyPack, tokens, pending, log: (l) => console.log(l), sleep: (ms) => sleep(ms), now: Date.now },
   {
     gatewayUrl: need("PUBLIC_BASE_URL"),
     apiId: values.api,

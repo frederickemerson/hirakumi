@@ -1,2 +1,4 @@
 .tokens.json
 .tokens.json.tmp
+.pending-payments.json
+.pending-payments.json.tmp

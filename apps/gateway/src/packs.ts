@@ -82,7 +82,9 @@ export function packRouter(d: AppDeps): Router {
       },
       settlementFailedResponseBody: (_ctx, result) => ({
         contentType: "application/json",
-        body: { error: "settlement_failed", reason: result.errorReason, message: "The payment did not settle. No credits were issued." },
+        body: { error: "settlement_failed", reason: result.errorReason, message:
+          "The payment did not confirm in time, but it may still land on-chain. Do not pay again: POST the same " +
+          "PAYMENT-SIGNATURE to this URL + /recover to get your credit token (it works once the payment settles)." },
       }),
     },
   };

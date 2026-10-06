@@ -1,4 +1,5 @@
 import { x402Client, wrapFetchWithPayment, x402HTTPClient } from "@x402/fetch";
+import { encodePaymentSignatureHeader } from "@x402/core/http";
 import { toClientCardanoSigner, USDM_PREPROD_ASSET } from "@x402/cardano";
 import { ExactCardanoScheme } from "@x402/cardano/exact/client";
 import type { SpendControls } from "@x402/core/client";
@@ -23,8 +24,12 @@ export class SerialPayer {
 export type PackPurchase = { token: string; credits: number; apiId: string; txHash: string | null };
 
 export class PackPurchaseError extends Error {
-  constructor(readonly status: number, readonly body: string) {
+  /** paymentSignature: the signed payment that was sent, when one was; it can still settle on-chain. */
+  constructor(readonly status: number, readonly body: string, readonly paymentSignature: string | null = null) {
     super(`Pack purchase failed: HTTP ${status} ${body.slice(0, 300)}`);
+  }
+  get settlementFailed(): boolean {
+    return this.status === 402 && this.paymentSignature !== null && this.body.includes("settlement_failed");
   }
 }
 
@@ -38,6 +43,11 @@ export function createPackPayer(cfg: { mnemonic: string; blockfrostProjectId: st
   const address = signer.getAddress();
   if (!address.startsWith("addr_test1")) throw new Error(`Buyer wallet ${address} is not a preprod address`);
   client.register("cardano:*", new ExactCardanoScheme(signer));
+  // Keep the signed payment: if settlement times out it may still land on-chain, and /recover needs it.
+  let lastSignature: string | null = null;
+  client.onAfterPaymentCreation(async ({ paymentPayload }) => {
+    lastSignature = encodePaymentSignatureHeader(paymentPayload);
+  });
   const payFetch = wrapFetchWithPayment(fetch, client);
   const http = new x402HTTPClient(client);
   const serial = new SerialPayer();
@@ -46,13 +56,14 @@ export function createPackPayer(cfg: { mnemonic: string; blockfrostProjectId: st
     address,
     buyPack(buyUrl: string): Promise<PackPurchase> {
       return serial.run(async () => {
+        lastSignature = null;
         const res = await payFetch(buyUrl, {
           method: "POST",
           headers: { "content-type": "application/json", accept: "application/json" },
           body: "{}",
         });
         const text = await res.text();
-        if (!res.ok) throw new PackPurchaseError(res.status, text);
+        if (!res.ok) throw new PackPurchaseError(res.status, text, lastSignature);
         const body = JSON.parse(text) as { token?: unknown; credits?: unknown; apiId?: unknown };
         if (typeof body.token !== "string" || typeof body.credits !== "number" || typeof body.apiId !== "string") {
           throw new PackPurchaseError(res.status, text);

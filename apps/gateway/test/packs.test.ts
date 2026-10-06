@@ -67,6 +67,8 @@ describe("pack purchase", () => {
     const { res } = await pay();
     expect(res.status).toBe(402);
     expect(res.body.token).toBeUndefined();
+    expect(res.body.message).toContain("/recover");
+    expect(res.body.message).not.toContain("No credits were issued");
     expect(await tokens()).toEqual([{ status: "pending", remaining: 100, tx_hash: null, payer: null }]);
   });
   it("a replayed payment gets 409, mints no second token and is not settled twice", async () => {
