@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { Elapsed } from "@/components/elapsed";
 import { InlineError, InlineStatus } from "@/components/states";
+import { toast } from "@/components/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,9 +13,13 @@ import { formatTusdm, parsePackCalls, parseTusdm, perCallTusdm } from "@/lib/mon
 import { startRouteProgress } from "@/lib/route-progress";
 import type { Pack, RuleView } from "@/lib/types";
 
-type Status = { kind: "idle" } | { kind: "saving" } | { kind: "publishing" } | { kind: "saved" } | { kind: "error"; text: string };
+type Status = { kind: "idle" } | { kind: "saving" } | { kind: "publishing"; text: string } | { kind: "error"; text: string };
 
-export function ReviewPanel({ apiId, state, promises, pack }: {
+/**
+ * The last onboarding step: read the promise, set the price, publish. "Publish at this price" saves
+ * the price as typed and publishes in one click; "Save price" only saves.
+ */
+export function ReviewPanel({ apiId, promises, pack }: {
   apiId: string;
   state: "rule_built" | "priced";
   promises: RuleView[];
@@ -35,8 +40,8 @@ export function ReviewPanel({ apiId, state, promises, pack }: {
     }
   }, [price, calls]);
 
-  async function run(kind: "saving" | "publishing", action: () => Promise<void>) {
-    setStatus({ kind });
+  async function run(first: Status, action: () => Promise<void>) {
+    setStatus(first);
     try {
       await action();
     } catch (e) {
@@ -44,13 +49,18 @@ export function ReviewPanel({ apiId, state, promises, pack }: {
     }
   }
 
-  const save = () => run("saving", async () => {
-    await postJson(`/api/apis/${apiId}/pricing`, { packCalls: calls, packPrice: price, escrowPrice: escrow });
-    setStatus({ kind: "saved" });
+  const savePrice = () => postJson(`/api/apis/${apiId}/pricing`, { packCalls: calls, packPrice: price, escrowPrice: escrow });
+
+  const save = () => run({ kind: "saving" }, async () => {
+    await savePrice();
+    setStatus({ kind: "idle" });
+    toast("Price saved");
     router.refresh();
   });
 
-  const publish = () => run("publishing", async () => {
+  const publishAtThisPrice = () => run({ kind: "publishing", text: "Saving the price" }, async () => {
+    await savePrice();
+    setStatus({ kind: "publishing", text: "Registering your API on Masumi" });
     await postJson(`/api/apis/${apiId}/publish`, {});
     startRouteProgress();
     router.push(`/apis/${apiId}/overview`);
@@ -96,22 +106,19 @@ export function ReviewPanel({ apiId, state, promises, pack }: {
         <p className="text-body text-graphite">
           Pack payments go straight to your wallet. For per-job hires, Masumi holds the payment and keeps 5%.
         </p>
-        <div className="flex flex-wrap items-center gap-4">
-          <Button variant="outline" disabled={busy} pending={status.kind === "saving"} pendingLabel="Saving…" onClick={save}>Save price</Button>
-          {status.kind === "saved" && <InlineStatus>Saved.</InlineStatus>}
+        <div className="flex flex-col gap-4 border-t border-ink pt-5 sm:flex-row sm:items-center">
+          <Button disabled={busy} pending={status.kind === "publishing"} pendingLabel="Publishing…" onClick={publishAtThisPrice}>
+            Publish at this price
+          </Button>
+          <Button variant="outline" disabled={busy} pending={status.kind === "saving"} pendingLabel="Saving…" onClick={save}>
+            Save price
+          </Button>
         </div>
-      </section>
-
-      <section className="space-y-3">
-        <div className="flex flex-wrap items-center gap-4">
-          <Button disabled={state !== "priced" || busy} pending={status.kind === "publishing"} pendingLabel="Publishing…" onClick={publish}>Publish</Button>
-          {status.kind === "publishing" && (
-            <InlineStatus busy>
-              Registering your API on Masumi <Elapsed prefix=" " className="text-graphite" />
-            </InlineStatus>
-          )}
-        </div>
-        {state !== "priced" && <p className="text-body text-graphite">Save a price to publish.</p>}
+        {status.kind === "publishing" && (
+          <InlineStatus busy>
+            {status.text} <Elapsed prefix=" " className="text-graphite" />
+          </InlineStatus>
+        )}
         {status.kind === "error" && <InlineError>{status.text}</InlineError>}
       </section>
     </div>

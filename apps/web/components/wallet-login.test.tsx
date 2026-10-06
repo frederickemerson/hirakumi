@@ -66,7 +66,8 @@ describe("dedupeWallets", () => {
 describe("WalletLogin", () => {
   it("offers wallets to install, each with the preprod hint, when none is present", async () => {
     render(<WalletLogin next="/apis" />);
-    expect(await screen.findByText("No Cardano wallet found in this browser.")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Looking for wallets" })).toBeInTheDocument();
+    expect(await screen.findByText("No Cardano wallet found in this browser.", undefined, { timeout: 4000 })).toBeInTheDocument();
     for (const [name, href] of [["Lace", "https://www.lace.io"], ["Eternl", "https://eternl.io"], ["Vespr", "https://vespr.xyz"], ["Typhon", "https://typhonwallet.io"]]) {
       const link = screen.getByRole("link", { name: new RegExp(`^${name}`) });
       expect(link).toHaveAttribute("href", href);

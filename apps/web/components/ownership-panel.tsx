@@ -5,10 +5,32 @@ import { useEffect, useState } from "react";
 import { Elapsed } from "@/components/elapsed";
 import { InlineError, InlineStatus } from "@/components/states";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { GetAWallet, useWallets, WalletIcon } from "@/components/wallet-picker";
 import { postJson, RequestError } from "@/lib/client-fetch";
 import { startRouteProgress } from "@/lib/route-progress";
-import { connectWallet, listWallets, signText, walletErrorMessage, type WalletInfo } from "@/lib/wallet-client";
+import { connectWallet, signText, walletErrorMessage } from "@/lib/wallet-client";
 import { cn } from "@/lib/utils";
+
+/** The verification file expires 30 minutes after it is first downloaded (lib/repo/challenges.ts). */
+export const CHALLENGE_TTL_MS = 30 * 60 * 1000;
+
+export function formatCountdown(ms: number): string {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
+/** "Expires in 29:41", ticking each second; null before hydration or without a file yet. */
+function useCountdown(expiresAt: number | null): number | null {
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => {
+    if (expiresAt === null) return;
+    setNow(Date.now());
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [expiresAt]);
+  return expiresAt === null || now === null ? null : expiresAt - now;
+}
 
 type CheckState =
   | { kind: "idle" }
@@ -25,18 +47,27 @@ function StepNumber({ n, done }: { n: number; done?: boolean }) {
   );
 }
 
-export function OwnershipPanel({ apiId, fileUrl, initiallyPassed }: { apiId: string; fileUrl: string; initiallyPassed: boolean }) {
+export function OwnershipPanel({ apiId, fileUrl, initiallyPassed, challengeExpiresAt = null }: {
+  apiId: string;
+  fileUrl: string;
+  initiallyPassed: boolean;
+  /** Expiry of the file already handed out (ISO), if any. */
+  challengeExpiresAt?: string | null;
+}) {
   const router = useRouter();
   const [passed, setPassed] = useState(initiallyPassed);
   const [check, setCheck] = useState<CheckState>({ kind: "idle" });
   const [sign, setSign] = useState<SignState>({ kind: "idle" });
-  const [wallets, setWallets] = useState<WalletInfo[]>([]);
+  const [signed, setSigned] = useState(false);
+  const wallets = useWallets();
+  const [expiresAt, setExpiresAt] = useState<number | null>(challengeExpiresAt ? Date.parse(challengeExpiresAt) : null);
+  const left = useCountdown(expiresAt);
+  const expired = left !== null && left <= 0;
 
-  useEffect(() => {
-    setWallets(listWallets());
-    const t = setTimeout(() => setWallets(listWallets()), 800);
-    return () => clearTimeout(t);
-  }, []);
+  function onDownload() {
+    // The server reuses the open file until it expires; a new one starts a fresh 30 minutes.
+    if (expiresAt === null || expired) setExpiresAt(Date.now() + CHALLENGE_TTL_MS);
+  }
 
   async function runCheck() {
     setCheck({ kind: "checking" });
@@ -63,6 +94,8 @@ export function OwnershipPanel({ apiId, fileUrl, initiallyPassed }: { apiId: str
       const sig = await signText(api, addressHex, challenge.message);
       setSign({ kind: "working", walletId, text: "Signature received. Checking it…" });
       await postJson(`/api/apis/${apiId}/ownership/verify`, { challengeId: challenge.challengeId, address: addressHex, ...sig });
+      setSigned(true);
+      setSign({ kind: "working", walletId, text: "Ownership proven. Opening the next step…" });
       startRouteProgress();
       router.push(`/apis/${apiId}/review`);
     } catch (e) {
@@ -80,8 +113,18 @@ export function OwnershipPanel({ apiId, fileUrl, initiallyPassed }: { apiId: str
           <h2 className="text-body-lg font-semibold">Put the verification file on your server</h2>
           <p className="text-body">Download the file and upload it, unchanged, so it opens at:</p>
           <code className="block break-all rounded-[2px] bg-ink p-3 text-body text-cream">{fileUrl}</code>
-          <a href={`/api/apis/${apiId}/challenge-file`} download className="inline-block text-body underline underline-offset-4">Download the file</a>
-          <p className="text-caption text-graphite">The file works once and expires after 30 minutes.</p>
+          <a href={`/api/apis/${apiId}/challenge-file`} download onClick={onDownload} className="inline-block py-1 text-body underline underline-offset-4">
+            {expired ? "Download a new file" : "Download the file"}
+          </a>
+          {left === null || passed ? (
+            <p className="text-caption text-graphite">The file works once and expires 30 minutes after you download it.</p>
+          ) : expired ? (
+            <p role="alert" className="border-l-4 border-coral pl-3 text-caption">This file has expired. Download a new one and upload it again.</p>
+          ) : (
+            <p className="text-caption text-graphite">
+              Expires in <span className={cn("font-semibold tabular-nums", left < 5 * 60 * 1000 ? "text-ink" : "")}>{formatCountdown(left)}</span>
+            </p>
+          )}
         </div>
       </li>
       <li className="flex gap-4 rounded-[2px] border-2 border-ink bg-frost p-5">
@@ -107,19 +150,25 @@ export function OwnershipPanel({ apiId, fileUrl, initiallyPassed }: { apiId: str
         </div>
       </li>
       <li className="flex gap-4 rounded-[2px] border-2 border-ink bg-frost p-5">
-        <StepNumber n={3} />
+        <StepNumber n={3} done={signed} />
         <div className="min-w-0 flex-1 space-y-3">
           <h2 className="text-body-lg font-semibold">Sign with your wallet</h2>
           <p className="text-body">
             Your wallet shows a message naming this API and the address buyers will pay. Signing costs nothing and moves no funds.
           </p>
           {!passed && <p className="text-caption text-graphite">Check the file first; signing unlocks after it passes.</p>}
-          {wallets.length === 0 ? (
-            <p className="text-body">No Cardano wallet found in this browser. Install Lace or Eternl, switch it to Preprod, then reload.</p>
+          {wallets === null ? (
+            <div role="status" aria-label="Looking for wallets" className="flex flex-wrap gap-4">
+              <Skeleton className="h-11 w-44" />
+              <Skeleton className="h-11 w-44" />
+            </div>
+          ) : wallets.length === 0 ? (
+            <GetAWallet />
           ) : (
             <div className="flex flex-wrap gap-4">
               {wallets.map((w) => (
-                <Button key={w.id} disabled={!passed || signing} pending={signing && sign.walletId === w.id} onClick={() => runSign(w.id)}>
+                <Button key={w.id} disabled={!passed || signing || signed} pending={signing && sign.walletId === w.id} onClick={() => runSign(w.id)}>
+                  {!(signing && sign.walletId === w.id) && <WalletIcon icon={w.icon} />}
                   Sign with {w.name}
                 </Button>
               ))}

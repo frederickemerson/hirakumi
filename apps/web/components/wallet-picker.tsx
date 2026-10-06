@@ -7,19 +7,21 @@ const LOOK_EVERY_MS = 300;
 const LOOK_FOR_MS = 3_000;
 
 /**
- * The CIP-30 wallets in this browser, deduplicated. Null until the first look after hydration, so
- * callers can show a skeleton instead of a "no wallet" flash. Extensions inject window.cardano
- * asynchronously, so it keeps looking for about 3 seconds.
+ * The CIP-30 wallets in this browser, deduplicated. Extensions inject window.cardano asynchronously,
+ * so it keeps looking for about 3 seconds. Null (show a skeleton) until a wallet turns up or the
+ * search ends, so "no wallet found" never flashes before a slow extension arrives.
  */
 export function useWallets(): WalletInfo[] | null {
   const [wallets, setWallets] = useState<WalletInfo[] | null>(null);
   useEffect(() => {
+    const startedAt = Date.now();
     const look = () => {
       const found = listWallets();
+      const searching = Date.now() - startedAt < LOOK_FOR_MS;
+      if (found.length === 0 && searching) return;
       setWallets((prev) => (sameWallets(prev, found) ? prev : found));
     };
     look();
-    const startedAt = Date.now();
     const t = setInterval(() => {
       look();
       if (Date.now() - startedAt >= LOOK_FOR_MS) clearInterval(t);
