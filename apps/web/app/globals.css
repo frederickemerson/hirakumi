@@ -105,6 +105,8 @@
   --shadow-hard-lg: -10px 10px 0 0 var(--color-ink);
 
   --ease-press: cubic-bezier(0.2, 0, 0, 1);
+  /* Snap-in: fast start, long settle (expo-out). Used by every reveal on the site. */
+  --ease-snap: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 :root {
@@ -289,7 +291,7 @@
   to { background-position: 16px 0; }
 }
 @keyframes rise {
-  from { opacity: 0; transform: translateY(14px); }
+  from { opacity: 0; transform: translateY(16px); }
   to { opacity: 1; transform: translateY(0); }
 }
 @keyframes blink {
@@ -305,7 +307,7 @@
   animation: marquee var(--marquee-duration, 40s) linear infinite;
 }
 @utility animate-rise {
-  animation: rise 600ms var(--ease-press) both;
+  animation: rise 480ms var(--ease-snap) both;
 }
 @utility animate-spin-square {
   animation: spin-square 900ms steps(8) infinite;
