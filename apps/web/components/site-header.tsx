@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 
 const links = [
   { href: "/#how", label: "How it works" },
-  { href: "/#trust", label: "Trust" },
+  { href: "/#trust", label: "Money" },
   { href: "/#proof", label: "Proof" },
   { href: "/#faq", label: "FAQ" },
 ];
@@ -31,8 +31,7 @@ export function SiteHeader() {
             Log in
           </Link>
           <Link href="/login" className={cn(buttonVariants({ variant: "nav", size: "sm" }), "min-h-9")}>
-            <span className="sm:hidden">List your API</span>
-            <span className="hidden sm:inline">Put your API on the market</span>
+            List your API
           </Link>
         </div>
       </div>

@@ -156,6 +156,8 @@
   }
   html {
     @apply font-sans;
+    /* Clip on html as well as body: a doodle hanging past the column must never scroll the page sideways. */
+    overflow-x: clip;
     letter-spacing: 0.02em;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -225,8 +227,8 @@
     box-shadow: 0 0 0 0 var(--color-ink);
   }
   &:active {
-    transform: translate(0, 0);
-    box-shadow: var(--shadow-hard);
+    transform: translate(-6px, 6px) scale(0.96);
+    box-shadow: 0 0 0 0 var(--color-ink);
   }
   &:disabled, &[aria-disabled="true"] {
     transform: none;
@@ -242,8 +244,8 @@
     box-shadow: 0 0 0 0 var(--color-ink);
   }
   &:active {
-    transform: translate(0, 0);
-    box-shadow: var(--shadow-hard-sm);
+    transform: translate(-3px, 3px) scale(0.96);
+    box-shadow: 0 0 0 0 var(--color-ink);
   }
 }
 
@@ -337,6 +339,19 @@
   }
   html {
     scroll-behavior: auto !important;
+  }
+}
+
+/*
+ * Scroll reveal starting state (components/landing/reveal.tsx). Only applies once the inline script in
+ * app/layout.tsx has added `js` to <html> before first paint, and only when motion is welcome, so the
+ * server HTML is never shown and then hidden again.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  html.js [data-reveal-root]:not([data-revealed]):not(:has([data-reveal])),
+  html.js [data-reveal-root]:not([data-revealed]) [data-reveal] {
+    opacity: 0;
+    transform: translateY(var(--reveal-y, 18px));
   }
 }
 

@@ -11,19 +11,19 @@ import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 const DEMO_API = "/p/api_eejiaioyqt";
-const PRIMARY_CTA = "Put your API on the market";
+const PRIMARY_CTA = "List your API";
 const SECONDARY_CTA = "Try a live API";
 
 /* The argument, read at scroll speed: why now, what is broken, and the one idea that fixes it. */
 const WHY: Paragraph[] = [
   {
-    text: "This is the year AI agents got wallets. x402 on Cardano, the Masumi registry and the Sokosumi marketplace all exist now. APIs are not ready for them.",
+    text: "AI agents now have wallets. They can find an API on the Masumi registry or the Sokosumi marketplace and pay for it on Cardano. Most APIs are not ready to be paid that way.",
   },
   {
     text: "APIs are still sold with keys, monthly plans and invoices. An agent has none of those; it has a wallet and a task. Paying per call on-chain costs about 1.4 ADA in overhead and 20 seconds per payment. And a stale answer costs the buyer the same as a fresh one.",
   },
   {
-    text: "So sell calls in packs, and make the money conditional on the answer. Your API publishes a promise: a rule a machine can check. An answer that breaks it costs the buyer nothing.",
+    text: "So sell calls in packs, and make each credit conditional on the answer. Your API publishes a promise: a rule a machine can check. An answer that breaks it costs the buyer nothing.",
     strong: true,
   },
 ];
@@ -36,22 +36,22 @@ const STEPS: { title: string; body: string; rb: string }[] = [
   },
   {
     title: "Approve the promise and a price",
-    body: "Test calls become a rule for a good answer: the fields, their types and how fresh the data must be. You check it and set a pack price.",
+    body: "Test calls become a promise: the fields a good answer has, their types and how fresh the data must be. You check it and set a pack price.",
     rb: "rb-mint",
   },
   {
     title: "You're live",
-    body: "Agents on Masumi and Sokosumi find your API and buy call packs paid in USDM on Cardano. Each payment settles to your wallet.",
+    body: "Agents on Masumi and Sokosumi find your API and buy call packs in USDM on Cardano. Each pack payment settles to your wallet.",
     rb: "rb-periwinkle",
   },
 ];
 
 const LIVE_TODAY = [
-  "Packs paid straight to the seller's wallet",
-  "Credits used only on kept promises",
-  "A receipt for every paid call",
-  "Masumi escrow jobs with automatic refunds",
-  "Honest monitoring with a public status page",
+  "Pack payments settle straight to the seller's wallet",
+  "A credit is used only when the answer keeps the promise",
+  "A receipt for every paid call, open to the buyer",
+  "Single jobs through Masumi, refunded on-chain when the answer fails",
+  "Monitoring with a public status page",
 ];
 
 const PROOF: { value: string; label: string }[] = [
@@ -60,7 +60,7 @@ const PROOF: { value: string; label: string }[] = [
   { value: "0.3 s", label: "per paid call, end to end" },
   { value: "HTTP 422", label: "for a stale answer, with no credit used" },
   { value: "Refunded", label: "escrow job whose answer broke the promise, on-chain and automatic" },
-  { value: "2,244 req/s", label: "on the paid path in a local load test (not preprod), with exact credit accounting" },
+  { value: "2,244 req/s", label: "on the paid path in a local load test, not preprod, with exact credit accounting" },
 ];
 
 const FAQ: { q: string; a: string }[] = [
@@ -109,10 +109,10 @@ export default function Home() {
         <div className="relative grid gap-12 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] lg:items-center lg:gap-16">
           <div className="max-w-[40rem]">
             <h1 className="text-[2.5rem] font-light uppercase leading-[1.02] animate-rise sm:text-display">
-              Sell your API to AI agents
+              Make your APIs monetizable
             </h1>
-            <p className="mt-6 max-w-[34rem] text-body-lg animate-rise [animation-delay:70ms] sm:text-sub">
-              Paste your OpenAPI link, approve a price, and agents buy call packs in USDM. They pay only for answers that keep your promise.
+            <p className="mt-6 max-w-[36rem] text-body-lg animate-rise [animation-delay:70ms] sm:text-sub">
+              Paste your OpenAPI link, sign with your Cardano wallet, set a pack price. AI agents pay in USDM, and stale or empty answers cost them nothing.
             </p>
             <div className="mt-8 flex flex-col items-stretch gap-4 animate-rise [animation-delay:140ms] sm:flex-row sm:items-center">
               <Link href="/login" className={buttonVariants({ size: "lg" })}>
@@ -158,18 +158,18 @@ export default function Home() {
         </Reveal>
       </section>
 
-      {/* Trust: where the money sits, and what is live versus written. */}
+      {/* Trust: where the money sits today, and what is proven but not yet the default. */}
       <section id="trust" className="bleed scroll-mt-10 border-t-2 border-ink bg-ice py-20 sm:py-28">
         <div className="mx-auto w-full max-w-[1200px] px-4">
           <div className="grid gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:gap-16">
             <Reveal>
-              <H2>Nobody can take more</H2>
+              <H2>How the money is protected</H2>
               <p className="mt-6 text-body-lg sm:text-sub">
-                Pack money sits in a Cardano escrow channel. The buyer agent signs an IOU for each answer that kept the promise.
-                The seller is paid for signed calls; the rest goes back to the buyer automatically. Neither Hirakumi nor the seller can take more.
+                Today a pack payment settles straight to the seller&apos;s wallet. Hirakumi&apos;s gateway checks every answer against the
+                promise and only then uses a credit. A stale, empty or failed answer is free.
               </p>
               <p className="mt-6 text-body-lg text-graphite">
-                Today on preprod, pack payments settle straight to the seller and the gateway counts the credits. Buyers can audit every call at /receipts.
+                Every paid call is logged with its verdict, and the buyer can audit the log at /receipts.
               </p>
             </Reveal>
             <Reveal as="dl" stagger={0.12} className="grid gap-6 sm:grid-cols-2 lg:grid-cols-1">
@@ -193,9 +193,15 @@ export default function Home() {
                 </dd>
               </div>
               <div data-reveal className="rounded-[2px] border-2 border-ink bg-frost p-6">
-                <dt className="text-caption font-semibold uppercase tracking-[0.06em]">Written and tested, shipping next</dt>
-                <dd className="mt-4 text-body-lg">
-                  The escrow channel: an Aiken validator with buyer-signed IOUs and <span className="font-medium tabular-nums">110 contract tests</span> passing.
+                <dt className="text-caption font-semibold uppercase tracking-[0.06em]">Proven on preprod, rolling out next</dt>
+                <dd className="mt-4 space-y-3 text-body-lg">
+                  <p>
+                    An escrow channel: the pack money waits in a Cardano contract, the buyer signs for each answer that kept the
+                    promise, and the seller is paid for those calls only. The rest goes back to the buyer.
+                  </p>
+                  <p className="text-graphite">
+                    Settled end to end on preprod, with <span className="font-medium tabular-nums text-ink">110 contract tests</span> passing.
+                  </p>
                 </dd>
               </div>
             </Reveal>
@@ -207,7 +213,7 @@ export default function Home() {
       <section id="proof" className="scroll-mt-10 border-t-2 border-ink py-20 sm:py-28">
         <Reveal className="max-w-2xl">
           <H2>Measured on preprod</H2>
-          <p className="mt-4 text-body-lg">Cardano preprod, 6 October 2026. Test funds, real transactions. The load test ran on a local copy of the stack.</p>
+          <p className="mt-4 text-body-lg">Cardano preprod, 6 October 2026. Test funds, real transactions. The load test ran on a local copy of the stack, not on preprod.</p>
         </Reveal>
         <Reveal as="dl" stagger={0.07} className="mt-12 grid gap-x-8 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
           {PROOF.map((p) => (
@@ -244,7 +250,7 @@ export default function Home() {
           <Mascot className="h-16" title="" />
           <h2 className="mt-6 text-h font-light uppercase sm:text-h-lg">Start with one link</h2>
           <p className="mt-4 max-w-[34rem] text-body-lg">
-            Sign in with a Cardano wallet, paste your OpenAPI link, approve the promise and the price. That is the whole onboarding.
+            Paste your OpenAPI link, sign with your Cardano wallet, approve the promise and the price. That is the whole onboarding.
           </p>
           <div className="mt-8 flex w-full flex-col items-stretch gap-4 sm:w-auto sm:flex-row">
             <Link href="/login" className={buttonVariants({ size: "lg" })}>{PRIMARY_CTA}</Link>
