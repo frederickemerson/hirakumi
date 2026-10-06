@@ -19,7 +19,9 @@ export class JobRunner {
   constructor(private readonly d: JobRunnerDeps) {}
 
   start(): void {
-    void resetInterruptedJobs(this.d.sql).then((n) => { if (n) console.log(`[jobs] re-queued ${n} interrupted job(s)`); });
+    void resetInterruptedJobs(this.d.sql)
+      .then((n) => { if (n) console.log(`[jobs] re-queued ${n} interrupted job(s)`); })
+      .catch((e) => console.error("[jobs] could not re-queue interrupted jobs:", e));
     this.timer = setInterval(() => { void this.tick(); }, this.d.config.demoMode ? 5_000 : 10_000);
   }
 
@@ -39,6 +41,8 @@ export class JobRunner {
       for (const job of await listJobsAwaitingPayment(this.d.sql)) {
         await this.advance(job).catch((e) => console.error(`[jobs] ${job.id}:`, e));
       }
+    } catch (e) {
+      console.error("[jobs] tick failed:", e);
     } finally {
       this.running = false;
     }

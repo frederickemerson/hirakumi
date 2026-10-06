@@ -11,6 +11,12 @@ export function buildUpstreamRequest(
   const path = op.path.replace(/\{([^}]+)\}/g, (_m, name: string) => {
     const v = rest[name];
     if (v === undefined || v === null) throw new Error(`missing path parameter ${name}`);
+    // "." / ".." (also percent-encoded) or "" would let a buyer step outside the path prefix whose ownership
+    // was verified, because URLs normalise dot segments.
+    const raw = String(v);
+    let decoded = raw;
+    try { decoded = decodeURIComponent(raw); } catch { /* keep raw */ }
+    if (raw === "" || /^\.{1,2}$/.test(raw) || /^\.{1,2}$/.test(decoded)) throw new Error(`invalid path parameter ${name}`);
     delete rest[name];
     return encodeURIComponent(String(v));
   });

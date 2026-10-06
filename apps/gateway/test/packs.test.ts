@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import request from "supertest";
 import { USDM_PREPROD_ASSET } from "@x402/cardano";
 import { decodePaymentRequiredHeader, encodePaymentSignatureHeader } from "@x402/core/http";
+import { activateTokenByPayment } from "@hirakumi/db";
 import { makeHarness, type Harness } from "./helpers";
 
 let h: Harness;
@@ -76,5 +77,44 @@ describe("pack purchase", () => {
     expect(replay.body.error).toBe("payment_already_used");
     expect(h.facilitator.settleCalls).toBe(1);
     expect(await tokens()).toHaveLength(1);
+  });
+});
+
+describe("pack recovery (review I1: settlement failed or unknown, buyer never saw the token)", () => {
+  const recoverPath = () => `${packPath()}/recover`;
+  it("re-issues a token for the same signed payment; it works once the payment settles", async () => {
+    h.facilitator.settleMode = "fail";
+    const { header, res } = await pay();
+    expect(res.status).toBe(402);
+    const rec = await request(h.app).post(recoverPath()).set("PAYMENT-SIGNATURE", header);
+    expect(rec.status).toBe(200);
+    expect(rec.body).toMatchObject({ status: "pending", credits: 100, apiId: h.seeded.apiId });
+    expect(rec.body.token).toMatch(/^hk_[A-Za-z0-9_-]{43}$/);
+    const early = await request(h.app).get(`/a/${h.seeded.apiId}/x/getPrice?symbol=ADA`).set("authorization", `Bearer ${rec.body.token}`);
+    expect(early.status).toBe(401);
+    expect(early.body.error).toBe("token_pending");
+    // The transaction landed after all; the reconciler (or a late settle) activates the row.
+    const [{ payment_payload_hash }] = await h.sql<{ payment_payload_hash: string }[]>`select payment_payload_hash from credit_tokens`;
+    expect(await activateTokenByPayment(h.sql, payment_payload_hash, "cd".repeat(32), "addr_test1qbuyer")).toBe(true);
+    const call = await request(h.app).get(`/a/${h.seeded.apiId}/x/getPrice?symbol=ADA`).set("authorization", `Bearer ${rec.body.token}`);
+    expect(call.status).toBe(200);
+    expect(h.facilitator.settleCalls).toBe(1); // recovery never settles again
+  });
+  it("the previous token stops working after recovery, and credits are kept", async () => {
+    const { header, res } = await pay("nonce-r2");
+    expect(res.status).toBe(200);
+    const used = await request(h.app).get(`/a/${h.seeded.apiId}/x/getPrice?symbol=ADA`).set("authorization", `Bearer ${res.body.token}`);
+    expect(used.status).toBe(200);
+    const rec = await request(h.app).post(recoverPath()).set("PAYMENT-SIGNATURE", header);
+    expect(rec.status).toBe(200);
+    expect(rec.body).toMatchObject({ status: "active", credits: 99 });
+    const old = await request(h.app).get(`/a/${h.seeded.apiId}/x/getPrice?symbol=ADA`).set("authorization", `Bearer ${res.body.token}`);
+    expect(old.status).toBe(401);
+  });
+  it("answers 404 for a payment it never saw and 400 without a signature", async () => {
+    const { required, accepted } = await offer();
+    const unknown = encodePaymentSignatureHeader({ x402Version: required.x402Version, resource: required.resource, accepted, payload: { transaction: "bm9wZQ==", nonce: "never" } });
+    expect((await request(h.app).post(recoverPath()).set("PAYMENT-SIGNATURE", unknown)).status).toBe(404);
+    expect((await request(h.app).post(recoverPath())).status).toBe(400);
   });
 });

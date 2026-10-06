@@ -61,6 +61,17 @@ export async function insertPendingToken(
   return { inserted: false, id: existing.id, status: existing.status };
 }
 
+/** Pack recovery: re-key the token bought by this exact signed payment. Revoked tokens stay revoked. */
+export async function rotateTokenByPayment(
+  sql: Sql, apiId: string, paymentPayloadHash: string, newTokenHash: string,
+): Promise<{ id: string; status: CreditStatus; remaining: number } | null> {
+  const [row] = await sql<{ id: string; status: CreditStatus; remaining: number }[]>`
+    update credit_tokens set token_hash = ${newTokenHash}
+    where payment_payload_hash = ${paymentPayloadHash} and api_id = ${apiId} and status <> 'revoked'
+    returning id, status, remaining`;
+  return row ?? null;
+}
+
 export async function activateTokenByPayment(sql: Sql, paymentPayloadHash: string, txHash: string | null, payer: string | null): Promise<boolean> {
   const rows = await sql`
     update credit_tokens

@@ -22,7 +22,10 @@ export function creditsRouter(d: AppDeps): Router {
       if (snap?.health === "down") { res.status(503).json(downBody(d.config, snap)); return; }
       if (!op.rule || !op.ruleRow) { res.status(503).json({ error: "promise_not_published" }); return; }
 
-      const bearer = parseBearer(req.header("authorization"));
+      const authorization = req.header("authorization");
+      const bearer = parseBearer(authorization);
+      // A Bearer value that isn't a Hirakumi token is a client bug: say so instead of offering another pack.
+      if (!bearer && /^\s*Bearer\s+\S/i.test(authorization ?? "")) { res.status(401).json({ error: "invalid_token" }); return; }
       if (!bearer) { res.status(402).json(creditsRequiredBody(d.config, loaded, op.ruleRow)); return; }
       const reservation = await reserveCredit(d.sql, loaded.api.id, sha256Hex(bearer));
       if (!reservation.ok) {

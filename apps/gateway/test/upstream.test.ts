@@ -36,6 +36,9 @@ describe("buildUpstreamRequest", () => {
     expect(r.init.body).toBeUndefined();
     expect(r.init.headers["content-type"]).toBeUndefined();
   });
+  it.each([[".."], ["."], [""], ["%2e%2e"]])("refuses the dot-segment or empty path parameter %j (stays inside the verified prefix)", (id) => {
+    expect(() => buildUpstreamRequest({ origin: "https://a.example", path_prefix: "/v1" }, { method: "GET", path: "/items/{id}" }, { id })).toThrow(/path parameter/);
+  });
   it("fails on a missing path parameter", () => {
     expect(() => buildUpstreamRequest({ origin: "https://a.example", path_prefix: "/" }, { method: "GET", path: "/p/{id}" }, {})).toThrow(/id/);
   });

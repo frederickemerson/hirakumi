@@ -5,7 +5,7 @@ import { decodePaymentSignatureHeader } from "@x402/core/http";
 import { ExactCardanoScheme } from "@x402/cardano/exact/server";
 import { USDM_PREPROD_ASSET, decodeCardanoTransaction } from "@x402/cardano";
 import { jcs, newBearerToken, newId, sha256Hex } from "@hirakumi/core";
-import { activateTokenByPayment, insertPendingToken, type PackRow } from "@hirakumi/db";
+import { activateTokenByPayment, insertPendingToken, rotateTokenByPayment, type PackRow } from "@hirakumi/db";
 import type { AppDeps } from "./deps";
 import { downBody, ruleUrl } from "./http";
 import { primaryRule, type LoadedApi } from "./registry";
@@ -119,7 +119,7 @@ export function packRouter(d: AppDeps): Router {
       if (!ins.inserted) {
         res.status(409).json({
           error: "payment_already_used", tokenId: ins.id,
-          message: "This payment already bought a credit token. Use the token you received the first time.",
+          message: "This payment already bought a credit token. If you never received it, POST the same PAYMENT-SIGNATURE to this URL + /recover.",
         });
         return;
       }
@@ -127,7 +127,32 @@ export function packRouter(d: AppDeps): Router {
     } catch (e) { next(e); }
   };
 
+  /**
+   * Recovery (review I1): if settlement failed or timed out, the buyer never saw the token, and a plain retry
+   * can't help (the UTxO may be spent, or the payment is already used). Presenting the exact signed payload
+   * proves the payment, so we re-key its token. No verify or settle runs here; the token works once the
+   * payment row is active (settle hook or reconciler).
+   */
+  const recover: RequestHandler = async (req, res, next) => {
+    try {
+      const header = req.header("payment-signature") ?? req.header("x-payment");
+      if (!header) { res.status(400).json({ error: "payment_signature_required", message: "Send the same PAYMENT-SIGNATURE header you paid with." }); return; }
+      let payload: ReturnType<typeof decodePaymentSignatureHeader>;
+      try { payload = decodePaymentSignatureHeader(header); } catch { res.status(400).json({ error: "invalid_payment_signature" }); return; }
+      const token = newBearerToken();
+      const row = await rotateTokenByPayment(d.sql, req.params.apiId, paymentPayloadHash(payload.payload), sha256Hex(token));
+      if (!row) { res.status(404).json({ error: "payment_not_found", message: "This API never received that payment." }); return; }
+      res.status(200).json({
+        token, status: row.status, credits: row.remaining, apiId: req.params.apiId, tokenId: row.id,
+        message: row.status === "pending"
+          ? "Your payment is still being confirmed. This token starts working as soon as it settles."
+          : "Here is a fresh token for your pack. Any earlier token for this payment no longer works.",
+      });
+    } catch (e) { next(e); }
+  };
+
   const r = Router();
+  r.post("/a/:apiId/packs/:packId/recover", recover);
   r.post("/a/:apiId/packs/:packId", guard, paymentMiddleware(routes, server), handler);
   return r;
 }

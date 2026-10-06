@@ -31,6 +31,9 @@ export class Monitor {
     try {
       const ids = await listMonitoredApiIds(this.d.sql);
       await Promise.all(ids.map((id) => this.probeApi(id).catch((e) => console.error(`[monitor] ${id}:`, e))));
+    } catch (e) {
+      // A background loop must never reject: Node would exit and the health counters would be lost.
+      console.error("[monitor] tick failed:", e);
     } finally {
       this.running = false;
     }
