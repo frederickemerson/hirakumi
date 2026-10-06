@@ -1,5 +1,6 @@
 import express, { type Express } from "express";
 import { getRuleByHash } from "@hirakumi/db";
+import { channelsRouter } from "./channels";
 import { creditsRouter } from "./credits";
 import type { AppDeps } from "./deps";
 import { errorHandler } from "./http";
@@ -18,6 +19,7 @@ export function createApp(d: AppDeps): Express {
   app.use(internalRouter(d));
   app.use(packRouter(d));
   app.use(creditsRouter(d));
+  app.use(channelsRouter(d));
   app.use(mip003Router(d));
   app.get("/r/:ruleHash", async (req, res, next) => {
     try {

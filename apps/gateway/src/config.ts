@@ -1,3 +1,4 @@
+import { walletKeys } from "@hirakumi/escrow/txs";
 import type { HealthThresholds } from "./health";
 
 export type { HealthThresholds } from "./health";
@@ -15,6 +16,24 @@ export type GatewayConfig = {
   escrow: { payByMs: number; submitResultMs: number; unit: string };
   blockfrostProjectId: string | null;
   masumi: { baseUrl: string; token: string } | null;
+  /** `direct` (default): packs pay the seller. `escrow`: packs lock at the pack_escrow script. */
+  packMode: "direct" | "escrow";
+  packEscrow: PackEscrowConfig | null;
+};
+
+export type PackEscrowConfig = {
+  feeAddress: string;
+  feeBps: number;
+  /** Payment key hash written into every datum as `closer`. */
+  closerVkh: string;
+  contestPeriodMs: number;
+  closeFeeBudgetLovelace: number;
+  /** Signs Close / Raise / Settle. Unset → the ChannelWatcher only verifies locks and tracks status. */
+  operatorMnemonic: string | null;
+  /** A paid call's lease on the unsigned allowance expires after this if the process dies mid-call. */
+  leaseSeconds: number;
+  /** Raise only while at least this much of the contest period is left. */
+  raiseMarginMs: number;
 };
 
 export const MASUMI_ESCROW_UNIT_PREPROD =
@@ -52,6 +71,35 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     },
     blockfrostProjectId: env.BLOCKFROST_PROJECT_ID?.trim() || null,
     masumi: psUrl && psToken ? { baseUrl: psUrl, token: psToken } : null,
+    ...packEscrowFrom(env, demoMode),
+  };
+}
+
+function packEscrowFrom(env: NodeJS.ProcessEnv, demoMode: boolean): Pick<GatewayConfig, "packMode" | "packEscrow"> {
+  const mode = env.PACK_MODE?.trim() || "direct";
+  if (mode !== "direct" && mode !== "escrow") throw new Error("PACK_MODE must be direct or escrow");
+  if (mode === "direct") return { packMode: "direct", packEscrow: null };
+  const feeAddress = env.HIRAKUMI_FEE_ADDRESS?.trim();
+  if (!feeAddress?.startsWith("addr_test1")) throw new Error("PACK_MODE=escrow needs HIRAKUMI_FEE_ADDRESS (a preprod address)");
+  const operatorMnemonic = env.OPERATOR_MNEMONIC?.trim() || null;
+  const closerVkh = (operatorMnemonic ? walletKeys(operatorMnemonic).vkh : env.ESCROW_CLOSER_VKH?.trim().toLowerCase()) ?? "";
+  if (!/^[0-9a-f]{56}$/.test(closerVkh)) throw new Error("PACK_MODE=escrow needs OPERATOR_MNEMONIC or ESCROW_CLOSER_VKH (28-byte hex)");
+  const int = (k: string, dflt: number) => {
+    const v = env[k]?.trim();
+    if (!v) return dflt;
+    if (!/^\d+$/.test(v)) throw new Error(`${k} must be a whole number`);
+    return Number(v);
+  };
+  return {
+    packMode: "escrow",
+    packEscrow: {
+      feeAddress, closerVkh, operatorMnemonic,
+      feeBps: int("HIRAKUMI_FEE_BPS", 300),
+      contestPeriodMs: int("CONTEST_PERIOD_MS", demoMode ? 180_000 : 3_600_000),
+      closeFeeBudgetLovelace: int("CLOSE_FEE_BUDGET_LOVELACE", 700_000),
+      leaseSeconds: 30,
+      raiseMarginMs: 60_000,
+    },
   };
 }
 

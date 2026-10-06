@@ -29,4 +29,15 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...env, PAYMENT_SERVICE_URL: "http://ps/api/v1", PAYMENT_SERVICE_TOKEN: "t" }).masumi)
       .toEqual({ baseUrl: "http://ps/api/v1", token: "t" });
   });
+  it("PACK_MODE defaults to direct; escrow needs a fee address and a closer key", () => {
+    expect(loadConfig(env)).toMatchObject({ packMode: "direct", packEscrow: null });
+    expect(() => loadConfig({ ...env, PACK_MODE: "escrow" })).toThrow(/HIRAKUMI_FEE_ADDRESS/);
+    const fee = "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s";
+    expect(() => loadConfig({ ...env, PACK_MODE: "escrow", HIRAKUMI_FEE_ADDRESS: fee })).toThrow(/OPERATOR_MNEMONIC/);
+    const c = loadConfig({ ...env, DEMO_MODE: "1", PACK_MODE: "escrow", HIRAKUMI_FEE_ADDRESS: fee, ESCROW_CLOSER_VKH: "AB".repeat(28) });
+    expect(c.packEscrow).toMatchObject({
+      feeAddress: fee, feeBps: 300, closerVkh: "ab".repeat(28), contestPeriodMs: 180_000, closeFeeBudgetLovelace: 700_000, operatorMnemonic: null,
+    });
+    expect(() => loadConfig({ ...env, PACK_MODE: "both" })).toThrow(/PACK_MODE/);
+  });
 });
