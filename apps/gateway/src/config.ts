@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import { walletKeys } from "@hirakumi/escrow/txs";
 import type { HealthThresholds } from "./health";
 
@@ -19,6 +20,12 @@ export type GatewayConfig = {
   /** `direct` (default): packs pay the seller. `escrow`: packs lock at the pack_escrow script. */
   packMode: "direct" | "escrow";
   packEscrow: PackEscrowConfig | null;
+  /**
+   * START_JOB_TRUSTED_CIDRS: source ranges of Sokosumi's backend / Masumi purchaser nodes. MIP-003 start_job carries
+   * no signature or key (Sokosumi sends only Content-Type), so the address Caddy saw is the only signal. Callers in
+   * these ranges get START_JOB_TRUSTED_LIMIT per minute per address instead of 10. Normalised, empty by default.
+   */
+  startJobTrustedCidrs: string[];
 };
 
 export type PackEscrowConfig = {
@@ -72,7 +79,24 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     blockfrostProjectId: env.BLOCKFROST_PROJECT_ID?.trim() || null,
     masumi: psUrl && psToken ? { baseUrl: psUrl, token: psToken } : null,
     ...packEscrowFrom(env, demoMode),
+    startJobTrustedCidrs: parseTrustedCidrs(env.START_JOB_TRUSTED_CIDRS),
   };
+}
+
+/** "a.b.c.d/n, x:y::/n, a.b.c.d" → normalised CIDRs. A bare address is a /32 or /128. /0 is refused (trusts everyone). */
+export function parseTrustedCidrs(raw: string | undefined): string[] {
+  const out: string[] = [];
+  for (const item of (raw ?? "").split(",").map((s) => s.trim()).filter(Boolean)) {
+    const m = /^([^/]+)(?:\/(\d{1,3}))?$/.exec(item);
+    const family = m ? isIP(m[1]) : 0;
+    const max = family === 6 ? 128 : 32;
+    const prefix = m?.[2] === undefined ? max : Number(m[2]);
+    if (!m || family === 0 || prefix < 1 || prefix > max) {
+      throw new Error(`START_JOB_TRUSTED_CIDRS: "${item}" is not an IPv4 or IPv6 CIDR (prefix 1-32 or 1-128)`);
+    }
+    out.push(`${m[1].toLowerCase()}/${prefix}`);
+  }
+  return out;
 }
 
 function packEscrowFrom(env: NodeJS.ProcessEnv, demoMode: boolean): Pick<GatewayConfig, "packMode" | "packEscrow"> {

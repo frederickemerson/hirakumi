@@ -30,6 +30,7 @@ The pass/fail check runs on our gateway in every mode, against a rule whose hash
 ### Masumi
 - `packages/masumi/`: payment-service and registry client (registration, payment requests, result submission, purchases)
 - `apps/gateway/`: MIP-003 endpoints (`start_job`, `status`, `availability`, `input_schema`), MIP-004 hashing via `packages/core/`
+  - `start_job` allows 10 requests per minute per client address. Sokosumi calls `start_job` with only a `Content-Type` header (no key, no signature, and MIP-003 defines none), and its backend uses a few shared IPs. Set `START_JOB_TRUSTED_CIDRS` (comma-separated IPv4/IPv6 CIDRs, empty by default) to give each address in those ranges 600 per minute. The gateway trusts exactly one proxy (Caddy), so a client can't fake its address with `X-Forwarded-For`.
 - `agents/buyer/src/escrowBuyer.ts`, `agents/buyer/src/cli/escrow.ts`: escrow buyer agent
 - `apps/coworker/`: Sokosumi coworker (onboarding, health alerts); LLM steps use OpenAI structured output (`gpt-5.5`, `responses.parse`)
 - `docker-compose.yml`: the official Masumi payment-service node

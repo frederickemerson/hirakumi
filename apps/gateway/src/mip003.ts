@@ -1,4 +1,4 @@
-import { isIP } from "node:net";
+import { BlockList, isIP } from "node:net";
 import { Router } from "express";
 import { inputHash, newId } from "@hirakumi/core";
 import { getJob, insertJob, type JobRow } from "@hirakumi/db";
@@ -35,6 +35,31 @@ export const PURCHASER_ID = /^(?:[0-9a-f]{2}){7,13}$/;
 
 /** start_job creates a Masumi payment request and a job row, so unauthenticated floods are capped per client. */
 const START_JOB_LIMIT = { max: 10, windowMs: 60_000 };
+/**
+ * Sokosumi's backend and payment nodes call from a few shared addresses, so one per-address limit would be shared by
+ * every Sokosumi user. MIP-003 start_job carries nothing verifiable (no signature or key), so trust is by source range
+ * (START_JOB_TRUSTED_CIDRS), still counted per address so one runaway caller can't take unlimited payment requests.
+ */
+export const START_JOB_TRUSTED_LIMIT = { max: 600, windowMs: 60_000 };
+
+/** A predicate over client addresses for the given CIDRs. IPv4-mapped IPv6 (::ffff:a.b.c.d) is checked as IPv4. */
+export function trustedAddressMatcher(cidrs: string[]): (ip: string | undefined) => boolean {
+  if (cidrs.length === 0) return () => false;
+  const list = new BlockList();
+  for (const c of cidrs) {
+    const [addr, prefix] = c.split("/");
+    const family = isIP(addr) === 6 ? "ipv6" : "ipv4";
+    list.addSubnet(addr, Number(prefix), family);
+  }
+  return (ip) => {
+    if (!ip) return false;
+    const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(ip);
+    const addr = mapped ? mapped[1] : ip;
+    const family = isIP(addr);
+    if (family === 0) return false;
+    return list.check(addr, family === 6 ? "ipv6" : "ipv4");
+  };
+}
 
 /**
  * Rate-limit key for a client address. IPv6 is grouped by /64, the usual per-customer allocation, so a client
@@ -117,9 +142,12 @@ export function mip003Router(d: AppDeps): Router {
   });
 
   const allowStart = createWindowLimiter(START_JOB_LIMIT.max, START_JOB_LIMIT.windowMs);
+  const allowTrustedStart = createWindowLimiter(START_JOB_TRUSTED_LIMIT.max, START_JOB_TRUSTED_LIMIT.windowMs);
+  const isTrusted = trustedAddressMatcher(d.config.startJobTrustedCidrs);
   r.post("/a/:apiId/start_job", async (req, res, next) => {
     try {
-      if (!allowStart(clientKey(req.ip))) {
+      const allowed = isTrusted(req.ip) ? allowTrustedStart(clientKey(req.ip)) : allowStart(clientKey(req.ip));
+      if (!allowed) {
         res.status(429).json({ error: "too_many_requests", message: "Too many jobs started from your address. Try again in a minute." });
         return;
       }
