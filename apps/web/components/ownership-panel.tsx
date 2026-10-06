@@ -85,7 +85,7 @@ export function OwnershipPanel({ apiId, fileUrl, initiallyPassed }: { apiId: str
           Your wallet shows a message naming this API and the address buyers will pay. Signing costs nothing and moves no funds.
         </p>
         {wallets.length === 0 ? (
-          <p className="text-sm">No Cardano wallet found in this browser. Install Eternl, switch it to preprod, then reload.</p>
+          <p className="text-sm">No Cardano wallet found in this browser. Install Lace or Eternl, switch it to Preprod, then reload.</p>
         ) : (
           <div className="flex flex-wrap gap-2">
             {wallets.map((w) => (

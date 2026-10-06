@@ -38,7 +38,7 @@ export function WalletLogin({ next }: { next: string }) {
   if (wallets.length === 0) {
     return (
       <p role="alert" className="text-sm">
-        No Cardano wallet found in this browser. Install Eternl, switch it to the preprod test network, then reload this page.
+        No Cardano wallet found in this browser. Install Lace or Eternl, switch it to the Preprod test network, then reload this page.
       </p>
     );
   }
