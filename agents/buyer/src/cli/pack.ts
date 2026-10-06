@@ -1,5 +1,5 @@
 import { parseArgs } from "node:util";
-import { cliArgs } from "../cliArgs.js";
+import { cliArgs, queryArgs } from "../cliArgs.js";
 import { setTimeout as sleep } from "node:timers/promises";
 import { resolve } from "node:path";
 import { need } from "../env.js";
@@ -14,6 +14,7 @@ const { values } = parseArgs({ args: cliArgs(),
     api: { type: "string" },
     op: { type: "string", default: "getPrice" },
     symbol: { type: "string", default: "ADA" },
+    query: { type: "string", multiple: true },
     calls: { type: "string", default: "20" },
     interval: { type: "string", default: "2000" },
     fresh: { type: "boolean", default: false },
@@ -24,9 +25,10 @@ const { values } = parseArgs({ args: cliArgs(),
   },
 });
 if (!values.api) {
-  console.error("Usage: pnpm --filter @hirakumi/buyer pack -- --api <apiId> [--op getPrice] [--symbol ADA] [--calls 20] [--interval 2000] [--fresh] [--escrow] [--escrow --close --pack <packId> [--wait]]");
+  console.error("Usage: pnpm --filter @hirakumi/buyer pack -- --api <apiId> [--op getPrice] [--symbol ADA | --query name=value ...] [--calls 20] [--interval 2000] [--fresh] [--escrow] [--escrow --close --pack <packId> [--wait]]");
   process.exit(1);
 }
+const query = queryArgs(values.query, values.symbol);
 
 const maxPackMicros = BigInt(process.env.MAX_PACK_MICROS ?? "5000000");
 const payer = createPackPayer({
@@ -54,7 +56,7 @@ if (values.escrow) {
   }
   const summary = await runEscrowPack(
     { fetch, buyEscrowPack: payer.buyEscrowPack, store, refundAddress: payer.address, log: (l) => console.log(l), sleep: (ms) => sleep(ms), now: () => new Date() },
-    { gatewayUrl, apiId: values.api, opId: values.op, query: { symbol: values.symbol }, calls: Number(values.calls), intervalMs: Number(values.interval),
+    { gatewayUrl, apiId: values.api, opId: values.op, query, calls: Number(values.calls), intervalMs: Number(values.interval),
       maxPackMicros, pendingTimeoutMs: 180_000, pendingPollMs: 5_000 },
   );
   process.exit(summary.disputed ? 2 : 0);
@@ -65,7 +67,7 @@ const summary = await runPackDemo(
     gatewayUrl: need("PUBLIC_BASE_URL"),
     apiId: values.api,
     opId: values.op,
-    query: { symbol: values.symbol },
+    query,
     calls: Number(values.calls),
     intervalMs: Number(values.interval),
     maxPackMicros,
