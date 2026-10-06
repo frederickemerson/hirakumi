@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { registerStep, type MasumiPort, type RegisterDeps, type RegistryStatus } from "../src/onboarding/registerStep.js";
+import { MasumiApiError, validateListing } from "@hirakumi/masumi";
 import { finishStep, getStep } from "../src/steps.js";
 import { createTestDb, messagesFor, seedApi, type TestDb } from "./helpers/db.js";
 
@@ -20,7 +21,7 @@ function deps(masumi: MasumiPort, offsetMs = 0): RegisterDeps {
   return {
     pool: db.pool,
     masumi,
-    masumiConfig: { baseUrl: "http://payment-service:3001/api/v1", token: "t", network: "Preprod" },
+    masumiConfig: { baseUrl: "http://payment-service:3001/api/v1", token: "t", network: "Preprod", registryToken: "rt" },
     publicBaseUrl: "https://api.hirakumi.app",
     webBaseUrl: "https://web.test",
     escrowUnit: UNIT,
@@ -29,7 +30,11 @@ function deps(masumi: MasumiPort, offsetMs = 0): RegisterDeps {
 }
 
 const fakeMasumi = (status: RegistryStatus = "Online") => ({
-  registerAgent: vi.fn().mockResolvedValue({ registrationId: "reg_1" }),
+  // Runs the payment service's real listing rules, so a listing the node would reject fails here too.
+  registerAgent: vi.fn(async (_c: unknown, a: Parameters<typeof validateListing>[0]) => {
+    validateListing(a);
+    return { registrationId: "reg_1" };
+  }),
   getAgentIdentifier: vi.fn().mockResolvedValue("agent_abc"),
   getRegistryStatus: vi.fn().mockResolvedValue(status),
 });
@@ -47,7 +52,6 @@ describe("registerStep (registering → live)", () => {
       priceMicros: 1500000n,
       unit: UNIT,
       tags: ["crypto"],
-      exampleOutput: '{"price":1}',
     });
     await registerStep(deps(masumi, 60_000), apiId);
     expect(masumi.registerAgent).toHaveBeenCalledTimes(1);
@@ -56,6 +60,41 @@ describe("registerStep (registering → live)", () => {
     const msgs = await messagesFor(db.pool, apiId);
     expect(msgs.map((m) => m.task_status)).toEqual(["RUNNING", "COMPLETED"]);
     expect(msgs[1].body).toMatch(/Agent ID: agent_abc/);
+  });
+
+  it("builds a listing the registry accepts from real QA output (long text, no tags, JSON example)", async () => {
+    const apiId = await seedApi(db.pool, { state: "registering" });
+    await db.pool.query(`insert into packs (id, api_id, calls, price_micros, escrow_price_micros) values ($1, $2, 100, 2000000, 1500000)`, [`pk_${apiId}`, apiId]);
+    await finishStep(db.pool, apiId, "qa", { listing: { summary: "s", description: "x".repeat(600), tags: [] }, exampleOutput: '{"usd":0.27}' });
+    const masumi = fakeMasumi();
+    await registerStep(deps(masumi), apiId);
+    expect(masumi.registerAgent).toHaveBeenCalledTimes(1);
+    const sent = masumi.registerAgent.mock.calls[0][1];
+    expect(sent.description.length).toBeLessThanOrEqual(250);
+    expect(sent.tags.length).toBeGreaterThan(0);
+    expect(sent).not.toHaveProperty("exampleOutput");
+    expect((await getStep(db.pool, apiId, "register"))?.output?.registrationId).toBe("reg_1");
+  });
+
+  it("goes Live once the agent NFT is minted when no registry token is configured (status check skipped)", async () => {
+    const apiId = await seedPublished();
+    const masumi = fakeMasumi("Offline");
+    const noToken = { ...deps(masumi), masumiConfig: { baseUrl: "http://payment-service:3001/api/v1", token: "t", network: "Preprod" as const } };
+    await registerStep(noToken, apiId);
+    await registerStep({ ...noToken, now: () => new Date(Date.now() + 60_000) }, apiId);
+    expect(masumi.getRegistryStatus).not.toHaveBeenCalled();
+    const { rows: [api] } = await db.pool.query(`select state from apis where id = $1`, [apiId]);
+    expect(api.state).toBe("live");
+  });
+
+  it("does not retry registerAgent after an ambiguous failure such as a timeout (no double mint)", async () => {
+    const apiId = await seedPublished();
+    const masumi = fakeMasumi();
+    masumi.registerAgent.mockRejectedValueOnce(new MasumiApiError(0, "/registry", "request timed out"));
+    await registerStep(deps(masumi), apiId);
+    await registerStep(deps(masumi, 3_600_000), apiId);
+    expect(masumi.registerAgent).toHaveBeenCalledTimes(1);
+    expect((await getStep(db.pool, apiId, "register"))?.status).toBe("failed");
   });
 
   it("never calls registerAgent again after an interrupted attempt (no double mint)", async () => {

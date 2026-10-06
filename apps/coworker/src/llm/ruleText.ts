@@ -12,7 +12,7 @@ export const RULE_TEXT_SYSTEM = [
   "For each promise return {opId, promise}: 1 to 3 plain-English sentences (at most 400 characters) that start with",
   '"A response counts as good when" and mention the accepted status codes, every required field with its type,',
   'and any maxAgeSeconds as "no older than N seconds". Do not invent rules that are not in the JSON.',
-  "Also return listing: summary (at most 160 characters), description (at most 800 characters) for AI agents that might buy calls,",
+  "Also return listing: summary (at most 160 characters), description (at most 240 characters, the Masumi registry limit is 250) for AI agents that might buy calls,",
   "and 3 to 6 short lowercase tags.",
 ].join("\n");
 
@@ -50,7 +50,7 @@ function fallback(input: RuleTextInput): RuleTextResult {
     texts: new Map(input.ops.map((o) => [o.opId, fallbackRuleText(o.rule)])),
     listing: {
       summary: `${input.apiName}: pay-per-call data for AI agents`.slice(0, 160),
-      description: input.ops.map((o) => o.description ?? o.opId).join(" ").slice(0, 800),
+      description: input.ops.map((o) => o.description ?? o.opId).join(" ").slice(0, 250),
       tags: ["api", "data"],
     },
     usedFallback: true,
@@ -69,7 +69,7 @@ function validate(input: RuleTextInput, out: z.infer<typeof RuleTextSchema>): Ru
   const summary = out.listing.summary.trim();
   const description = out.listing.description.trim();
   const tags = [...new Set(out.listing.tags.map((t) => t.trim().toLowerCase()).filter(Boolean))];
-  if (!summary || summary.length > 160 || !description || description.length > 800) throw new LlmOutputError("bad listing text");
+  if (!summary || summary.length > 160 || !description || description.length > 250) throw new LlmOutputError("bad listing text");
   if (tags.length < 1 || tags.length > 8 || tags.some((t) => t.length > 30)) throw new LlmOutputError("bad tags");
   return { texts, listing: { summary, description, tags }, usedFallback: false };
 }

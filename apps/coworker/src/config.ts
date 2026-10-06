@@ -7,7 +7,7 @@ export type Config = {
   anthropicApiKey: string;
   /** null = dashboard-chat fallback mode (SOKOSUMI_COWORKER_API_KEY empty). */
   sokosumi: { apiUrl: string; apiKey: string } | null;
-  masumi: { baseUrl: string; token: string; network: "Preprod" };
+  masumi: { baseUrl: string; token: string; network: "Preprod"; registryUrl: string; registryToken?: string };
   escrowUnit: string;
   onboardingCredits: number;
 };
@@ -46,6 +46,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
       baseUrl: stripSlash(required(env, "PAYMENT_SERVICE_URL")),
       token: required(env, "PAYMENT_SERVICE_TOKEN"),
       network: "Preprod",
+      // Registry status checks need a token; without one the register step goes Live on the minted NFT.
+      registryUrl: stripSlash(env.REGISTRY_SERVICE_URL?.trim() || "https://registry.masumi.network/api/v1"),
+      registryToken: env.REGISTRY_API_KEY?.trim() || undefined,
     },
     escrowUnit: required(env, "MASUMI_ESCROW_UNIT"),
     onboardingCredits: credits,

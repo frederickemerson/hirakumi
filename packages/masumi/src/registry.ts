@@ -34,7 +34,8 @@ function httpsUrl(field: string, value: string): URL {
   return url;
 }
 
-function validateListing(a: AgentListing): void {
+/** The payment service's own listing rules (0.29.0). Exported so callers can check before registering. */
+export function validateListing(a: AgentListing): void {
   httpsUrl("apiBaseUrl", a.apiBaseUrl);
   if (a.apiBaseUrl.endsWith("/")) {
     throw new MasumiInputError(`apiBaseUrl must not end with "/": the registry appends "/availability" (${a.apiBaseUrl})`);

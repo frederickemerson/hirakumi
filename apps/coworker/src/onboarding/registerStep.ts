@@ -6,8 +6,9 @@ import type { Listing } from "../llm/ruleText.js";
 import { enqueueMessage } from "../messages.js";
 import { finishStep, getStep, runStep, saveStepOutput, touchStep, type StepRow } from "../steps.js";
 
-/** Mirrors the contract's packages/masumi signatures so tests can pass a fake. */
-export type MasumiConfig = { baseUrl: string; token: string; network: "Preprod" };
+import { MasumiInputError, type MasumiConfig } from "@hirakumi/masumi";
+
+export type { MasumiConfig };
 export type RegistryStatus = "Online" | "Offline" | "Deregistered" | "Invalid" | "Unknown";
 export type MasumiPort = {
   registerAgent(
@@ -31,6 +32,10 @@ export type RegisterDeps = {
 export const REGISTRY_POLL_MS = 10_000;
 export const REGISTRY_SLOW_MS = 20 * 60_000;
 
+function clamp(text: string, max: number): string {
+  return text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`;
+}
+
 async function registrationInput(deps: RegisterDeps, apiId: string) {
   const { rows } = await deps.pool.query<{ name: string; escrow_price_micros: string | null }>(
     `select a.name, (select p.escrow_price_micros from packs p where p.api_id = a.id order by p.id limit 1) as escrow_price_micros
@@ -41,15 +46,16 @@ async function registrationInput(deps: RegisterDeps, apiId: string) {
   if (!api?.escrow_price_micros) throw new PermanentError("No price is saved for this API yet. Set a price on the review page, then publish again.");
   const qa = await getStep(deps.pool, apiId, "qa");
   const listing = qa?.output?.listing as Listing | undefined;
-  const exampleOutput = qa?.output?.exampleOutput;
+  // The registry's own limits (packages/masumi validateListing): name and description 1-250 characters,
+  // 1-15 tags of at most 63 characters, and exampleOutput must be an https URL (QA stores a JSON body, so it's omitted).
+  const tags = (listing?.tags ?? []).map((t) => t.slice(0, 63)).filter(Boolean).slice(0, 15);
   return {
-    name: api.name,
-    description: listing?.description ?? api.name,
+    name: api.name.slice(0, 250),
+    description: clamp(listing?.description?.trim() || api.name, 250),
     apiBaseUrl: `${deps.publicBaseUrl}/a/${apiId}`,
     priceMicros: BigInt(api.escrow_price_micros),
     unit: deps.escrowUnit,
-    tags: listing?.tags ?? [],
-    ...(typeof exampleOutput === "string" ? { exampleOutput } : {}),
+    tags: tags.length ? tags : ["api"],
   };
 }
 
@@ -68,7 +74,10 @@ async function pollRegistration(deps: RegisterDeps, apiId: string, step: StepRow
       });
     }
   }
-  if (agentIdentifier && (await deps.masumi.getRegistryStatus(deps.masumiConfig, agentIdentifier)) === "Online") {
+  // Without a registry token the status can't be read; the minted agent NFT is then the signal (logged on purpose).
+  const registryChecked = Boolean(deps.masumiConfig.registryToken);
+  if (agentIdentifier && !registryChecked) console.info(`[register] ${apiId}: no REGISTRY_API_KEY, going Live on the minted NFT ${agentIdentifier}`);
+  if (agentIdentifier && (!registryChecked || (await deps.masumi.getRegistryStatus(deps.masumiConfig, agentIdentifier)) === "Online")) {
     const id = agentIdentifier;
     await withTx(deps.pool, async (c) => {
       const moved = await c.query(`update apis set state = 'live' where id = $1 and state = 'registering'`, [apiId]);
@@ -112,7 +121,17 @@ export async function registerStep(deps: RegisterDeps, apiId: string): Promise<v
       );
     }
     const input = await registrationInput(deps, apiId);
-    const { registrationId: id } = await deps.masumi.registerAgent(deps.masumiConfig, input);
+    let id: string;
+    try {
+      ({ registrationId: id } = await deps.masumi.registerAgent(deps.masumiConfig, input));
+    } catch (e) {
+      if (e instanceof MasumiInputError) throw new PermanentError(`the Masumi registry would reject this listing: ${e.message}`);
+      // A timeout or 5xx may arrive after the node accepted the mint. Retrying could mint a second NFT,
+      // so an operator checks the payment service first (see the register runbook).
+      throw new PermanentError(
+        "the registration request didn't get a clear answer, so we can't tell whether it reached Masumi. The Hirakumi team will check the payment service before retrying, so you are never charged twice.",
+      );
+    }
     await saveStepOutput(deps.pool, apiId, "register", { registrationId: id, registeredAt: now.toISOString() }, "pending");
   }, now);
 }
