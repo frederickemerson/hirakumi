@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { ACTIVE_LISTING_STATES } from "@hirakumi/core";
 import pg from "pg";
 import { createPool } from "../../src/db.js";
 
@@ -34,17 +35,22 @@ export async function createTestDb(): Promise<TestDb> {
   };
 }
 
+const seedsOwnBase = (state: string) => (ACTIVE_LISTING_STATES as readonly string[]).includes(state);
+
 export async function seedApi(
   pool: pg.Pool,
-  o: { state?: string; name?: string; openapiUrl?: string; sokosumiTaskId?: string | null } = {},
+  o: { state?: string; name?: string; openapiUrl?: string; sokosumiTaskId?: string | null; sellerId?: string; pathPrefix?: string } = {},
 ): Promise<string> {
-  const sellerId = `sel_${rand()}`;
+  const sellerId = o.sellerId ?? `sel_${rand()}`;
   const apiId = `api_${rand()}`;
-  await pool.query(`insert into sellers (id, cardano_addr) values ($1, $2)`, [sellerId, `addr_test1${rand()}`]);
+  await pool.query(`insert into sellers (id, cardano_addr) values ($1, $2) on conflict (id) do nothing`, [sellerId, `addr_test1${rand()}`]);
+  const state = o.state ?? "intake";
+  // An API past ownership owns its base (one API, one listing), so each seeded one gets its own folder.
+  const pathPrefix = o.pathPrefix ?? (seedsOwnBase(state) ? `/${apiId}` : "/");
   await pool.query(
-    `insert into apis (id, seller_id, name, origin, openapi_url, state, sokosumi_task_id)
-     values ($1, $2, $3, 'https://price.example.dev', $4, $5, $6)`,
-    [apiId, sellerId, o.name ?? "Price API", o.openapiUrl ?? "https://price.example.dev/openapi.json", o.state ?? "intake", o.sokosumiTaskId ?? null],
+    `insert into apis (id, seller_id, name, origin, openapi_url, state, sokosumi_task_id, path_prefix)
+     values ($1, $2, $3, 'https://price.example.dev', $4, $5, $6, $7)`,
+    [apiId, sellerId, o.name ?? "Price API", o.openapiUrl ?? "https://price.example.dev/openapi.json", state, o.sokosumiTaskId ?? null, pathPrefix],
   );
   return apiId;
 }

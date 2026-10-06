@@ -88,18 +88,21 @@ export type Seeded = {
   packId: string; payTo: string;
 };
 
+/** One API, one listing: a second active API on the stub needs its own base (migration 0010). */
+export const anotherBase = () => `/other-${randomBytes(4).toString("hex")}`;
+
 export async function seedLiveApi(
   sql: Sql,
   origin: string,
-  opts: { health?: "healthy" | "down"; state?: string; calls?: number; agentIdentifier?: string | null } = {},
+  opts: { health?: "healthy" | "down"; state?: string; calls?: number; agentIdentifier?: string | null; pathPrefix?: string } = {},
 ): Promise<Seeded> {
   const sellerId = newId("sel"), apiId = newId("api"), operationId = newId("op"), ruleId = newId("rule"), packId = newId("pk");
   const payTo = `addr_test1q${randomBytes(20).toString("hex")}`;
   const hash = ruleHash(PRICE_RULE);
   await sql`insert into sellers (id, cardano_addr) values (${sellerId}, ${payTo})`;
   await sql`
-    insert into apis (id, seller_id, name, origin, openapi_url, state, health, escrow_op_id, agent_identifier)
-    values (${apiId}, ${sellerId}, 'Price API', ${origin}, ${`${origin}/openapi.json`}, ${opts.state ?? "live"},
+    insert into apis (id, seller_id, name, origin, path_prefix, openapi_url, state, health, escrow_op_id, agent_identifier)
+    values (${apiId}, ${sellerId}, 'Price API', ${origin}, ${opts.pathPrefix ?? "/"}, ${`${origin}/openapi.json`}, ${opts.state ?? "live"},
             ${opts.health ?? "healthy"}, ${operationId}, ${opts.agentIdentifier === undefined ? "agent_test_1" : opts.agentIdentifier})`;
   await sql`
     insert into operations (id, api_id, op_id, method, path, input_schema, enabled, side_effects_confirmed_none)

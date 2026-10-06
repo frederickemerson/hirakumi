@@ -5,7 +5,7 @@ import request from "supertest";
 import { releaseCredit, markExhaustedIfEmpty, reserveCredit } from "@hirakumi/db";
 import { sha256Hex } from "@hirakumi/core";
 import { JobRunner } from "../src/jobs";
-import { insertActiveToken, makeHarness, seedLiveApi, type Harness } from "./helpers";
+import { anotherBase, insertActiveToken, makeHarness, seedLiveApi, type Harness } from "./helpers";
 
 let h: Harness;
 beforeEach(async () => { h = await makeHarness(); });
@@ -89,7 +89,7 @@ describe("adversarial: tokens that must never buy a call", () => {
     const pending = await insertActiveToken(h.sql, h.seeded, 5, "pending");
     const revoked = await insertActiveToken(h.sql, h.seeded, 5, "revoked");
     const exhausted = await insertActiveToken(h.sql, h.seeded, 0, "exhausted");
-    const other = await seedLiveApi(h.sql, h.stub.origin);
+    const other = await seedLiveApi(h.sql, h.stub.origin, { pathPrefix: anotherBase() });
     const foreign = await insertActiveToken(h.sql, other, 5);
     expect((await call(pending.token)).body.error).toBe("token_pending");
     expect((await call(revoked.token)).status).toBe(401);
@@ -124,7 +124,7 @@ describe("adversarial: tokens that must never buy a call", () => {
 
 describe("adversarial: health", () => {
   it("a Down API (from the DB at boot, or by probes) takes no credit and never calls upstream", async () => {
-    const down = await seedLiveApi(h.sql, h.stub.origin, { health: "down" });
+    const down = await seedLiveApi(h.sql, h.stub.origin, { health: "down", pathPrefix: anotherBase() });
     const t1 = await insertActiveToken(h.sql, down, 5);
     expect((await call(t1.token, down.apiId)).status).toBe(503);
     const t2 = await insertActiveToken(h.sql, h.seeded, 5);
@@ -196,7 +196,7 @@ describe("adversarial: MIP-003 escrow jobs", () => {
 
   it("a job id is scoped to its API; start_job floods are rate limited", async () => {
     const job = (await start()).body.job_id as string;
-    const other = await seedLiveApi(h.sql, h.stub.origin);
+    const other = await seedLiveApi(h.sql, h.stub.origin, { pathPrefix: anotherBase() });
     expect((await request(h.app).get(`/a/${other.apiId}/status`).query({ job_id: job })).status).toBe(404);
     const rs = [];
     for (let i = 0; i < 12; i++) rs.push((await start()).status);

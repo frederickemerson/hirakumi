@@ -5,7 +5,7 @@ import request from "supertest";
 import { decodePaymentRequiredHeader, encodePaymentSignatureHeader } from "@x402/core/http";
 import { sha256Hex } from "@hirakumi/core";
 import { Reconciler, USDM_PREPROD_UNIT, type ChainLookup } from "../src/reconcile";
-import { makeHarness, seedLiveApi, type Harness } from "./helpers";
+import { anotherBase, makeHarness, seedLiveApi, type Harness } from "./helpers";
 
 let h: Harness;
 beforeEach(async () => { h = await makeHarness(); });
@@ -64,7 +64,7 @@ describe("adversarial: pack payment double-spend", () => {
   });
 
   it("one tx cannot buy packs on two different APIs (another seller)", async () => {
-    const other = await seedLiveApi(h.sql, h.stub.origin);
+    const other = await seedLiveApi(h.sql, h.stub.origin, { pathPrefix: anotherBase() });
     expect((await post(await header({ transaction: "tx-D", nonce: "1" }))).status).toBe(200);
     const r = await post(await header({ transaction: "tx-D", nonce: "1" }, other.apiId, other.packId), { apiId: other.apiId, packId: other.packId });
     expect(r.status).toBe(409);
@@ -104,7 +104,7 @@ describe("adversarial: settlement failure, recovery and the reconciler", () => {
     const bought = await post(sig);
     expect(bought.status).toBe(200);
     expect((await request(h.app).post(`${packPath()}/recover`).set("PAYMENT-SIGNATURE", sig).set("x-hirakumi-recovery-secret", "guess")).status).toBe(403);
-    const other = await seedLiveApi(h.sql, h.stub.origin);
+    const other = await seedLiveApi(h.sql, h.stub.origin, { pathPrefix: anotherBase() });
     expect((await request(h.app).post(`${packPath(other.apiId, other.packId)}/recover`).set("PAYMENT-SIGNATURE", sig).set("x-hirakumi-recovery-secret", SECRET)).status).toBe(404);
     const rec = await request(h.app).post(`${packPath()}/recover`).set("PAYMENT-SIGNATURE", sig).set("x-hirakumi-recovery-secret", SECRET);
     expect((await callWith(bought.body.token)).status).toBe(401);
@@ -130,7 +130,7 @@ describe("adversarial: settlement failure, recovery and the reconciler", () => {
 
 describe("adversarial: health gating of pack sales", () => {
   it("a Down API (in memory or from the DB at boot) never offers or settles a pack", async () => {
-    const down = await seedLiveApi(h.sql, h.stub.origin, { health: "down" });
+    const down = await seedLiveApi(h.sql, h.stub.origin, { health: "down", pathPrefix: anotherBase() });
     const r = await request(h.app).post(packPath(down.apiId, down.packId));
     expect(r.status).toBe(503);
     expect(r.headers["payment-required"]).toBeUndefined();

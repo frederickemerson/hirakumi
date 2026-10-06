@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type postgres from "postgres";
-import { newId, ruleHash, type RuleDefinition } from "@hirakumi/core";
+import { ACTIVE_LISTING_STATES, newId, ruleHash, type RuleDefinition } from "@hirakumi/core";
 import { getSql } from "@/lib/db";
 import type { Api, ApiState, Health, OnboardStepStatus, Operation, Pack, Seller } from "@/lib/types";
 
@@ -32,14 +32,17 @@ export async function seedApi(
   sellerId: string,
   state: ApiState = "intake",
   over: Partial<{ name: string; origin: string; openapiUrl: string; escrowOpId: string | null;
-    agentIdentifier: string | null; health: Health; healthCheckedAt: Date | null }> = {},
+    agentIdentifier: string | null; health: Health; healthCheckedAt: Date | null; pathPrefix: string; sokosumiTaskId: string | null }> = {},
 ): Promise<Api> {
   const sql = getSql();
+  const id = newId("api");
+  // One API, one listing (migration 0010): an API past ownership owns its base, so each seeded one gets its own folder.
+  const pathPrefix = over.pathPrefix ?? ((ACTIVE_LISTING_STATES as readonly string[]).includes(state) ? `/${id}` : "/");
   const [row] = await sql<Api[]>`
-    insert into apis (id, seller_id, name, origin, openapi_url, state, health, health_checked_at, escrow_op_id, agent_identifier)
-    values (${newId("api")}, ${sellerId}, ${over.name ?? "Price API"}, ${over.origin ?? "https://price.example.dev"},
+    insert into apis (id, seller_id, name, origin, path_prefix, openapi_url, state, health, health_checked_at, escrow_op_id, agent_identifier, sokosumi_task_id)
+    values (${id}, ${sellerId}, ${over.name ?? "Price API"}, ${over.origin ?? "https://price.example.dev"}, ${pathPrefix},
             ${over.openapiUrl ?? "https://price.example.dev/openapi.json"}, ${state}, ${over.health ?? "healthy"},
-            ${over.healthCheckedAt ?? null}, ${over.escrowOpId ?? null}, ${over.agentIdentifier ?? null})
+            ${over.healthCheckedAt ?? null}, ${over.escrowOpId ?? null}, ${over.agentIdentifier ?? null}, ${over.sokosumiTaskId ?? null})
     returning ${sql(API_COLUMNS)}`;
   return row;
 }

@@ -52,8 +52,8 @@ async function linkSeller(sokosumiUserId: string): Promise<string> {
 async function seedTaskApi(taskId: string, sellerId: string, state: string): Promise<string> {
   const apiId = `api_${rand()}`;
   await db.pool.query(
-    `insert into apis (id, seller_id, name, origin, openapi_url, state, sokosumi_task_id) values ($1, $2, 'Price API', 'https://price.example.dev', 'https://price.example.dev/openapi.json', $3, $4)`,
-    [apiId, sellerId, state, taskId]);
+    `insert into apis (id, seller_id, name, origin, openapi_url, state, sokosumi_task_id, path_prefix) values ($1, $2, 'Price API', 'https://price.example.dev', 'https://price.example.dev/openapi.json', $3, $4, $5)`,
+    [apiId, sellerId, state, taskId, `/${apiId}`]);
   return apiId;
 }
 

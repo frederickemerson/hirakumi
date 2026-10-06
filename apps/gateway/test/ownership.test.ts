@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import request from "supertest";
 import { newId, newVerifyCode } from "@hirakumi/core";
-import { makeHarness, seedLiveApi, type Harness } from "./helpers";
+import { anotherBase, makeHarness, seedLiveApi, type Harness } from "./helpers";
 
 let h: Harness;
 beforeEach(async () => { h = await makeHarness(); });
@@ -56,7 +56,7 @@ describe("ownership check: x-hirakumi-verify in the OpenAPI file", () => {
 
   it("verifying API Y never verifies API X on the same origin, and X's spec with Y's code fails", async () => {
     const codeX = await giveCode(h.seeded.apiId);
-    const y = await seedLiveApi(h.sql, h.stub.origin, { state: "endpoints_confirmed" });
+    const y = await seedLiveApi(h.sql, h.stub.origin, { state: "endpoints_confirmed", pathPrefix: anotherBase() });
     const codeY = await giveCode(y.apiId);
     expect(codeX).not.toBe(codeY);
     h.stub.setFile("/openapi.json", specJson({ "x-hirakumi-verify": codeY }));
@@ -66,7 +66,7 @@ describe("ownership check: x-hirakumi-verify in the OpenAPI file", () => {
 
   it("a code is never reused: the database refuses the same code for a second API", async () => {
     const code = await giveCode(h.seeded.apiId);
-    const y = await seedLiveApi(h.sql, h.stub.origin);
+    const y = await seedLiveApi(h.sql, h.stub.origin, { pathPrefix: anotherBase() });
     await expect(h.sql`insert into challenges (id, api_id, kind, token, expires_at)
                        values (${newId("ch")}, ${y.apiId}, 'openapi', ${code}, now() + interval '1 year')`).rejects.toThrow(/unique/);
   });
