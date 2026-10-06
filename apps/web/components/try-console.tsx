@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
+import { offerHeadline, parseOffer, type Offer } from "@/lib/offer";
 import { coerceInput, type TryField, type TryKind, type TryResult } from "@/lib/try";
 import { cn } from "@/lib/utils";
 
@@ -27,13 +29,6 @@ type Outcome = {
   at: string;
 };
 
-/** What the gateway is doing while we wait, so the visitor never stares at a frozen button. */
-export const STAGES = ["Checking the credit", "Calling the API", "Checking the answer against the promise"] as const;
-
-export function stageAt(elapsedMs: number): number {
-  return elapsedMs < 400 ? 0 : elapsedMs < 1800 ? 1 : 2;
-}
-
 /* The outcome card takes the verdict's colour from the house palette: mint kept, canary refused, coral down. */
 const KIND_STYLE: Record<TryKind, string> = {
   kept: "bg-mint/25",
@@ -47,7 +42,20 @@ const KIND_STYLE: Record<TryKind, string> = {
 const FIELD =
   "block w-full rounded-[2px] border-2 border-ink bg-frost text-body text-ink outline-none transition-colors duration-100 focus-visible:border-sky";
 
-export function TryConsole({ apiId, ops, hasDemoCredits }: { apiId: string; ops: TryOp[]; hasDemoCredits: boolean }) {
+/** Each block of a fresh result rises in turn, 60 ms apart (CSS animate-rise; still under reduced motion). */
+const stagger = (i: number) => ({ animationDelay: `${i * 60}ms` });
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+export function TryConsole({ apiId, ops, hasDemoCredits, initialCredits = null }: {
+  apiId: string;
+  ops: TryOp[];
+  hasDemoCredits: boolean;
+  /** Demo credits left when the page loaded; updated from each answer's creditsRemaining. */
+  initialCredits?: number | null;
+}) {
   const [opIndex, setOpIndex] = useState(0);
   const op = ops[opIndex];
   const [values, setValues] = useState<Record<string, string>>(() => initialValues(op));
@@ -55,7 +63,9 @@ export function TryConsole({ apiId, ops, hasDemoCredits }: { apiId: string; ops:
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<Outcome[]>([]);
+  const [credits, setCredits] = useState<number | null>(initialCredits);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const slot = useRef<HTMLDivElement>(null);
 
   useEffect(() => () => { if (timer.current) clearInterval(timer.current); }, []);
 
@@ -64,6 +74,13 @@ export function TryConsole({ apiId, ops, hasDemoCredits }: { apiId: string; ops:
   function pickOp(i: number) {
     setOpIndex(i);
     setValues(initialValues(ops[i]));
+  }
+
+  /** On a narrow screen the result slot sits under the form: bring it into view when a call starts. */
+  function revealSlot() {
+    const el = slot.current;
+    if (!el || typeof window.matchMedia !== "function" || !window.matchMedia("(max-width: 1023px)").matches) return;
+    el.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "start" });
   }
 
   async function run(paid: boolean) {
@@ -76,6 +93,7 @@ export function TryConsole({ apiId, ops, hasDemoCredits }: { apiId: string; ops:
     const startedAt = Date.now();
     setBusy({ paid, startedAt });
     setElapsed(0);
+    revealSlot();
     timer.current = setInterval(() => setElapsed(Date.now() - startedAt), 100);
     try {
       const res = await fetch(`/api/try/${encodeURIComponent(apiId)}`, {
@@ -88,6 +106,7 @@ export function TryConsole({ apiId, ops, hasDemoCredits }: { apiId: string; ops:
         setError(data.error ?? `Something went wrong (HTTP ${res.status}).`);
         return;
       }
+      if (typeof data.creditsRemaining === "number") setCredits(data.creditsRemaining);
       setHistory((h) => [{ ...data, paid, at: new Date().toLocaleTimeString() }, ...h].slice(0, 6));
     } catch {
       setError("We couldn't reach Hirakumi. Check your connection and try again.");
@@ -98,131 +117,150 @@ export function TryConsole({ apiId, ops, hasDemoCredits }: { apiId: string; ops:
   }
 
   const latest = history[0];
-  const stage = stageAt(elapsed);
-  const progress = busy ? (busy.paid ? ((stage + 1) / 3) * 0.9 : Math.min(0.9, elapsed / 2000)) : 0;
+  const offer = latest?.result.kind === "payment_required" ? parseOffer(latest.body) : null;
 
   return (
-    <div className="space-y-6">
-      {ops.length > 1 && (
-        <div role="radiogroup" aria-label="Endpoint" className="flex flex-wrap gap-2">
-          {ops.map((o, i) => (
-            <Button key={o.opId} type="button" variant={i === opIndex ? "default" : "outline"} aria-pressed={i === opIndex} onClick={() => pickOp(i)}>
-              {o.method.toUpperCase()} {o.path}
-            </Button>
-          ))}
-        </div>
-      )}
+    <div className="space-y-8">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:items-start">
+        <div className="min-w-0 space-y-4">
+          {ops.length > 1 && (
+            <div role="radiogroup" aria-label="Endpoint" className="flex flex-wrap gap-2">
+              {ops.map((o, i) => (
+                <Button key={o.opId} type="button" variant={i === opIndex ? "default" : "outline"} aria-pressed={i === opIndex} onClick={() => pickOp(i)}>
+                  {o.method.toUpperCase()} {o.path}
+                </Button>
+              ))}
+            </div>
+          )}
 
-      <div className="rounded-[2px] border-2 border-ink bg-frost p-5 sm:p-6">
-        <p className="flex flex-wrap items-center gap-2 text-body-lg">
-          <Badge variant="sky">{op.method.toUpperCase()}</Badge>
-          <code>{op.path}</code>
-        </p>
-        {op.description && <p className="mt-3 text-body text-graphite">{op.description}</p>}
-        {op.promise && (
-          <p className="mt-4 border-t border-ink pt-4 text-body">
-            <span className="font-semibold">Promise: </span>
-            {op.promise}
-          </p>
-        )}
-
-        <form
-          className="mt-6 space-y-5 border-t border-ink pt-6"
-          onSubmit={(e) => { e.preventDefault(); if (!busy) void run(hasDemoCredits); }}
-        >
-          {op.fields.length === 0 && <p className="text-body text-graphite">This endpoint takes no input.</p>}
-          {op.fields.map((f) => (
-            <label key={f.name} className="block space-y-2">
-              <span className="block text-caption font-semibold uppercase tracking-[0.04em]">
-                {f.name}{f.required ? "" : " (optional)"}
-              </span>
-              {f.options ? (
-                <select
-                  className={cn(FIELD, "h-11 max-w-xs px-3")}
-                  value={values[f.name] ?? ""}
-                  onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))}
-                >
-                  {!f.required && <option value="">(none)</option>}
-                  {f.options.map((o) => <option key={o} value={o}>{o}</option>)}
-                </select>
-              ) : f.json ? (
-                <textarea
-                  className={cn(FIELD, "min-h-24 p-3 text-caption leading-relaxed")}
-                  value={values[f.name] ?? ""}
-                  placeholder={f.example}
-                  onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))}
-                />
-              ) : (
-                <Input
-                  className="max-w-xs"
-                  value={values[f.name] ?? ""}
-                  placeholder={f.example}
-                  onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))}
-                />
-              )}
-              {f.description && <span className="block text-caption text-graphite">{f.description}</span>}
-            </label>
-          ))}
-          <div className="flex flex-wrap gap-4 pt-1">
-            {hasDemoCredits && (
-              <Button type="submit" disabled={!!busy}>
-                {busy?.paid ? "Calling…" : "Call it with a demo credit"}
-              </Button>
+          <div className="rounded-[2px] border-2 border-ink bg-frost p-5 sm:p-6">
+            <p className="flex flex-wrap items-center gap-2 text-body-lg">
+              <Badge variant="sky">{op.method.toUpperCase()}</Badge>
+              <code>{op.path}</code>
+            </p>
+            {op.description && <p className="mt-3 text-body text-graphite">{op.description}</p>}
+            {op.promise && (
+              <p className="mt-4 border-t border-ink pt-4 text-body">
+                <span className="font-semibold">Promise: </span>
+                {op.promise}
+              </p>
             )}
-            <Button type="button" variant="outline" disabled={!!busy} onClick={() => void run(false)}>
-              {busy && !busy.paid ? "Asking…" : "See what an unpaid agent gets"}
-            </Button>
+
+            <form
+              className="mt-6 space-y-5 border-t border-ink pt-6"
+              onSubmit={(e) => { e.preventDefault(); if (!busy) void run(hasDemoCredits); }}
+            >
+              {op.fields.length === 0 && <p className="text-body text-graphite">This endpoint takes no input.</p>}
+              {op.fields.map((f) => (
+                <label key={f.name} className="block space-y-2">
+                  <span className="block text-caption font-semibold uppercase tracking-[0.04em]">
+                    {f.name}{f.required ? "" : " (optional)"}
+                  </span>
+                  {f.options ? (
+                    <select
+                      className={cn(FIELD, "h-11 max-w-xs px-3")}
+                      value={values[f.name] ?? ""}
+                      onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))}
+                    >
+                      {!f.required && <option value="">(none)</option>}
+                      {f.options.map((o) => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                  ) : f.json ? (
+                    <textarea
+                      className={cn(FIELD, "min-h-24 p-3 text-caption leading-relaxed")}
+                      value={values[f.name] ?? ""}
+                      placeholder={f.example}
+                      onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))}
+                    />
+                  ) : (
+                    <Input
+                      className="max-w-xs"
+                      value={values[f.name] ?? ""}
+                      placeholder={f.example}
+                      onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))}
+                    />
+                  )}
+                  {f.description && <span className="block text-caption text-graphite">{f.description}</span>}
+                </label>
+              ))}
+              <div className="flex flex-col gap-4 pt-1 sm:flex-row sm:flex-wrap">
+                {hasDemoCredits && (
+                  <Button type="submit" disabled={!!busy}>
+                    {busy?.paid ? "Calling…" : "Call it with a demo credit"}
+                  </Button>
+                )}
+                <Button type="button" variant="outline" disabled={!!busy} onClick={() => void run(false)}>
+                  {busy && !busy.paid ? "Calling…" : "See what an unpaid agent gets"}
+                </Button>
+              </div>
+              {hasDemoCredits && credits !== null && (
+                <p className="text-caption text-graphite">
+                  Demo credits left: <span className="font-semibold tabular-nums text-ink">{credits}</span>
+                </p>
+              )}
+            </form>
           </div>
-        </form>
+        </div>
+
+        {/* The result slot keeps its height, so a result lands in place instead of pushing the page. */}
+        <div ref={slot} aria-live="polite" className="min-w-0 scroll-mt-6 lg:sticky lg:top-6">
+          <div className="min-h-[22rem]">
+            {busy ? (
+              <div className="flex min-h-[22rem] flex-col items-center justify-center gap-3 rounded-[2px] border-2 border-ink bg-frost p-6 text-center">
+                <p className="flex items-center gap-3 text-body-lg font-medium">
+                  <Spinner className="size-3.5" />
+                  Calling…
+                </p>
+                <p className="text-body text-graphite tabular-nums">{(elapsed / 1000).toFixed(1)} s</p>
+              </div>
+            ) : error ? (
+              <p role="alert" className="rounded-[2px] border-2 border-ink border-l-8 border-l-coral bg-frost p-4 text-body animate-rise">
+                {error}
+              </p>
+            ) : latest ? (
+              <div key={`${latest.at}-${history.length}`} className={cn("space-y-4 rounded-[2px] border-2 border-ink p-5 shadow-hard sm:p-6", KIND_STYLE[latest.result.kind])}>
+                <p style={stagger(0)} className="animate-rise text-body-lg font-semibold">{latest.result.headline}</p>
+                {offer ? (
+                  <OfferCard offer={offer} body={latest.body} />
+                ) : (
+                  <>
+                    <dl style={stagger(1)} className="animate-rise grid grid-cols-3 gap-3 border-t border-ink pt-4 text-body">
+                      <div>
+                        <dt className="text-caption uppercase tracking-[0.04em] text-graphite">HTTP</dt>
+                        <dd className="text-h-sm font-medium tabular-nums">{latest.status}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-caption uppercase tracking-[0.04em] text-graphite">Time</dt>
+                        <dd className="text-h-sm font-medium tabular-nums">{latest.latencyMs} ms</dd>
+                      </div>
+                      <div>
+                        <dt className="text-caption uppercase tracking-[0.04em] text-graphite">Credits left</dt>
+                        <dd className="text-h-sm font-medium tabular-nums">{latest.creditsRemaining ?? "n/a"}</dd>
+                      </div>
+                    </dl>
+                    {latest.result.reasons.length > 0 && (
+                      <ul style={stagger(2)} className="animate-rise list-disc pl-5 text-body">{latest.result.reasons.map((r) => <li key={r}>{r}</li>)}</ul>
+                    )}
+                    <div style={stagger(3)} className="animate-rise space-y-2">
+                      <p className="break-all text-caption text-graphite">{latest.request.method} {latest.request.url}</p>
+                      <pre className="max-h-72 overflow-auto rounded-[2px] border border-ink bg-frost p-3 text-caption leading-relaxed"><code>{typeof latest.body === "string" ? latest.body : JSON.stringify(latest.body, null, 2)}</code></pre>
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : (
+              <div className="flex min-h-[22rem] flex-col items-center justify-center gap-2 rounded-[2px] border-2 border-dashed border-graphite p-6 text-center">
+                <p className="font-medium">The answer appears here.</p>
+                <p className="max-w-xs text-body text-graphite">
+                  {hasDemoCredits
+                    ? "A paid try uses one demo credit, only if the answer keeps the promise."
+                    : "An unpaid try shows the offer a buying agent gets."}
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
-
-      {busy && (
-        <div aria-live="polite" className="space-y-3 rounded-[2px] border-2 border-ink bg-frost p-5">
-          <div className="flex justify-between gap-4 text-body">
-            <span className="font-medium">{busy.paid ? STAGES[stage] : "Asking the gateway for its price"}…</span>
-            <span className="tabular-nums text-graphite">{(elapsed / 1000).toFixed(1)}s</span>
-          </div>
-          <div className="h-2.5 overflow-hidden rounded-[2px] border border-ink bg-chalk" role="progressbar" aria-valuemin={0} aria-valuemax={3} aria-valuenow={stage + 1}>
-            <div className="h-full w-full origin-left stripes-sky transition-transform duration-300 ease-[var(--ease-snap)]" style={{ transform: `scaleX(${progress})` }} />
-          </div>
-          {busy.paid && (
-            <ol className="flex flex-wrap gap-x-5 gap-y-1 text-caption uppercase tracking-[0.04em] text-graphite">
-              {STAGES.map((s, i) => <li key={s} className={i <= stage ? "text-ink" : ""}>{i < stage ? "✓ " : ""}{s}</li>)}
-            </ol>
-          )}
-        </div>
-      )}
-
-      {error && (
-        <p role="alert" className="rounded-[2px] border-2 border-ink border-l-8 border-l-coral bg-frost p-4 text-body">
-          {error}
-        </p>
-      )}
-
-      {latest && !busy && (
-        <div className={cn("space-y-4 rounded-[2px] border-2 border-ink p-5 shadow-hard sm:p-6", KIND_STYLE[latest.result.kind])} aria-live="polite">
-          <p className="text-body-lg font-semibold">{latest.result.headline}</p>
-          <dl className="grid grid-cols-3 gap-3 border-t border-ink pt-4 text-body">
-            <div>
-              <dt className="text-caption uppercase tracking-[0.04em] text-graphite">HTTP</dt>
-              <dd className="text-h-sm font-medium tabular-nums">{latest.status}</dd>
-            </div>
-            <div>
-              <dt className="text-caption uppercase tracking-[0.04em] text-graphite">Time</dt>
-              <dd className="text-h-sm font-medium tabular-nums">{latest.latencyMs} ms</dd>
-            </div>
-            <div>
-              <dt className="text-caption uppercase tracking-[0.04em] text-graphite">Credits left</dt>
-              <dd className="text-h-sm font-medium tabular-nums">{latest.creditsRemaining ?? "n/a"}</dd>
-            </div>
-          </dl>
-          {latest.result.reasons.length > 0 && (
-            <ul className="list-disc pl-5 text-body">{latest.result.reasons.map((r) => <li key={r}>{r}</li>)}</ul>
-          )}
-          <p className="break-all text-caption text-graphite">{latest.request.method} {latest.request.url}</p>
-          <pre className="max-h-80 overflow-auto rounded-[2px] border border-ink bg-frost p-3 text-caption leading-relaxed"><code>{typeof latest.body === "string" ? latest.body : JSON.stringify(latest.body, null, 2)}</code></pre>
-        </div>
-      )}
 
       {history.length > 1 && (
         <div className="space-y-2">
@@ -241,6 +279,34 @@ export function TryConsole({ apiId, ops, hasDemoCredits }: { apiId: string; ops:
         </div>
       )}
     </div>
+  );
+}
+
+/** The 402 offer as an agent would read it: what a pack costs and what it buys, with the raw answer on request. */
+function OfferCard({ offer, body }: { offer: Offer; body: unknown }) {
+  return (
+    <>
+      <ul style={stagger(1)} className="animate-rise space-y-3 border-t border-ink pt-4">
+        {offer.packs.map((p) => (
+          <li key={p.packId} className="rounded-[2px] border-2 border-ink bg-frost p-4">
+            <p className="text-h-sm font-medium tabular-nums">{offerHeadline(p)}</p>
+            <p className="mt-1 text-body text-graphite">
+              Paid once on Cardano preprod. A credit is used only when the answer keeps the promise.
+            </p>
+            {p.buyUrl && <p className="mt-3 break-all text-caption text-graphite">Buy at {p.buyUrl}</p>}
+          </li>
+        ))}
+      </ul>
+      {offer.ruleUrl && (
+        <a style={stagger(2)} href={offer.ruleUrl} target="_blank" rel="noreferrer" className="animate-rise inline-block text-body underline underline-offset-4">
+          The promise the answer is checked against (JSON)
+        </a>
+      )}
+      <details style={stagger(3)} className="animate-rise">
+        <summary className="cursor-pointer py-1 text-body underline underline-offset-4">Show the raw 402 answer</summary>
+        <pre className="mt-2 max-h-72 overflow-auto rounded-[2px] border border-ink bg-frost p-3 text-caption leading-relaxed"><code>{JSON.stringify(body, null, 2)}</code></pre>
+      </details>
+    </>
   );
 }
 

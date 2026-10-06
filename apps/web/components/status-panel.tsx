@@ -1,16 +1,8 @@
 import { formatHealthReasons } from "@hirakumi/core";
 import type { Incident } from "@/lib/repo/stats";
-import type { HourState, PublicStatus } from "@/lib/repo/status";
+import { hhmm, HourBars } from "@/components/hour-bars";
+import type { PublicStatus } from "@/lib/repo/status";
 
-const STATE_LABEL: Record<HourState, string> = { up: "Live", degraded: "Some checks failed", down: "Down", no_data: "No checks" };
-const STATE_CLASS: Record<HourState, string> = {
-  up: "bg-sky",
-  degraded: "bg-canary",
-  down: "bg-coral",
-  no_data: "bg-chalk",
-};
-
-const hhmm = (d: Date) => `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")} UTC`;
 const pct = (n: number | null) => (n === null ? "No data yet" : `${n}%`);
 
 /** Public, honest health: what the monitor saw, not what the seller says. */
@@ -33,12 +25,7 @@ export function StatusPanel({ status, incidents }: { status: PublicStatus; incid
           <dd className="text-h-sm font-medium tabular-nums">{status.p50LatencyMs === null ? "No data yet" : `${status.p50LatencyMs} ms`}</dd>
         </div>
       </dl>
-      <ol className="flex h-10 items-stretch gap-0.5" aria-label="Hourly health, oldest first">
-        {status.hours.map((h) => {
-          const label = `${hhmm(h.start)}: ${STATE_LABEL[h.state]}${h.probes ? ` (${h.passed} of ${h.probes} checks passed)` : ""}`;
-          return <li key={h.start.toISOString()} aria-label={label} title={label} className={`flex-1 rounded-[2px] border border-ink ${STATE_CLASS[h.state]}`} />;
-        })}
-      </ol>
+      <HourBars hours={status.hours} />
       <ul className="flex flex-wrap gap-x-4 gap-y-1 text-caption text-graphite" aria-hidden>
         <li className="flex items-center gap-1.5"><span className="inline-block size-2.5 border border-ink bg-sky" />Live</li>
         <li className="flex items-center gap-1.5"><span className="inline-block size-2.5 border border-ink bg-canary" />Some checks failed</li>
