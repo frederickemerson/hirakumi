@@ -104,7 +104,7 @@ export async function runEscrowPack(deps: EscrowFlowDeps, o: EscrowFlowOptions):
   } else {
     const pack = choosePack(offer, o.maxPackMicros);
     const ch = deps.store.ensure(o.apiId, pack.packId, deps.refundAddress, deps.now());
-    deps.log(`Buying escrow pack ${pack.packId}: ${pack.calls} calls for ${formatMicros(pack.price)} tUSDM, locked at the pack_escrow script.`);
+    deps.log(`Buying pack ${pack.packId}: ${pack.calls} calls for ${formatMicros(pack.price)} tUSDM, with an IOU key so the gateway may settle it in escrow.`);
     deps.log(`IOU key ${ch.publicKey.slice(0, 16)}…, refunds to ${deps.refundAddress}`);
     const expected = { calls: pack.calls, priceMicros: BigInt(pack.price), ruleHash: offer.ruleHash };
     // What our check approved: the gateway's later answer never changes it.
