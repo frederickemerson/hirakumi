@@ -28,6 +28,40 @@ importers:
         specifier: 3.2.7
         version: 3.2.7(@types/node@22.20.5)(tsx@4.23.15)
 
+  agents/buyer:
+    dependencies:
+      '@hirakumi/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@hirakumi/masumi':
+        specifier: workspace:*
+        version: link:../../packages/masumi
+      '@x402/cardano':
+        specifier: 2.26.0
+        version: 2.26.0
+      '@x402/core':
+        specifier: 2.26.0
+        version: 2.26.0
+      '@x402/fetch':
+        specifier: 2.26.0
+        version: 2.26.0
+      dotenv:
+        specifier: 18.0.5
+        version: 18.0.5
+    devDependencies:
+      '@types/node':
+        specifier: 22.20.5
+        version: 22.20.5
+      tsx:
+        specifier: 4.23.15
+        version: 4.23.15
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 5.0.3
+        version: 5.0.3(@types/node@22.20.5)(vite@7.3.7(@types/node@22.20.5)(tsx@4.23.15))
+
   apps/gateway:
     dependencies:
       '@hirakumi/core':
@@ -816,6 +850,11 @@ packages:
 
   dezalgo@1.0.4:
     resolution: {integrity: sha512-rXSP0bf+5n0Qonsb+SVVfNfIsimO4HEtmnIpPHY8Q1UCzKlQrDMfdobr8nJOOsRgWCyMRqeSBQzmWUMq7zvVig==}
+
+  dotenv@18.0.5:
+    resolution: {integrity: sha512-aBrGvt6KhjxbEnatqMWOMidftwsrCiCvqh1yNIGB9QyF0J+VcWkKDMsvYOEm7ZS82oiV+BT1sTOtIlAmUlTpwQ==}
+    engines: {node: '>=12'}
+    hasBin: true
 
   dunder-proto@1.0.1:
     resolution: {integrity: sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==}
@@ -2052,6 +2091,8 @@ snapshots:
     dependencies:
       asap: 2.0.6
       wrappy: 1.0.2
+
+  dotenv@18.0.5: {}
 
   dunder-proto@1.0.1:
     dependencies:
