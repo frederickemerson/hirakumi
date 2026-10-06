@@ -29,6 +29,12 @@ describe("StatusPanel", () => {
     expect(screen.getByRole("button", { name: /20:00 UTC: Down/ })).toHaveAttribute("aria-pressed", "true");
   });
 
+  it("pluralises the incident line (QA 15)", () => {
+    render(<StatusPanel status={{ uptimePct: 80, hours, paidCalls: 3, passRatePct: 67, p50LatencyMs: 140 }}
+      incidents={[{ downAt: new Date("2026-10-07T20:05:00Z"), upAt: null, reasons: [], creditsUsed: 1, callsNotPassed: 1 }]} />);
+    expect(screen.getByText(/1 credit used, 1 call refused without charge\./)).toBeInTheDocument();
+  });
+
   it("says so plainly when there is no data yet", () => {
     render(<StatusPanel status={{ uptimePct: null, hours: hours.map((h) => ({ ...h, probes: 0, passed: 0, state: "no_data" as const })), paidCalls: 0, passRatePct: null, p50LatencyMs: null }} incidents={[]} />);
     expect(screen.getAllByText("No data yet").length).toBeGreaterThan(0);

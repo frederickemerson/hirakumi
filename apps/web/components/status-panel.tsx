@@ -1,3 +1,4 @@
+import { plural } from "@/lib/copy";
 import { formatHealthReasons } from "@hirakumi/core";
 import type { Incident } from "@/lib/repo/stats";
 import { HourBars } from "@/components/hour-bars";
@@ -46,8 +47,8 @@ export function StatusPanel({ status, incidents }: { status: PublicStatus; incid
             {incidents.map((i) => (
               <li key={i.downAt.toISOString()} className="rounded-[2px] border-2 border-ink border-l-8 border-l-coral p-3">
                 <p>
-                  Down at {hhmm(i.downAt)}{i.upAt ? `, Live again at ${hhmm(i.upAt)}` : ", still Down"}. {i.creditsUsed} credits used,{" "}
-                  {i.callsNotPassed} calls refused without charge.
+                  Down at {hhmm(i.downAt)}{i.upAt ? `, Live again at ${hhmm(i.upAt)}` : ", still Down"}. {plural(i.creditsUsed, "credit")} used,{" "}
+                  {plural(i.callsNotPassed, "call")} refused without charge.
                 </p>
                 <ul className="list-disc pl-5 text-graphite">
                   {formatHealthReasons(i.reasons).map((r) => <li key={r}>{r}</li>)}

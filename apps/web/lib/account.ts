@@ -1,10 +1,11 @@
+import { apiStatus, type ApiStatusTone } from "./status-labels";
 import type { Timeline } from "./timeline";
 import type { ApiState, Health } from "./types";
 
 /* Client-safe: the account page's data shapes and the numbers derived from them. */
 
 export type ApiBadge = {
-  tone: "progress" | "failed" | "live" | "down" | "retired";
+  tone: ApiStatusTone;
   label: string;
   /** Where the API stands, in a few words ("Step 3 of 7: Choose endpoints"). */
   detail: string | null;
@@ -53,12 +54,13 @@ export function accountTotals(apis: AccountApi[]): AccountTotals {
 }
 
 export function apiBadge(state: ApiState, health: Health, timeline: Timeline): ApiBadge {
-  if (state === "live") return health === "healthy" ? { tone: "live", label: "Live", detail: null } : { tone: "down", label: "Down", detail: null };
-  if (state === "retired") return { tone: "retired", label: "Retired", detail: null };
   const current = timeline.current;
+  const stopped = current?.status === "failed";
+  const status = apiStatus(state, health, stopped);
+  if (state === "live" || state === "retired") return { ...status, detail: null };
   const index = current ? timeline.items.indexOf(current) + 1 : timeline.done + 1;
   const where = `Step ${Math.min(index, timeline.total)} of ${timeline.total}${current ? `: ${current.label}` : ""}`;
-  if (current?.status === "failed") return { tone: "failed", label: "Stopped", detail: `${where}. It failed.` };
-  if (current?.status === "waiting_seller") return { tone: "progress", label: "In progress", detail: `${where}. Your turn.` };
-  return { tone: "progress", label: "In progress", detail: where };
+  if (stopped) return { ...status, detail: `${where}. It failed.` };
+  if (current?.status === "waiting_seller") return { ...status, detail: `${where}. Your turn.` };
+  return { ...status, detail: where };
 }

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Mascot } from "@/components/brand/mascot";
 import { HeaderAuth } from "@/components/header-auth";
+import { MobileNav } from "@/components/mobile-nav";
 
 const links = [
   { href: "/#how", label: "How it works" },
@@ -12,7 +13,7 @@ const links = [
 /** White top bar, 1px ink rule: logo left, links centre, the signed-in or signed-out actions right. Not sticky. */
 export function SiteHeader() {
   return (
-    <header className="border-b border-ink bg-frost">
+    <header className="relative border-b border-ink bg-frost">
       <div className="mx-auto flex h-16 w-full max-w-[1200px] items-center justify-between gap-4 px-4">
         <Link href="/" className="flex shrink-0 items-center gap-2.5 text-body-lg font-bold tracking-tight">
           <Mascot className="h-8" />
@@ -25,7 +26,10 @@ export function SiteHeader() {
             </Link>
           ))}
         </nav>
-        <HeaderAuth />
+        <div className="flex items-center gap-3">
+          <HeaderAuth />
+          <MobileNav links={links} />
+        </div>
       </div>
     </header>
   );

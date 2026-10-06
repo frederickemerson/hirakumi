@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getSql } from "@/lib/db";
 import { createSessionToken } from "@/lib/session";
 import { resetDb } from "@/test/db";
-import { seedApi, seedSeller } from "@/test/factories";
+import { getAccount } from "@/lib/repo/account";
+import { seedApi, seedOnboardStep, seedSeller } from "@/test/factories";
 import AccountPage from "./account/page";
-import { metadata as apisMetadata } from "./apis/page";
+import ApisPage, { metadata as apisMetadata } from "./apis/page";
 import ApiLayout, { generateMetadata as apiLayoutMetadata } from "./apis/[apiId]/layout";
 import SalesPage from "./apis/[apiId]/sales/page";
 import LoginPage, { metadata as loginMetadata } from "./login/page";
@@ -81,6 +82,29 @@ describe("API tabs (QA 9)", () => {
     const api = await seedApi(sellerId, "described");
     render(await ApiLayout({ children: <p>x</p>, params: Promise.resolve({ apiId: api.id }) }));
     expect(screen.getByRole("link", { name: "Listing steps" })).toBeInTheDocument();
+  });
+});
+
+describe("one status label on /apis and /account (QA 11, 12)", () => {
+  it("shows the same status for the same API on both pages", async () => {
+    const described = await seedApi(sellerId, "described", { name: "Alpha API" });
+    const stopped = await seedApi(sellerId, "parsed", { name: "Beta API" });
+    await seedOnboardStep(stopped.id, "describe", "failed");
+    await seedApi(sellerId, "retired", { name: "Gamma API" });
+    await seedApi(sellerId, "live", { name: "Delta API" });
+    const expected = { "Alpha API": "In progress", "Beta API": "Stopped", "Gamma API": "Retired", "Delta API": "Live" };
+
+    const apis = render(await ApisPage());
+    for (const [name, label] of Object.entries(expected)) {
+      const row = screen.getByRole("link", { name }).closest("li")!;
+      expect(within(row).getByText(label)).toBeInTheDocument();
+    }
+    apis.unmount();
+    const account = await getAccount(getSql(), sellerId);
+    for (const [name, label] of Object.entries(expected)) {
+      expect(account!.apis.find((a) => a.name === name)!.badge.label).toBe(label);
+    }
+    expect(described.id).toBeTruthy();
   });
 });
 

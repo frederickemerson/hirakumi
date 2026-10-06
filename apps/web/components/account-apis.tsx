@@ -9,17 +9,12 @@ import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { accountTotals, passRatePct, type AccountApi, type ApiBadge } from "@/lib/account";
 import { deleteJson, postJson } from "@/lib/client-fetch";
-import { formatTime } from "@/lib/copy";
+import { formatTime, RETIRE_COPY } from "@/lib/copy";
+import { STATUS_BADGE_VARIANT } from "@/lib/status-labels";
 import { formatTusdm } from "@/lib/money";
 import { cn } from "@/lib/utils";
 
-const BADGE_VARIANT: Record<ApiBadge["tone"], "sky" | "destructive" | "mint" | "secondary"> = {
-  progress: "sky",
-  failed: "destructive",
-  live: "mint",
-  down: "destructive",
-  retired: "secondary",
-};
+const BADGE_VARIANT = STATUS_BADGE_VARIANT;
 
 const COLLAPSE_MS = 220;
 
@@ -151,11 +146,11 @@ function ApiRow({ api: a, first, leaving, onDelete, onRetire }: {
             )}
             {live && (
               <ConfirmDialog
-                triggerLabel="Retire"
-                title={`Retire ${a.name}?`}
-                description="New sales stop and the API leaves the agent market. This can't be undone."
-                confirmLabel="Retire API"
-                pendingLabel="Retiring…"
+                triggerLabel={RETIRE_COPY.trigger}
+                title={RETIRE_COPY.title(a.name)}
+                description={RETIRE_COPY.description}
+                confirmLabel={RETIRE_COPY.confirm}
+                pendingLabel={RETIRE_COPY.pending}
                 onConfirm={onRetire}
               />
             )}

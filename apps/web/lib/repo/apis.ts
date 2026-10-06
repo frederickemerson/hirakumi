@@ -72,6 +72,14 @@ export async function getLiveApi(sql: Sql, apiId: string): Promise<Api | null> {
   return row ?? null;
 }
 
+/** The seller's APIs whose onboarding stopped at a failed step (shown as "Stopped"). */
+export async function listStoppedApiIds(sql: Sql, sellerId: string): Promise<Set<string>> {
+  const rows = await sql<{ apiId: string }[]>`
+    select distinct s.api_id from onboard_steps s join apis a on a.id = s.api_id
+    where a.seller_id = ${sellerId} and s.status = 'failed'`;
+  return new Set(rows.map((r) => r.apiId));
+}
+
 export async function listApisForSeller(sql: Sql, sellerId: string): Promise<Api[]> {
   return sql<Api[]>`select ${sql(API_COLUMNS)} from apis where seller_id = ${sellerId} order by created_at desc`;
 }

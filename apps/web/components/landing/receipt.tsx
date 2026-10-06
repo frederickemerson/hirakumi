@@ -90,11 +90,11 @@ export function Receipt({ className }: { className?: string }) {
           {ROWS.map((r, i) => (
             <li
               key={i}
-              className="grid grid-cols-[auto_1fr_auto_2.5rem] items-center gap-x-3 py-2 animate-rise"
+              className="grid grid-cols-[auto_1fr_auto_1.5rem] items-center gap-x-2 py-2 animate-rise sm:grid-cols-[auto_1fr_auto_2.5rem] sm:gap-x-3"
               style={{ animationDelay: rowDelay(i) }}
             >
               <span className="font-medium">GET /price</span>
-              <span className="truncate text-graphite">{r.answer}</span>
+              <span className="whitespace-nowrap text-graphite">{r.answer}</span>
               <Badge variant={r.variant}>{r.verdict}</Badge>
               <span className="text-right tabular-nums">{r.credit}</span>
             </li>

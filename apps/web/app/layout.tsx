@@ -33,7 +33,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <RouteProgress />
         <SiteHeader />
         {/* Pages sit in a centred 1200px column with a 16px gutter. Full-bleed bands use the `bleed` utility. */}
-        <main className="mx-auto w-full max-w-[1200px] flex-1 px-4 py-10">{children}</main>
+        {/* Extra bottom room below md so the floating Ask button never covers the end of a page. */}
+        <main className="mx-auto w-full max-w-[1200px] flex-1 px-4 pt-10 pb-28 md:pb-10">{children}</main>
         <SiteFooter />
         <Toaster />
         {/* A client island: the general help chat, on every page, kept across navigations. */}

@@ -64,7 +64,8 @@ const LIVE_TODAY = [
 const PROOF: { value: number; decimals: number; from: number; unit: string; label: string }[] = [
   { value: 9.4, decimals: 1, from: 0, unit: "s", label: "for an agent's payment to settle on Cardano" },
   { value: 0.3, decimals: 1, from: 0, unit: "s", label: "per paid call, end to end" },
-  { value: 0, decimals: 0, from: 1, unit: "credits", label: "charged for a stale or broken answer" },
+  // Starts on its final value: counting down from 1 would show "1 credits" on the way.
+  { value: 0, decimals: 0, from: 0, unit: "credits", label: "charged for a stale or broken answer" },
 ];
 
 const FAQ: { q: string; a: string }[] = [

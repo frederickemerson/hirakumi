@@ -1,3 +1,4 @@
+import { plural } from "@/lib/copy";
 import { formatTusdm } from "@/lib/money";
 import type { OverviewStats } from "@/lib/repo/stats";
 
@@ -18,9 +19,11 @@ export function OverviewStatGrid({ stats }: { stats: OverviewStats }) {
       <Stat label="Paid calls, last 24 hours" value={String(stats.callsDay)} />
       <Stat label="Kept the promise" value={stats.passRate === null ? "No paid calls yet" : `${Math.round(stats.passRate * 100)}%`}
         note={`${stats.passDay} passed, ${stats.failDay} didn't (no credit used)`} />
-      <Stat label="Received from packs" value={`${formatTusdm(stats.packEarningsMicros)} tUSDM`} note={`${stats.packSales} packs sold`} />
+      <Stat label="Received from packs" value={`${formatTusdm(stats.packEarningsMicros)} tUSDM`} note={`${plural(stats.packSales, "pack")} sold`} />
       <Stat label="Received from single jobs" value={`${formatTusdm(stats.escrowNetMicros)} tUSDM`}
-        note={`${stats.escrowJobs} ${stats.escrowJobs === 1 ? "job" : "jobs"}, ${formatTusdm(stats.escrowGrossMicros)} paid, Masumi kept ${formatTusdm(stats.escrowFeeMicros)}`} />
+        note={stats.escrowJobs === 0
+          ? "No jobs yet"
+          : `${plural(stats.escrowJobs, "job")}: buyers paid ${formatTusdm(stats.escrowGrossMicros)} tUSDM, Masumi kept ${formatTusdm(stats.escrowFeeMicros)} tUSDM`} />
     </div>
   );
 }

@@ -10,7 +10,7 @@ export const STATE_LABEL: Record<ApiState, string> = {
   priced: "Ready to publish",
   registering: "Registering on the Masumi network",
   live: "Live",
-  retired: "Removed from the market",
+  retired: "Retired",
 };
 
 export function healthLabel(h: Health): "Live" | "Down" {
@@ -51,6 +51,16 @@ export const JOB_STATUS_LABEL = {
   expired: "Expired, the buyer never paid",
 } as const;
 
+/** One name for taking a live API off the market, everywhere: Retire. */
+export const RETIRE_COPY = {
+  trigger: "Retire",
+  title: (name: string) => `Retire ${name}?`,
+  description:
+    "Retiring stops new sales and takes the API off the agent market. It stays in your account as Retired. This can't be undone.",
+  confirm: "Retire API",
+  pending: "Retiring…",
+} as const;
+
 export function cardanoscanTxUrl(txHash: string): string {
   return `https://preprod.cardanoscan.io/transaction/${encodeURIComponent(txHash)}`;
 }
@@ -59,6 +69,12 @@ export function shortAddress(addr: string): string {
   return addr.length <= 20 ? addr : `${addr.slice(0, 12)}…${addr.slice(-6)}`;
 }
 
+/** "6 Oct 2026, 23:30 UTC". Always UTC and labelled, like the status page's hour bars (lib/status-labels hhmm). */
 export function formatTime(d: Date | string): string {
-  return new Date(d).toLocaleString("en-GB", { timeZone: "Asia/Singapore", dateStyle: "medium", timeStyle: "short" });
+  return `${new Date(d).toLocaleString("en-GB", { timeZone: "UTC", dateStyle: "medium", timeStyle: "short" })} UTC`;
+}
+
+/** "1 call", "2 calls". */
+export function plural(n: number, noun: string, many = `${noun}s`): string {
+  return `${n} ${n === 1 ? noun : many}`;
 }
