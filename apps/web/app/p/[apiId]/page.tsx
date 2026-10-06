@@ -57,7 +57,7 @@ export default async function PublicApiPage({ params }: { params: Promise<{ apiI
         </ul>
       </div>
       {pack && op && (
-        <div className="space-y-3">
+        <div id="buyer-snippet" className="scroll-mt-6 space-y-3">
           <h2 className="text-sub font-semibold uppercase">For agent builders</h2>
           <BuyerSnippet code={buildBuyerSnippet({
             gatewayBaseUrl: publicBase, apiId, packId: pack.id, packCalls: pack.calls,

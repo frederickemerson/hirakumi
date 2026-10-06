@@ -40,8 +40,26 @@ describe("TryConsole", () => {
     render(<TryConsole apiId="api_1" ops={[op]} initialPack={PACK} />);
     expect(screen.queryByRole("button", { name: /unpaid/i })).toBeNull();
     expect(screen.queryByText(/unpaid agent/i)).toBeNull();
-    render(<TryConsole apiId="api_2" ops={[op]} initialPack={null} />);
+    render(<TryConsole apiId="api_2" ops={[op]} initialPack={null} liveBuy />);
     expect(screen.queryByRole("button", { name: /unpaid/i })).toBeNull();
+  });
+
+  it("on an API that isn't featured, offers no live purchase and says why, with a link to the buyer snippet (audit I2)", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<TryConsole apiId="api_1" ops={[op]} initialPack={null} liveBuy={false} />);
+    expect(screen.queryByRole("button", { name: "Buy a pack live" })).toBeNull();
+    expect(screen.getByText(/Live purchases are funded by Hirakumi's demo wallet, so they're on featured APIs only\. Agents buy with their own wallet: see the/))
+      .toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "code snippet" })).toHaveAttribute("href", "/p/api_1#buyer-snippet");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("on an API that isn't featured, an existing demo pack still works", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(kept(96)));
+    render(<TryConsole apiId="api_1" ops={[op]} initialPack={PACK} liveBuy={false} />);
+    await userEvent.click(screen.getByRole("button", { name: "Call it" }));
+    expect(await screen.findByText("Promise kept. One credit used.")).toBeInTheDocument();
   });
 
   it("with a pack, calls with a credit and shows the receipt: verdict, credits left, output hash, receipts link", async () => {
@@ -66,7 +84,7 @@ describe("TryConsole", () => {
     const stream = controlledStream();
     const fetchMock = vi.fn((url: string) => Promise.resolve(url.endsWith("/buy") ? stream.response : kept(99)));
     vi.stubGlobal("fetch", fetchMock);
-    render(<TryConsole apiId="api_1" ops={[op]} initialPack={null} packPrice={{ calls: 100, priceMicros: "2000000" }} />);
+    render(<TryConsole apiId="api_1" ops={[op]} initialPack={null} liveBuy packPrice={{ calls: 100, priceMicros: "2000000" }} />);
     expect(screen.getByText(/A real x402 payment of 2 tUSDM for 100 calls on Cardano preprod/)).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Buy a pack live" }));
@@ -99,7 +117,7 @@ describe("TryConsole", () => {
   it("reuses a pack the gateway already holds instead of buying again", async () => {
     const stream = controlledStream();
     vi.stubGlobal("fetch", vi.fn((url: string) => Promise.resolve(url.endsWith("/buy") ? stream.response : kept(41))));
-    render(<TryConsole apiId="api_1" ops={[op]} initialPack={null} />);
+    render(<TryConsole apiId="api_1" ops={[op]} initialPack={null} liveBuy />);
     await userEvent.click(screen.getByRole("button", { name: "Buy a pack live" }));
     await stream.send({ phase: "ready", txHash: TX, credits: 42, pending: false, boughtAt: "2026-10-06T10:00:00Z" });
     await stream.close();
@@ -109,7 +127,7 @@ describe("TryConsole", () => {
 
   it("shows a refusal (limits, low funds) as a clear message", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(ok({ error: "The demo wallet has 2.5 tADA. It needs at least 3 tADA for fees, so nothing was bought." }, 409)));
-    render(<TryConsole apiId="api_1" ops={[op]} initialPack={null} />);
+    render(<TryConsole apiId="api_1" ops={[op]} initialPack={null} liveBuy />);
     await userEvent.click(screen.getByRole("button", { name: "Buy a pack live" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("needs at least 3 tADA");
     expect(screen.queryByTestId("purchase")).toBeNull();
@@ -119,7 +137,7 @@ describe("TryConsole", () => {
   it("never hangs: a stream that ends without a result says what to do", async () => {
     const stream = controlledStream();
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(stream.response));
-    render(<TryConsole apiId="api_1" ops={[op]} initialPack={null} />);
+    render(<TryConsole apiId="api_1" ops={[op]} initialPack={null} liveBuy />);
     await userEvent.click(screen.getByRole("button", { name: "Buy a pack live" }));
     await stream.send({ phase: "settling" });
     await stream.close();
@@ -130,7 +148,7 @@ describe("TryConsole", () => {
   it("a payment that was sent but not confirmed says it is saved and won't be paid twice", async () => {
     const stream = controlledStream();
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(stream.response));
-    render(<TryConsole apiId="api_1" ops={[op]} initialPack={null} />);
+    render(<TryConsole apiId="api_1" ops={[op]} initialPack={null} liveBuy />);
     await userEvent.click(screen.getByRole("button", { name: "Buy a pack live" }));
     await stream.send({ phase: "settling" });
     await stream.send({ phase: "failed", spent: true, message: "The payment was sent but not confirmed yet. It is saved, and the next try picks it up without paying twice." });
@@ -168,7 +186,7 @@ describe("TryConsole", () => {
   it("uses no em or en dashes in its copy", async () => {
     const stream = controlledStream();
     vi.stubGlobal("fetch", vi.fn((url: string) => Promise.resolve(url.endsWith("/buy") ? stream.response : kept(99))));
-    render(<TryConsole apiId="api_1" ops={[op]} initialPack={null} packPrice={{ calls: 100, priceMicros: "2000000" }} />);
+    render(<TryConsole apiId="api_1" ops={[op]} initialPack={null} liveBuy packPrice={{ calls: 100, priceMicros: "2000000" }} />);
     expect(document.body.textContent).not.toMatch(/[\u2013\u2014]/);
     await userEvent.click(screen.getByRole("button", { name: "Buy a pack live" }));
     await stream.send({ phase: "settling" });

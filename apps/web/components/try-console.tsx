@@ -69,7 +69,7 @@ function prefersReducedMotion(): boolean {
   return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReason = null }: {
+export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReason = null, liveBuy = false }: {
   apiId: string;
   ops: TryOp[];
   /** A pack with credits left when the page loaded, or null: then the first step is "Buy a pack live". */
@@ -78,6 +78,8 @@ export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReas
   packPrice?: { calls: number; priceMicros: string } | null;
   /** Set when the API is Down: every action is disabled and this says why. */
   downReason?: string | null;
+  /** A featured API (TRY_LIVE_APIS): the demo wallet may buy it a pack. Elsewhere only an existing pack is used. */
+  liveBuy?: boolean;
 }) {
   const [opIndex, setOpIndex] = useState(0);
   const op = ops[opIndex];
@@ -98,6 +100,8 @@ export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReas
 
   const hasCredits = pack !== null && pack.credits > 0;
   const down = downReason !== null;
+  /** Not featured and no pack left: nothing to run here, the buyer snippet shows how an agent pays. */
+  const noLive = !hasCredits && !liveBuy;
 
   function pickOp(i: number) {
     setOpIndex(i);
@@ -187,7 +191,7 @@ export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReas
   }
 
   async function run() {
-    if (busy || down) return;
+    if (busy || down || noLive) return;
     setError(null);
     const coerced = coerceInput(op.fields, values);
     if (!coerced.ok) {
@@ -270,6 +274,13 @@ export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReas
                 </label>
               ))}
               <div className="space-y-3 pt-1">
+                {noLive ? (
+                  <p id="try-pack-note" role="note" className="text-body text-graphite">
+                    Live purchases are funded by Hirakumi&apos;s demo wallet, so they&apos;re on featured APIs only.
+                    Agents buy with their own wallet: see the{" "}
+                    <a href={`/p/${encodeURIComponent(apiId)}#buyer-snippet`} className="underline underline-offset-4">code snippet</a>.
+                  </p>
+                ) : (<>
                 <Button
                   type="submit"
                   size="lg"
@@ -305,6 +316,7 @@ export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReas
                     )}
                   </p>
                 )}
+                </>)}
               </div>
             </form>
           </div>
@@ -332,7 +344,9 @@ export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReas
               <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-[2px] border-2 border-dashed border-graphite p-6 text-center">
                 <p className="font-medium">The answer and its receipt appear here.</p>
                 <p className="max-w-xs text-body text-graphite">
-                  {hasCredits ? "Each call goes through the real gateway with a credit from the live pack." : "First buy a pack live, just like an agent would."}
+                  {hasCredits
+                    ? "Each call goes through the real gateway with a credit from the live pack."
+                    : liveBuy ? "First buy a pack live, just like an agent would." : "Live calls need a pack bought with an agent's own wallet."}
                 </p>
               </div>
             ) : null}

@@ -11,6 +11,7 @@ import { getPack } from "@/lib/repo/packs";
 import { listLatestRules } from "@/lib/repo/rules";
 import { envTryToken, fieldsFromSchema } from "@/lib/try";
 import { findTryPack, listTryOperations } from "@/lib/try-repo";
+import { isLiveBuyApi } from "@/lib/try-live";
 
 export const dynamic = "force-dynamic";
 
@@ -51,6 +52,7 @@ export default async function TryApiPage({ params }: { params: Promise<{ apiId: 
         initialPack={pack ? { credits: pack.remaining, txHash: pack.txHash, pending: pack.pending } : null}
         packPrice={offer ? { calls: offer.calls, priceMicros: offer.priceMicros } : null}
         downReason={api.health === "down" ? TRY_DOWN_REASON : null}
+        liveBuy={isLiveBuyApi(apiId)}
       />
       <RegistryCard agentIdentifier={api.agentIdentifier} agentBaseUrl={`${env.publicBaseUrl()}/a/${apiId}`} />
     </section>
