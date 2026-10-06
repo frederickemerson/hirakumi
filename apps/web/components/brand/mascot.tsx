@@ -1,0 +1,36 @@
+import { cn } from "cn"
+
+/*
+ * Kumo, the Hirakumi mascot: a cloud (雲 kumo) with a small door opening in its front (開く hiraku).
+ * Hand-drawn lines in charcoal, orange door, yellow light inside. Intentionally wobbly.
+ */
+export function Mascot({ className, title = "Hirakumi" }: { className?: string; title?: string }) {
+  return (
+    <svg
+      viewBox="0 0 120 92"
+      role="img"
+      aria-label={title}
+      className={cn("h-8 w-auto", className)}
+      fill="none"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path
+        d="M23 70 C9 71 6 52 19 47 C14 33 31 24 41 32 C45 15 71 12 77 29 C91 22 106 35 100 48 C114 50 112 71 97 70 C85 71 36 71 23 70 Z"
+        fill="#ffffff"
+        stroke="#383838"
+        strokeWidth="2.4"
+      />
+      {/* door opening: yellow light inside, orange leaf swung open */}
+      <path d="M51 47 L69 46.5 L69.5 70 L51 70 Z" fill="#ffde00" stroke="#383838" strokeWidth="2" />
+      <path d="M69 46.5 L84 41 L84.5 74 L69.5 70 Z" fill="#ff9538" stroke="#383838" strokeWidth="2" />
+      <circle cx="80" cy="58" r="1.6" fill="#383838" />
+      {/* eyes peeking from the left lobe */}
+      <circle cx="33" cy="48" r="2" fill="#383838" />
+      <circle cx="42" cy="47" r="2" fill="#383838" />
+      <path d="M34 55 C37 58 40 58 43 55" stroke="#383838" strokeWidth="1.8" />
+      {/* ground shadow line */}
+      <path d="M27 80 C50 83 75 83 96 80" stroke="#54b4de" strokeWidth="2" strokeDasharray="4 5" />
+    </svg>
+  )
+}

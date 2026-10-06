@@ -4,126 +4,350 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * Hirakumi design system: "crayon-coded terminal on cream paper".
+ * Mono type everywhere, 2px corners, hard offset shadows, sky blue as the only filled action colour.
+ */
 @theme inline {
-    --font-heading: var(--font-sans);
-    --font-sans: var(--font-sans);
-    --color-sidebar-ring: var(--sidebar-ring);
-    --color-sidebar-border: var(--sidebar-border);
-    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-    --color-sidebar-accent: var(--sidebar-accent);
-    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-    --color-sidebar-primary: var(--sidebar-primary);
-    --color-sidebar-foreground: var(--sidebar-foreground);
-    --color-sidebar: var(--sidebar);
-    --color-chart-5: var(--chart-5);
-    --color-chart-4: var(--chart-4);
-    --color-chart-3: var(--chart-3);
-    --color-chart-2: var(--chart-2);
-    --color-chart-1: var(--chart-1);
-    --color-ring: var(--ring);
-    --color-input: var(--input);
-    --color-border: var(--border);
-    --color-destructive: var(--destructive);
-    --color-accent-foreground: var(--accent-foreground);
-    --color-accent: var(--accent);
-    --color-muted-foreground: var(--muted-foreground);
-    --color-muted: var(--muted);
-    --color-secondary-foreground: var(--secondary-foreground);
-    --color-secondary: var(--secondary);
-    --color-primary-foreground: var(--primary-foreground);
-    --color-primary: var(--primary);
-    --color-popover-foreground: var(--popover-foreground);
-    --color-popover: var(--popover);
-    --color-card-foreground: var(--card-foreground);
-    --color-card: var(--card);
-    --color-foreground: var(--foreground);
-    --color-background: var(--background);
-    --radius-sm: calc(var(--radius) * 0.6);
-    --radius-md: calc(var(--radius) * 0.8);
-    --radius-lg: var(--radius);
-    --radius-xl: calc(var(--radius) * 1.4);
-    --radius-2xl: calc(var(--radius) * 1.8);
-    --radius-3xl: calc(var(--radius) * 2.2);
-    --radius-4xl: calc(var(--radius) * 2.6);
+  /* Type: JetBrains Mono is loaded in app/layout.tsx and exposed as --font-mono. */
+  --font-sans: var(--font-mono), ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --font-mono: var(--font-mono), ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --font-heading: var(--font-mono), ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  /* Scale from the style guide (size / line-height). */
+  --text-caption: 0.6875rem;
+  --text-caption--line-height: 1.4;
+  --text-body: 0.875rem;
+  --text-body--line-height: 1.6;
+  --text-body-lg: 1rem;
+  --text-body-lg--line-height: 1.6;
+  --text-sub: 1.125rem;
+  --text-sub--line-height: 1.4;
+  --text-h-sm: 1.5rem;
+  --text-h-sm--line-height: 1.3;
+  --text-h: 2rem;
+  --text-h--line-height: 1.2;
+  --text-h-lg: 2.5rem;
+  --text-h-lg--line-height: 1.2;
+  --text-display: 3.5rem;
+  --text-display--line-height: 1;
+
+  /* Palette */
+  --color-cream: #f4efea;
+  --color-frost: #ffffff;
+  --color-chalk: #f8f8f7;
+  --color-ice: #ebf9ff;
+  --color-notebook: #f9fbe7;
+  --color-ink: #383838;
+  --color-pencil: #a1a1a1;
+  --color-graphite: #818181;
+  --color-silver: #c0c0c0;
+  --color-sky: #6fc2ff;
+  --color-canary: #ffde00;
+  --color-bill: #ff9538;
+  --color-cement: #54b4de;
+  --color-blush: #fdedda;
+  --color-coral: #f38e84;
+  --color-peach: #f5b161;
+  --color-mint: #38c1b0;
+  --color-lilac: #b291de;
+  --color-lime: #b3c419;
+  --color-periwinkle: #7597ee;
+  --color-slate: #84a6bc;
+  --color-marigold: #e1c427;
+
+  /* shadcn semantic tokens */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* 2px corners on everything: every radius step resolves to the same value. */
+  --radius-xs: var(--radius);
+  --radius-sm: var(--radius);
+  --radius-md: var(--radius);
+  --radius-lg: var(--radius);
+  --radius-xl: var(--radius);
+  --radius-2xl: var(--radius);
+  --radius-3xl: var(--radius);
+  --radius-4xl: var(--radius);
+
+  /* The whole elevation system is one hard offset shadow. */
+  --shadow-hard: -6px 6px 0 0 var(--color-ink);
+  --shadow-hard-sm: -3px 3px 0 0 var(--color-ink);
+  --shadow-hard-lg: -10px 10px 0 0 var(--color-ink);
+
+  --ease-press: cubic-bezier(0.2, 0, 0, 1);
 }
 
 :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --radius: 0.625rem;
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
+  --radius: 2px;
+  --background: #f4efea;
+  --foreground: #383838;
+  --card: #ffffff;
+  --card-foreground: #383838;
+  --popover: #ffffff;
+  --popover-foreground: #383838;
+  --primary: #6fc2ff;
+  --primary-foreground: #383838;
+  --secondary: #f8f8f7;
+  --secondary-foreground: #383838;
+  --muted: #f8f8f7;
+  --muted-foreground: #818181;
+  --accent: #ebf9ff;
+  --accent-foreground: #383838;
+  --destructive: #f38e84;
+  --border: #383838;
+  --input: #383838;
+  --ring: #6fc2ff;
+  --chart-1: #6fc2ff;
+  --chart-2: #38c1b0;
+  --chart-3: #f5b161;
+  --chart-4: #b291de;
+  --chart-5: #e1c427;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #383838;
+  --sidebar-primary: #6fc2ff;
+  --sidebar-primary-foreground: #383838;
+  --sidebar-accent: #ebf9ff;
+  --sidebar-accent-foreground: #383838;
+  --sidebar-border: #383838;
+  --sidebar-ring: #6fc2ff;
 }
 
+/* The product is light-only by design (cream paper). .dark keeps the same tokens so nothing flips. */
 .dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+  --background: #f4efea;
+  --foreground: #383838;
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
-    }
-  body {
-    @apply bg-background text-foreground;
-    }
+  }
   html {
     @apply font-sans;
-    }
+    letter-spacing: 0.02em;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-size-adjust: 100%;
+    color-scheme: light;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-size: 0.875rem;
+    line-height: 1.6;
+    overflow-x: clip;
+  }
+  h1, h2, h3, h4 {
+    text-wrap: balance;
+  }
+  p, li, dd {
+    text-wrap: pretty;
+  }
+  ::selection {
+    background: var(--color-canary);
+    color: var(--color-ink);
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-ink);
+    outline-offset: 2px;
+  }
+  code, kbd, samp, pre {
+    font-family: var(--font-mono);
+  }
+  input::placeholder, textarea::placeholder {
+    color: var(--color-pencil);
+    opacity: 1;
+  }
+  /* Native controls pick up the ink accent instead of the OS blue. */
+  input[type="checkbox"], input[type="radio"] {
+    accent-color: var(--color-ink);
+    width: 1rem;
+    height: 1rem;
+  }
+  details > summary {
+    list-style: none;
+  }
+  details > summary::-webkit-details-marker {
+    display: none;
+  }
+}
+
+/* --- Shape and elevation utilities ------------------------------------------------------- */
+
+@utility shadow-hard {
+  box-shadow: var(--shadow-hard);
+}
+@utility shadow-hard-sm {
+  box-shadow: var(--shadow-hard-sm);
+}
+@utility shadow-hard-lg {
+  box-shadow: var(--shadow-hard-lg);
+}
+
+/* Press-into-shadow hover: the element travels into its own shadow; active returns. */
+@utility press {
+  transition-property: transform, box-shadow, background-color;
+  transition-duration: 120ms;
+  transition-timing-function: var(--ease-press);
+  &:hover {
+    transform: translate(-6px, 6px);
+    box-shadow: 0 0 0 0 var(--color-ink);
+  }
+  &:active {
+    transform: translate(0, 0);
+    box-shadow: var(--shadow-hard);
+  }
+  &:disabled, &[aria-disabled="true"] {
+    transform: none;
+    box-shadow: var(--shadow-hard);
+  }
+}
+@utility press-sm {
+  transition-property: transform, box-shadow, background-color;
+  transition-duration: 120ms;
+  transition-timing-function: var(--ease-press);
+  &:hover {
+    transform: translate(-3px, 3px);
+    box-shadow: 0 0 0 0 var(--color-ink);
+  }
+  &:active {
+    transform: translate(0, 0);
+    box-shadow: var(--shadow-hard-sm);
+  }
+}
+
+/* Full-bleed band inside the centred page container (see app/layout.tsx). */
+@utility bleed {
+  width: 100vw;
+  margin-inline: calc(50% - 50vw);
+}
+
+/* Rainbow outline: set --rb on the element (or via rb-* utilities) to tint its border. */
+@utility rb-border {
+  border-color: var(--rb, var(--color-ink));
+}
+@utility rb-coral { --rb: #f38e84; }
+@utility rb-peach { --rb: #f5b161; }
+@utility rb-mint { --rb: #38c1b0; }
+@utility rb-lilac { --rb: #b291de; }
+@utility rb-lime { --rb: #b3c419; }
+@utility rb-periwinkle { --rb: #7597ee; }
+@utility rb-slate { --rb: #84a6bc; }
+@utility rb-marigold { --rb: #e1c427; }
+
+/* Halftone dot edge used on the yellow band (hand-made, no gradient fills). */
+@utility dots-ink {
+  background-image: radial-gradient(var(--color-ink) 1px, transparent 1.2px);
+  background-size: 8px 8px;
+}
+
+/* --- Motion ------------------------------------------------------------------------------ */
+
+@keyframes marquee {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(-50%, 0, 0); }
+}
+@keyframes shimmer {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+@keyframes spin-square {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@keyframes stripes {
+  from { background-position: 0 0; }
+  to { background-position: 16px 0; }
+}
+@keyframes rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+@keyframes trickle {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(0.9); }
+}
+
+@utility animate-marquee {
+  animation: marquee var(--marquee-duration, 40s) linear infinite;
+}
+@utility animate-rise {
+  animation: rise 600ms var(--ease-press) both;
+}
+@utility animate-spin-square {
+  animation: spin-square 900ms steps(8) infinite;
+}
+@utility animate-blink {
+  animation: blink 1s steps(1) infinite;
+}
+
+/* Diagonal ink stripes on an in-progress bar segment. */
+@utility stripes-sky {
+  background-color: var(--color-sky);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    transparent 0 6px,
+    rgb(56 56 56 / 0.25) 6px 8px
+  );
+  background-size: 16px 16px;
+  animation: stripes 800ms linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-marquee, .animate-spin-square, .animate-blink, .stripes-sky, .animate-rise {
+    animation: none !important;
+  }
+  .press, .press-sm {
+    transition-duration: 0ms;
+  }
+  html {
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Lenis smooth scroll (landing page only). */
+html.lenis, html.lenis body {
+  height: auto;
+}
+.lenis.lenis-smooth {
+  scroll-behavior: auto !important;
+}
+.lenis.lenis-smooth [data-lenis-prevent] {
+  overscroll-behavior: contain;
+}
+.lenis.lenis-stopped {
+  overflow: hidden;
 }
