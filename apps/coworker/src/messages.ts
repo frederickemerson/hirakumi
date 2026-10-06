@@ -16,8 +16,8 @@ export type MessageInput = {
 /** Appends a coworker message to the outbox. Returns false when the dedupe key already exists. */
 export async function enqueueMessage(db: Db, m: MessageInput): Promise<boolean> {
   const r = await db.query(
-    `insert into messages (api_id, task_id, author, body, task_status, dedupe_key)
-     values ($1, coalesce($2, (select sokosumi_task_id from apis where id = $1)), 'coworker', $3, $4, $5)
+    `insert into messages (api_id, seller_id, task_id, author, body, task_status, dedupe_key)
+     values ($1, (select seller_id from apis where id = $1), coalesce($2, (select sokosumi_task_id from apis where id = $1)), 'coworker', $3, $4, $5)
      on conflict (dedupe_key) do nothing`,
     [m.apiId, m.taskId ?? null, m.body, m.taskStatus ?? null, m.dedupeKey],
   );

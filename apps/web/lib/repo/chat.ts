@@ -5,8 +5,10 @@ export type ChatMessage = { id: string; apiId: string | null; author: "seller" |
 export async function listChat(sql: Sql, sellerId: string, apiId: string | null, afterId: number): Promise<ChatMessage[]> {
   return sql<ChatMessage[]>`
     select id::text as id, api_id, author, body, created_at from messages
-    where seller_id = ${sellerId}
-      and ${apiId === null ? sql`api_id is null` : sql`api_id = ${apiId}`}
+    where ${apiId === null
+      ? sql`api_id is null and seller_id = ${sellerId}`
+      // An API's thread belongs to whoever owns the API (the coworker's rows carry api_id, not seller_id).
+      : sql`api_id = ${apiId} and exists (select 1 from apis a where a.id = ${apiId} and a.seller_id = ${sellerId})`}
       and id > ${afterId}
     order by id asc limit 200`;
 }
