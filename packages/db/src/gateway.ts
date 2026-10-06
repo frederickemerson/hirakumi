@@ -257,3 +257,35 @@ export async function getActiveHttpChallenge(sql: Sql, apiId: string): Promise<{
   return row ?? null;
 }
 
+
+export type ReceiptToken = { id: string; packId: string; status: CreditStatus; remaining: number; txHash: string | null; createdAt: Date };
+export type ReceiptCall = {
+  at: Date; opId: string; verdict: "pass" | "fail" | "n/a"; charged: boolean; reasons: unknown;
+  ruleHash: string | null; ruleVersion: number | null; latencyMs: number | null; inputHash: string | null; outputHash: string | null;
+};
+
+/**
+ * The token holder's own history: every credit call made with it. A call is charged exactly when the upstream
+ * answered and the answer passed (the same condition credits.ts keeps the reserved credit on).
+ */
+export async function getReceipts(sql: Sql, apiId: string, tokenHash: string, limit = 200): Promise<{ token: ReceiptToken; calls: ReceiptCall[] } | null> {
+  const [t] = await sql<{ id: string; pack_id: string; status: CreditStatus; remaining: number; tx_hash: string | null; created_at: Date }[]>`
+    select id, pack_id, status, remaining, tx_hash, created_at from credit_tokens where token_hash = ${tokenHash} and api_id = ${apiId}`;
+  if (!t) return null;
+  const rows = await sql<{
+    created_at: Date; op_id: string; verdict: "pass" | "fail" | "n/a"; execution: string; verdict_reasons: unknown;
+    hash: string | null; version: number | null; latency_ms: number | null; input_hash: string | null; output_hash: string | null;
+  }[]>`
+    select c.created_at, c.op_id, c.verdict, c.execution, c.verdict_reasons, r.hash, r.version, c.latency_ms, c.input_hash, c.output_hash
+    from calls c left join rules r on r.id = c.rule_id
+    where c.credit_token_id = ${t.id} and c.kind = 'credit'
+    order by c.created_at desc, c.id desc limit ${limit}`;
+  return {
+    token: { id: t.id, packId: t.pack_id, status: t.status, remaining: t.remaining, txHash: t.tx_hash, createdAt: t.created_at },
+    calls: rows.map((c) => ({
+      at: c.created_at, opId: c.op_id, verdict: c.verdict, charged: c.execution === "upstream_ok" && c.verdict === "pass",
+      reasons: c.verdict_reasons, ruleHash: c.hash, ruleVersion: c.version, latencyMs: c.latency_ms,
+      inputHash: c.input_hash, outputHash: c.output_hash,
+    })),
+  };
+}

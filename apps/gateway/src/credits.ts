@@ -1,12 +1,31 @@
 import { Router } from "express";
 import { inputHash, outputHash, sha256Hex } from "@hirakumi/core";
-import { insertCall, markExhaustedIfEmpty, releaseCredit, reserveCredit } from "@hirakumi/db";
+import { getReceipts, insertCall, markExhaustedIfEmpty, releaseCredit, reserveCredit } from "@hirakumi/db";
 import type { AppDeps } from "./deps";
 import { creditsRequiredBody, downBody, parseBearer } from "./http";
 import { runOperation, type OperationOutcome } from "./upstream";
 
 export function creditsRouter(d: AppDeps): Router {
   const r = Router();
+  /**
+   * The buyer's receipts: what each credit call cost and why, against the rule hash published before purchase.
+   * Credits are counted off-chain, so this is how a buyer audits the gateway instead of trusting it blindly.
+   */
+  r.get("/a/:apiId/receipts", async (req, res, next) => {
+    try {
+      const bearer = parseBearer(req.header("authorization"));
+      if (!bearer) { res.status(401).json({ error: "token_required", message: "Send your pack token as Authorization: Bearer <token>." }); return; }
+      const found = await getReceipts(d.sql, req.params.apiId, sha256Hex(bearer));
+      if (!found) { res.status(401).json({ error: "invalid_token" }); return; }
+      res.set("cache-control", "no-store").json({
+        ...found,
+        verify:
+          "charged is true only when the API answered and the answer passed the rule (ruleHash, see /r/<ruleHash>). " +
+          "To check a paid answer, compute outputHash = sha256(token.id + ';' + body) as in MIP-004 over the exact body you received.",
+      });
+    } catch (e) { next(e); }
+  });
+
   r.all("/a/:apiId/x/:opId", async (req, res, next) => {
     try {
       const loaded = await d.registry.get(req.params.apiId);
