@@ -18,5 +18,7 @@ export const env = {
   webBaseUrl: () => required("WEB_BASE_URL").replace(/\/+$/, ""),
   allowInsecureUpstream: () => process.env.ALLOW_INSECURE_UPSTREAM === "1",
   chatFallback: () => process.env.CHAT_FALLBACK === "1",
+  /** Optional: without it, "Ask Hirakumi" answers from its small offline FAQ. */
+  openaiApiKey: () => process.env.OPENAI_API_KEY || null,
   secureCookies: () => process.env.NODE_ENV === "production",
 };
