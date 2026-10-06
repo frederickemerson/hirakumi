@@ -32,7 +32,7 @@ export const PRICE_SPEC = JSON.stringify({
     "/ext": { get: { operationId: "ext", parameters: [{ name: "q", in: "query", schema: { $ref: "https://evil.example/s.json" } }], responses: { "200": { description: "ok" } } } },
   },
   components: {
-    securitySchemes: { key: { type: "apiKey", in: "header", name: "X-Key" } },
+    securitySchemes: { key: { type: "http", scheme: "basic" } },
     schemas: { Price: { type: "object", properties: { symbol: { type: "string" }, price: { type: "number" } } } },
   },
 });

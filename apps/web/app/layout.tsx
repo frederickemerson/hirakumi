@@ -18,7 +18,7 @@ const mono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: { default: "Hirakumi", template: "%s | Hirakumi" },
-  description: "Make your APIs monetizable. Paste your OpenAPI link, sign with your Cardano wallet, set a pack price. AI agents pay in USDM, and stale or empty answers cost them nothing.",
+  description: "Make your APIs monetizable. Paste an OpenAPI link or a few example requests, sign with your Cardano wallet, set a pack price. AI agents pay in USDM, and stale or empty answers cost them nothing.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

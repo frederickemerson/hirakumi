@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Elapsed, useElapsed } from "@/components/elapsed";
 import { InlineError, InlineStatus } from "@/components/states";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,11 @@ import { cn } from "@/lib/utils";
 /** How often the page re-reads the seller's OpenAPI file while it is visible. */
 export const AUTO_CHECK_MS = 10_000;
 const FIELD = "x-hirakumi-verify";
+
+/** The whole proof file for an API without an OpenAPI file (served at its openapi_url). */
+export function proofFile(code: string): string {
+  return `{ "${FIELD}": "${code}" }`;
+}
 
 /** The line the seller adds at the root of their OpenAPI file, in each format. */
 export function specSnippets(code: string): { yaml: string; json: string } {
@@ -66,7 +71,7 @@ function StepNumber({ n, done }: { n: number; done?: boolean }) {
   );
 }
 
-function Snippet({ label, text }: { label: "YAML" | "JSON"; text: string }) {
+function Snippet({ label, text }: { label: string; text: string }) {
   const [copied, setCopied] = useState(false);
   async function copy() {
     try {
@@ -90,13 +95,16 @@ function Snippet({ label, text }: { label: "YAML" | "JSON"; text: string }) {
 
 const isVisible = () => typeof document === "undefined" || document.visibilityState !== "hidden";
 
-export function OwnershipPanel({ apiId, openapiUrl, code, initiallyPassed }: {
+export function OwnershipPanel({ apiId, openapiUrl, intakeKind = "openapi", code, initiallyPassed, beforeSigning }: {
   apiId: string;
-  /** The API's openapi_url: the file the code must be added to. */
+  /** The API's openapi_url: the file the code must be added to (or, for "samples", the proof file to serve). */
   openapiUrl: string;
+  intakeKind?: "openapi" | "samples";
   /** This API's verification code (server-side, per API). */
   code: string;
   initiallyPassed: boolean;
+  /** Shown between the two steps: the optional key for the API (components/upstream-auth-form.tsx). */
+  beforeSigning?: ReactNode;
 }) {
   const router = useRouter();
   const [passed, setPassed] = useState(initiallyPassed);
@@ -177,12 +185,22 @@ export function OwnershipPanel({ apiId, openapiUrl, code, initiallyPassed }: {
         <div className="min-w-0 flex-1 space-y-3">
           <h2 id="own-step-1" className="text-body-lg font-semibold">Add your code</h2>
           <p className="text-body">So nobody can sell an API they don&apos;t own.</p>
-          <p className="text-body">Add this line at the root of your OpenAPI file, next to <code>openapi</code> and <code>info</code>:</p>
-          <div className="grid gap-3 md:grid-cols-2">
-            <Snippet label="YAML" text={snippets.yaml} />
-            <Snippet label="JSON" text={snippets.json} />
-          </div>
-          <p className="text-body">Your OpenAPI file:</p>
+          {intakeKind === "samples" ? (
+            <>
+              <p className="text-body">Serve this file, as it is, at the address below. It can be a static file or a route that returns it.</p>
+              <Snippet label="hirakumi-verify.json" text={proofFile(code)} />
+              <p className="text-body">Serve it at:</p>
+            </>
+          ) : (
+            <>
+              <p className="text-body">Add this line at the root of your OpenAPI file, next to <code>openapi</code> and <code>info</code>:</p>
+              <div className="grid gap-3 md:grid-cols-2">
+                <Snippet label="YAML" text={snippets.yaml} />
+                <Snippet label="JSON" text={snippets.json} />
+              </div>
+              <p className="text-body">Your OpenAPI file:</p>
+            </>
+          )}
           <code className="block break-all rounded-[2px] bg-ink p-3 text-body text-cream">{openapiUrl}</code>
           <p className="text-caption text-graphite">The code proves the folder this file is served from, so your API must run on the same host, in that folder or below it.</p>
           {passed ? (
@@ -211,6 +229,7 @@ export function OwnershipPanel({ apiId, openapiUrl, code, initiallyPassed }: {
           )}
         </div>
       </li>
+      {beforeSigning && <li>{beforeSigning}</li>}
       <li aria-labelledby="own-step-2" className="flex gap-4 rounded-[2px] border-2 border-ink bg-frost p-5">
         <StepNumber n={2} done={signed} />
         <div className="min-w-0 flex-1 space-y-3">

@@ -5,16 +5,25 @@ import {
 import type { Sql } from "../db";
 import { recordsKeptReason } from "../api-delete";
 import type { Api, ApiState, OnboardStep } from "../types";
-import { registerStartedSql, soldSql } from "./delete-api";
+import { API_DELETE_ORDER, registerStartedSql, soldSql } from "./delete-api";
 
 export const API_COLUMNS = [
-  "id", "seller_id", "name", "origin", "openapi_url", "state", "health",
+  "id", "seller_id", "name", "origin", "openapi_url", "intake_kind", "state", "health",
   "health_checked_at", "escrow_op_id", "agent_identifier", "created_at",
 ];
 
+/**
+ * What the seller gave: an OpenAPI link, or (any API) a base URL and example requests. For the latter,
+ * openapiUrl is the ownership proof file in the base folder (@hirakumi/core samples.ts).
+ */
+export type ApiInput = { sellerId: string; name: string; origin: string; openapiUrl: string; samples?: { base: string; lines: string } };
+
+/** The samples as a jsonb parameter (an object, not a JSON string), or null for an OpenAPI link. */
+const samplesOf = (tx: postgres.TransactionSql, input: ApiInput) => (input.samples ? tx.json(input.samples as postgres.JSONValue) : null);
+
 export async function createApi(
   sql: Sql,
-  input: { sellerId: string; name: string; origin: string; openapiUrl: string },
+  input: ApiInput,
 ): Promise<{ api: Api; created: boolean } | { takenByOther: true }> {
   return sql.begin(async (tx) => {
     // Serialise double submits of the same link by the same seller.
@@ -24,16 +33,37 @@ export async function createApi(
     const [existing] = await tx<Api[]>`
       select ${tx(API_COLUMNS)} from apis
       where seller_id = ${input.sellerId} and openapi_url = ${input.openapiUrl} and state <> 'retired'
+        and samples is not distinct from ${samplesOf(tx, input)}::jsonb
         and not exists (select 1 from onboard_steps s where s.api_id = apis.id and s.status = 'failed')
       order by created_at desc limit 1`;
     if (existing) return { api: existing, created: false };
     if (await isTakenEarly(tx, input)) return { takenByOther: true as const };
+    if (input.samples) await eraseEarlierSamples(tx, input);
     const [api] = await tx<Api[]>`
-      insert into apis (id, seller_id, name, origin, openapi_url)
-      values (${newId("api")}, ${input.sellerId}, ${input.name}, ${input.origin}, ${input.openapiUrl})
+      insert into apis (id, seller_id, name, origin, openapi_url, intake_kind, samples)
+      values (${newId("api")}, ${input.sellerId}, ${input.name}, ${input.origin}, ${input.openapiUrl},
+              ${input.samples ? "samples" : "openapi"}, ${samplesOf(tx, input)})
       returning ${tx(API_COLUMNS)}`;
     return { api, created: true };
   });
+}
+
+/**
+ * Corrected example requests for the same base URL replace the earlier ones: the earlier API is erased while
+ * nothing about it was chosen yet (before the endpoints are confirmed), so the seller doesn't end up with two APIs
+ * sharing one proof file, of which only one can be proven. Same rule as with an OpenAPI link, where resubmitting
+ * returns the one API. An API on a Sokosumi task is left alone: the task tracks it.
+ */
+async function eraseEarlierSamples(tx: postgres.TransactionSql, input: ApiInput): Promise<void> {
+  const earlier = await tx<{ id: string }[]>`
+    select id from apis
+    where seller_id = ${input.sellerId} and openapi_url = ${input.openapiUrl} and intake_kind = 'samples'
+      and state in ('intake', 'parsed', 'described') and sokosumi_task_id is null and deleted_at is null
+    for update`;
+  for (const { id } of earlier) {
+    for (const step of API_DELETE_ORDER) await step.run(tx, id);
+    await tx`delete from apis where id = ${id}`;
+  }
 }
 
 /** Runs $n-parameter SQL on postgres.js, for the checks shared with the coworker (@hirakumi/core listingBase). */
@@ -76,7 +106,7 @@ export async function findCoworkerTask(sql: Sql, setupToken: string): Promise<{ 
 /** Create the API from a setup link: one API per Sokosumi task, linked so progress and billing reach the task. */
 export async function createApiForTask(
   sql: Sql,
-  input: { sellerId: string; name: string; origin: string; openapiUrl: string },
+  input: ApiInput,
   task: { taskId: string; sokosumiUserId: string },
 ): Promise<{ api: Api; created: boolean } | { claimedByOther: true } | { takenByOther: true }> {
   return sql.begin(async (tx) => {
@@ -92,8 +122,9 @@ export async function createApiForTask(
     if (linked) return { api: linked, created: false };
     if (await isTakenEarly(tx, input)) return { takenByOther: true as const };
     const [api] = await tx<Api[]>`
-      insert into apis (id, seller_id, name, origin, openapi_url, sokosumi_task_id)
-      values (${newId("api")}, ${input.sellerId}, ${input.name}, ${input.origin}, ${input.openapiUrl}, ${task.taskId})
+      insert into apis (id, seller_id, name, origin, openapi_url, intake_kind, samples, sokosumi_task_id)
+      values (${newId("api")}, ${input.sellerId}, ${input.name}, ${input.origin}, ${input.openapiUrl},
+              ${input.samples ? "samples" : "openapi"}, ${samplesOf(tx, input)}, ${task.taskId})
       returning ${tx(API_COLUMNS)}`;
     return { api, created: true };
   });

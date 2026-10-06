@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import {
-  isBlockedAddress, safeFetch, UpstreamBlockedError, UpstreamTimeoutError, UpstreamTooLargeError,
+  decodeBody, isBlockedAddress, safeFetch, UpstreamBlockedError, UpstreamTimeoutError, UpstreamTooLargeError,
 } from "../src/fetch";
 
 let server: http.Server;
@@ -13,6 +13,8 @@ beforeAll(async () => {
     if (req.url === "/redirect") { res.writeHead(302, { location: "http://169.254.169.254/" }); res.end(); return; }
     if (req.url === "/big") { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ pad: "x".repeat(5000) })); return; }
     if (req.url === "/slow") { setTimeout(() => { res.writeHead(200); res.end("{}"); }, 1000); return; }
+    if (req.url === "/bom.csv") { res.writeHead(200, { "content-type": "text/csv" }); res.end(Buffer.from("\uFEFFsym,price\nADA,0.35\n")); return; }
+    if (req.url === "/latin1.csv") { res.writeHead(200, { "content-type": "text/csv; charset=ISO-8859-1" }); res.end(Buffer.from("café,1\n", "latin1")); return; }
     res.writeHead(404); res.end();
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
@@ -92,5 +94,42 @@ describe("safeFetch with ALLOW_INSECURE_UPSTREAM=1 (local stubs)", () => {
   it("times out", async () => {
     process.env.ALLOW_INSECURE_UPSTREAM = "1";
     await expect(safeFetch(`${base}/slow`, { method: "GET" }, { timeoutMs: 100 })).rejects.toBeInstanceOf(UpstreamTimeoutError);
+  });
+});
+
+describe("decodeBody", () => {
+  const utf16be = (t: string) => Buffer.from(t, "utf16le").swap16();
+  it("drops a leading BOM, as WHATWG res.text() does", async () => {
+    const bytes = Buffer.from("\uFEFFsym,price\n");
+    expect(decodeBody(bytes, "text/csv")).toBe("sym,price\n");
+    expect(decodeBody(bytes, "text/csv")).toBe(await new Response(bytes).text());
+    expect(decodeBody(Buffer.from('\uFEFF{"a":1}'), "application/json")).toBe('{"a":1}');
+    // The gateway re-sends the body as UTF-8, where a U+FEFF left at the start would be a BOM the buyer drops again.
+    expect(decodeBody(Buffer.from("\uFEFF\uFEFFx"), "text/plain")).toBe("x");
+  });
+  it("uses the declared charset when TextDecoder knows it, else UTF-8", () => {
+    expect(decodeBody(Buffer.from("café", "latin1"), "text/csv; charset=iso-8859-1")).toBe("café");
+    expect(decodeBody(Buffer.from("café", "latin1"), 'text/plain; charset="latin1"')).toBe("café");
+    expect(decodeBody(Buffer.from([0x80]), "text/plain; charset=windows-1252")).toBe("€");
+    expect(decodeBody(Buffer.from("café", "utf16le"), "text/plain; charset=UTF-16LE")).toBe("café");
+    expect(decodeBody(utf16be("café"), "text/plain; charset=utf-16be")).toBe("café");
+    expect(decodeBody(Buffer.from("café"), "text/plain; charset=x-made-up")).toBe("café");
+    expect(decodeBody(Buffer.from("café"), "text/plain")).toBe("café");
+    expect(decodeBody(Buffer.from("café"), null)).toBe("café");
+  });
+  it("a UTF-16 BOM wins over the label", () => {
+    expect(decodeBody(Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("a,b", "utf16le")]), "text/csv")).toBe("a,b");
+    expect(decodeBody(Buffer.concat([Buffer.from([0xfe, 0xff]), utf16be("a,b")]), "text/csv; charset=utf-8")).toBe("a,b");
+  });
+  it("JSON is UTF-8 whatever its label says (RFC 8259), so answers that pass today don't change", () => {
+    expect(decodeBody(Buffer.from('{"name":"café"}'), "application/json; charset=iso-8859-1")).toBe('{"name":"café"}');
+  });
+});
+
+describe("safeFetch decodes text", () => {
+  it("drops a BOM and honours a declared charset", async () => {
+    process.env.ALLOW_INSECURE_UPSTREAM = "1";
+    expect((await safeFetch(`${base}/bom.csv`, { method: "GET" })).body).toBe("sym,price\nADA,0.35\n");
+    expect((await safeFetch(`${base}/latin1.csv`, { method: "GET" })).body).toBe("café,1\n");
   });
 });

@@ -49,6 +49,14 @@ describe("runPackDemo", () => {
     expect(h.lines.join("\n")).toContain(`https://preprod.cardanoscan.io/transaction/${"ab".repeat(32)}`);
   });
 
+  it("prints a CSV answer as text", async () => {
+    const gw = fakeGateway({ answer: { body: "symbol,usd\nADA,0.27", contentType: "text/csv" } });
+    const h = deps(gw);
+    const s = await runPackDemo(h.make(), opts({ calls: 1 }));
+    expect(s).toMatchObject({ passed: 1, creditAccountingOk: true });
+    expect(h.lines.join("\n")).toContain("credits left: 4  \nsymbol,usd\nADA,0.27");
+  });
+
   it("op calls never hit /packs and buyPack only receives the buyUrl", async () => {
     const gw = fakeGateway({ modes: ["pass"] });
     const h = deps(gw);

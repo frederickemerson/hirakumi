@@ -16,6 +16,7 @@ import { listLatestRules } from "@/lib/repo/rules";
 import { listIncidents } from "@/lib/repo/stats";
 import { getPublicStatus } from "@/lib/repo/status";
 import { buildBuyerSnippet } from "@/lib/snippet";
+import { isTextPromise, promiseFormatNote } from "@/lib/answer-format";
 
 export async function generateMetadata({ params }: { params: Promise<{ apiId: string }> }): Promise<Metadata> {
   const api = await loadLiveApi((await params).apiId);
@@ -71,6 +72,7 @@ export default async function PublicApiPage({ params }: { params: Promise<{ apiI
             <li key={p.operationId} className="space-y-2 rounded-[2px] border-2 border-ink bg-frost p-5">
               <p className="flex items-center gap-2 text-body-lg"><Badge variant="sky">{p.method.toUpperCase()}</Badge><code>{p.path}</code></p>
               <p className="text-body-lg">{p.plainEnglish ?? "See the exact check below."}</p>
+              {promiseFormatNote(p.definition) && <p className="text-body text-graphite">{promiseFormatNote(p.definition)}</p>}
               <a href={`${publicBase}/r/${p.hash}`} className="inline-block text-body underline underline-offset-4">The exact check (JSON)</a>
             </li>
           ))}
@@ -81,7 +83,7 @@ export default async function PublicApiPage({ params }: { params: Promise<{ apiI
           <h2 className="text-sub font-semibold uppercase">For agent builders</h2>
           <BuyerSnippet code={buildBuyerSnippet({
             gatewayBaseUrl: publicBase, apiId, packId: pack.id, packCalls: pack.calls,
-            packPriceMicros: pack.priceMicros, opId: op.opId, method: op.method,
+            packPriceMicros: pack.priceMicros, opId: op.opId, method: op.method, textAnswer: isTextPromise(op.definition),
           })} />
         </div>
       )}

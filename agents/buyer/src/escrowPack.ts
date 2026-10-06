@@ -7,7 +7,7 @@ import {
   MAX_CLOSE_FEE_BUDGET, MAX_CONTEST_PERIOD_MS, MIN_CONTEST_PERIOD_MS, PACK_ESCROW, decodePackDatum, encodePackDatum, newReceiptKey,
   signCloseRequest, signReceipt, validateDatumForLock, type PackDatum,
 } from "@hirakumi/escrow";
-import { formatMicros, safeJson, type FetchLike } from "./gatewayClient.js";
+import { ANSWER_ACCEPT, answerBody, formatMicros, safeJson, type FetchLike } from "./gatewayClient.js";
 import { directPackCheck } from "./payClient.js";
 import { writePrivateJson } from "./tokenStore.js";
 
@@ -180,7 +180,7 @@ export function signNext(c: EscrowChannel, n: number): string | null {
 export type RuleFetch = (ruleHash: string) => Promise<RuleDefinition>;
 
 export type EscrowCallResult =
-  | { kind: "pass"; body: unknown; signed: number | null }
+  | { kind: "pass"; body: unknown; contentType: string | null; signed: number | null }
   | { kind: "dispute"; reasons: string[] }
   | { kind: "not_met" | "upstream_error" | "down"; status: number; body: unknown }
   | { kind: "iou_required"; signNext: number }
@@ -198,14 +198,14 @@ export async function escrowCall(
   retried = false,
 ): Promise<EscrowCallResult> {
   if (!c.token) throw new Error("no token for this channel");
-  const headers: Record<string, string> = { accept: "application/json", authorization: `Bearer ${c.token}` };
+  const headers: Record<string, string> = { accept: ANSWER_ACCEPT, authorization: `Bearer ${c.token}` };
   if (c.lastIou) headers["x-hirakumi-iou"] = c.lastIou;
   const res = await deps.fetch(url, { method: "GET", headers });
   const text = await res.text();
-  const body = safeJson(text);
+  const contentType = res.headers.get("content-type");
   if (res.status === 200) {
     if (!c.ruleHash) throw new Error("channel has no rule hash");
-    const verdict = compileRule(await deps.rule(c.ruleHash)).check({ status: 200, contentType: res.headers.get("content-type"), body: text, latencyMs: 0 });
+    const verdict = compileRule(await deps.rule(c.ruleHash)).check({ status: 200, contentType, body: text, latencyMs: 0 });
     if (!verdict.pass) {
       c.disputed = true;
       deps.save(c);
@@ -215,8 +215,10 @@ export async function escrowCall(
     const n = Number(res.headers.get("x-hirakumi-sign-next"));
     const iou = signNext(c, n);
     deps.save(c);
-    return { kind: "pass", body: body ?? text, signed: iou ? n : null };
+    return { kind: "pass", body: answerBody(text, contentType), contentType, signed: iou ? n : null };
   }
+  // Refusals come from the gateway itself, always JSON.
+  const body = safeJson(text);
   const err = (body as { error?: unknown } | undefined)?.error;
   if (res.status === 402 && err === "iou_required") {
     const n = Number((body as { signNext?: unknown }).signNext);

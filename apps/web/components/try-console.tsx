@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
+import { answerFormatLabel, isJsonMediaType } from "@/lib/answer-format";
 import { formatTusdm } from "@/lib/money";
 import { coerceInput, type TryField, type TryKind, type TryReceipt, type TryResult } from "@/lib/try";
 import { cardanoscanTx, readBuyEvents, type BuyEvent } from "@/lib/try-stream";
@@ -30,6 +31,8 @@ type Outcome = {
   result: TryResult;
   receipt: TryReceipt;
   body: unknown;
+  /** The answer's media type ("text/csv"), or null when the gateway sent none. */
+  contentType?: string | null;
   request: { method: string; url: string };
   at: string;
 };
@@ -486,6 +489,9 @@ function ResultCard({ outcome: o }: { outcome: Outcome }) {
       )}
       <div style={stagger(4)} className="animate-rise space-y-2">
         <p className="break-all text-caption text-graphite">{o.request.method} {o.request.url}</p>
+        {o.status === 200 && o.contentType && !isJsonMediaType(o.contentType) && (
+          <p className="text-caption text-graphite" data-testid="answer-format">{`Answer format: ${answerFormatLabel(o.contentType)} (${o.contentType})`}</p>
+        )}
         <pre className="max-h-60 overflow-auto rounded-[2px] border border-ink bg-frost p-3 text-caption leading-relaxed"><code>{typeof o.body === "string" ? o.body : JSON.stringify(o.body, null, 2)}</code></pre>
       </div>
     </div>

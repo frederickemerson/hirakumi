@@ -10,10 +10,10 @@ const RULE: RuleDefinition = {
 const CHANNEL_ID = "ab".repeat(32);
 
 /** In-memory IOU state, like the try_tokens row. */
-function memoryStore(verified = 0) {
+function memoryStore(verified = 0, rule: RuleDefinition = RULE) {
   const s = { verified, signed: 0, last: null as string | null, disputed: false };
   const store: TryEscrowStore = {
-    rule: async (hash) => (hash === ruleHash(RULE) ? RULE : null),
+    rule: async (hash) => (hash === ruleHash(rule) ? rule : null),
     countPass: async () => (s.verified += 1),
     verified: async () => s.verified,
     saveIou: async (_id, n, iou) => { if (n > s.signed) { s.signed = n; s.last = iou; } },
@@ -22,9 +22,9 @@ function memoryStore(verified = 0) {
   return { s, store };
 }
 
-function channel(lastIou: string | null = null) {
+function channel(lastIou: string | null = null, rule: RuleDefinition = RULE) {
   const key = newReceiptKey();
-  const c: TryChannel = { tryId: "try_1", channelId: CHANNEL_ID, secretKey: key.secretKey, ruleHash: ruleHash(RULE), lastIou };
+  const c: TryChannel = { tryId: "try_1", channelId: CHANNEL_ID, secretKey: key.secretKey, ruleHash: ruleHash(rule), lastIou };
   return { c, publicKey: key.publicKey };
 }
 
@@ -55,6 +55,16 @@ describe("escrowCall (Try it live on an escrow pack)", () => {
     expect(g.sent).toEqual([null]);
     expect(s.verified).toBe(1);
     expect(verifies(publicKey, s.last, 1)).toBe(true);
+  });
+
+  it("checks a text answer (CSV) against a text promise", async () => {
+    const csv: RuleDefinition = { version: 1, status: { min: 200, max: 299 }, contentType: "text/csv", schema: { type: "string", minLength: 1, pattern: "^date,usd\\r?\\n" } };
+    const { s, store } = memoryStore(0, csv);
+    const { c } = channel(null, csv);
+    const answer = (body: string) => new Response(body, { status: 200, headers: { "content-type": "text/csv; charset=utf-8", "x-hirakumi-sign-next": "1" } });
+    expect(await escrowCall(store, c, gateway(answer("date,usd\n2026-10-07,0.27\n")).send)).toMatchObject({ iouSigned: 1, disputed: false });
+    expect(s.verified).toBe(1);
+    expect(await escrowCall(store, c, gateway(answer("oops\n")).send)).toMatchObject({ iouSigned: null, disputed: true });
   });
 
   it("sends the latest IOU with the next call", async () => {

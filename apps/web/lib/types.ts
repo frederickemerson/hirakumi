@@ -20,7 +20,9 @@ export type Api = {
   sellerId: string;
   name: string;
   origin: string;
+  /** For intakeKind "samples", the ownership proof file (<base folder>/hirakumi-verify.json). */
   openapiUrl: string;
+  intakeKind: "openapi" | "samples";
   state: ApiState;
   health: Health;
   healthCheckedAt: Date | null;

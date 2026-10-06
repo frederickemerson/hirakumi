@@ -62,6 +62,24 @@ describe("TryConsole", () => {
     expect(await screen.findByText("Promise kept. One credit used.")).toBeInTheDocument();
   });
 
+  it("shows a text answer (CSV) as it came, with its format; a JSON answer shows no format line", async () => {
+    const csv = "date,usd\n2026-10-07,0.27\n";
+    const keptCsv = ok({
+      status: 200, latencyMs: 90, creditsRemaining: 95, body: csv, contentType: "text/csv",
+      result: { kind: "kept", headline: "Promise kept. One credit used.", reasons: [] },
+      receipt: { verdict: "kept", creditsLeft: 95, outputHash: HASH, receiptsUrl: "/api/try/api_1/receipts" },
+      request: { method: "GET", url: "https://gw/a/api_1/x/getPrice?symbol=ADA" },
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(kept(96)).mockResolvedValueOnce(keptCsv));
+    render(<TryConsole apiId="api_1" ops={[op]} initialPack={PACK} />);
+    await userEvent.click(screen.getByRole("button", { name: "Call it" }));
+    expect(await screen.findByText("Promise kept. One credit used.")).toBeInTheDocument();
+    expect(screen.queryByTestId("answer-format")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Call it" }));
+    expect(await screen.findByTestId("answer-format")).toHaveTextContent("Answer format: CSV (text/csv)");
+    expect(document.querySelector("pre code")?.textContent).toBe(csv);
+  });
+
   it("with a pack, calls with a credit and shows the receipt: verdict, credits left, output hash, receipts link", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(kept(96));
     vi.stubGlobal("fetch", fetchMock);

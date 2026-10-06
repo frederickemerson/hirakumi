@@ -78,6 +78,23 @@ describe(`migration ${MIGRATION}`, () => {
   });
 });
 
+describe("migration 0014_any_api_samples.sql", () => {
+  it("treats a trailing host dot as the same base, flagging a listing that only now duplicates one", async () => {
+    const { sql } = await schemaBefore("0014_any_api_samples.sql");
+    await seedApi(sql, { id: "api_plain", seller: "sel_a", origin: "https://h.com", prefix: "/t", state: "live", createdAt: "2026-10-01T00:00:00Z" });
+    await seedApi(sql, { id: "api_dot", seller: "sel_b", origin: "https://h.com.", prefix: "/t", state: "live", createdAt: "2026-10-02T00:00:00Z" });
+    expect(await migrate(sql)).toEqual(["0014_any_api_samples.sql"]);
+    const rows = await sql<{ id: string; base_origin: string; base_legacy_duplicate: boolean }[]>`
+      select id, base_origin, base_legacy_duplicate from apis order by id`;
+    expect(rows).toEqual([
+      { id: "api_dot", base_origin: "https://h.com", base_legacy_duplicate: true },
+      { id: "api_plain", base_origin: "https://h.com", base_legacy_duplicate: false },
+    ]);
+    const idx = await sql<{ indexname: string }[]>`select indexname from pg_indexes where schemaname = current_schema() and tablename = 'apis' and indexname like 'apis_active_base%' order by 1`;
+    expect(idx.map((r) => r.indexname)).toEqual(["apis_active_base_origin", "apis_active_base_uniq"]);
+  }, 30_000);
+});
+
 describe("the active-base index", () => {
   let db: TestDb;
   afterEach(() => undefined);
@@ -88,6 +105,9 @@ describe("the active-base index", () => {
     const cases: [string, string][] = [
       ["HTTPS://Price.Example.DEV", "/"], ["https://h.com:443", ""], ["http://h.com:80/", "/v1"], ["https://h.com:8443", "/v1/"],
       ["http://h.com:443", "/a/b"], ["https://h.com/", "/V1"],
+      // A trailing host dot is the same host.
+      ["https://API.Example.com.", "/t"], ["https://h.com.:443", ""], ["https://h.com..:8443", "/v1"], ["http://localhost.:4100/", "/"],
+      ["http://127.0.0.1:4100", "/"],
     ];
     let i = 0;
     for (const [origin, prefix] of cases) {
@@ -112,5 +132,8 @@ describe("the active-base index", () => {
     await db.sql`update apis set state = 'ownership_verified' where id = 'api_b'`;
     await db.sql`delete from apis where id = 'api_b'`;
     await seedApi(db.sql, { id: "api_d", seller: "sel_d", origin: "https://h.com", prefix: "/v1", state: "live" });
+    // The same host with a trailing dot is the same base.
+    await expect(seedApi(db.sql, { id: "api_e", seller: "sel_e", origin: "https://h.com.", prefix: "/v1", state: "live" }))
+      .rejects.toThrow(/apis_active_base_uniq/);
   });
 });

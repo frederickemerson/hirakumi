@@ -24,6 +24,15 @@ describe("normalizing a base", () => {
     expect(normalizeOrigin("https://h.com:8443")).toBe("https://h.com:8443");
     expect(normalizeOrigin("http://h.com:443")).toBe("http://h.com:443");
   });
+  it("drops a trailing host dot, so api.example.com. is the same API as api.example.com", () => {
+    expect(normalizeOrigin("https://api.example.com.")).toBe("https://api.example.com");
+    expect(normalizeOrigin("https://API.example.com.:443/")).toBe("https://api.example.com");
+    expect(normalizeOrigin("https://api.example.com..:8443")).toBe("https://api.example.com:8443");
+    expect(normalizeOrigin("http://127.0.0.1:4100")).toBe("http://127.0.0.1:4100");
+    expect(judgeListingBase({ origin: "https://h.com.", pathPrefix: "/t", sellerId: "sel_me" }, [listed()])).toEqual({
+      ok: false, reason: "taken_by_other", message: LISTED_BY_OTHER,
+    });
+  });
   it("makes the path a directory with one trailing slash", () => {
     expect(normalizeBasePath("")).toBe("/");
     expect(normalizeBasePath("/")).toBe("/");

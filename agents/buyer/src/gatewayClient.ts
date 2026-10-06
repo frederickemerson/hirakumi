@@ -1,10 +1,11 @@
 import { USDM_PREPROD_ASSET } from "@x402/cardano";
+import { isJsonMediaType, mediaTypeOf } from "@hirakumi/core";
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 export type PackOffer = { packId: string; calls: number; price: string; asset: string; buyUrl: string };
 export type CreditsRequired = { error: "credits_required"; packs: PackOffer[]; ruleHash: string; ruleUrl: string };
 export type CallOutcome =
-  | { kind: "ok"; body: unknown; remaining: number | null; latencyMs: number }
+  | { kind: "ok"; body: unknown; contentType: string | null; remaining: number | null; latencyMs: number }
   | { kind: "promise_not_met"; reasons: string[]; remaining: number | null; latencyMs: number }
   | { kind: "upstream_error"; status: number; reasons: string[]; remaining: number | null; latencyMs: number }
   | { kind: "credits_required"; offer: CreditsRequired }
@@ -19,6 +20,26 @@ export class NoAffordablePackError extends Error {}
 
 export function safeJson(text: string): unknown {
   try { return JSON.parse(text); } catch { return undefined; }
+}
+
+/** What paid calls ask for: APIs may answer JSON or text (CSV, XML, plain text). */
+export const ANSWER_ACCEPT = "application/json, text/*;q=0.9, */*;q=0.8";
+
+/**
+ * A paid answer as the API sent it: parsed JSON for JSON media types (or when there is no type and the text
+ * parses), else the text itself. A CSV or plain text answer is never run through JSON.parse.
+ */
+export function answerBody(text: string, contentType: string | null): unknown {
+  const mt = mediaTypeOf(contentType);
+  if (mt === "" || isJsonMediaType(mt)) return safeJson(text) ?? text;
+  return text;
+}
+
+/** One answer for a log line: text as it came (long answers cut), JSON on one line. */
+export function formatAnswer(body: unknown, max = 2000): string {
+  const s = typeof body === "string" ? body : JSON.stringify(body) ?? String(body);
+  const cut = s.length > max ? `${s.slice(0, max)}... (${s.length - max} more chars)` : s;
+  return typeof body === "string" && cut.includes("\n") ? `\n${cut}` : cut;
 }
 
 export function messageOf(json: unknown, text: string): string {
@@ -78,7 +99,7 @@ export async function callOperation(
 ): Promise<CallOutcome> {
   const url = new URL(`/a/${encodeURIComponent(a.apiId)}/x/${encodeURIComponent(a.opId)}`, a.gatewayUrl);
   for (const [k, v] of Object.entries(a.query)) url.searchParams.set(k, v);
-  const headers: Record<string, string> = { accept: "application/json" };
+  const headers: Record<string, string> = { accept: ANSWER_ACCEPT };
   if (a.token) headers.authorization = `Bearer ${a.token}`;
   const started = performance.now();
   const res = await fetchImpl(url.toString(), { method: "GET", headers });
@@ -87,7 +108,10 @@ export async function callOperation(
   const body = safeJson(text);
   const remaining = readRemaining(res);
   switch (res.status) {
-    case 200: return { kind: "ok", body: body ?? text, remaining, latencyMs };
+    case 200: {
+      const contentType = res.headers.get("content-type");
+      return { kind: "ok", body: answerBody(text, contentType), contentType, remaining, latencyMs };
+    }
     case 422: return { kind: "promise_not_met", reasons: reasonsOf(body), remaining, latencyMs };
     case 502:
     case 504: return { kind: "upstream_error", status: res.status, reasons: reasonsOf(body), remaining, latencyMs };

@@ -17,6 +17,8 @@ export function validateOpenApiUrl(raw: unknown, allowInsecure: boolean): { url:
   if (u.username || u.password) {
     throw new ValidationError("Remove the username and password from the link. Hirakumi only supports public API descriptions.");
   }
+  // "api.example.com." names the same host but is a different origin and listing base: one spelling only.
+  if (u.hostname.endsWith(".")) throw new ValidationError("Remove the dot at the end of the host name in the link.");
   // The proof is scoped to the folder the file is served from, so the link must be a plain file path:
   // a query (a proxy such as /fetch?u=...) or a route that serves any content would prove the whole host.
   if (u.search !== "") throw new ValidationError("Remove the ?query from the link. Use the plain path to your OpenAPI file.");

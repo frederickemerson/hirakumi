@@ -1,14 +1,20 @@
+import { normalizeSamplesBase, parseSampleLines, SampleError, SAMPLES_PROOF_FILE, specFromSamples } from "@hirakumi/core";
 import type pg from "pg";
 import type { Db } from "../db.js";
 import { PermanentError } from "../errors.js";
-import { apiLink, ownershipLink, reviewLink, setupLink } from "../links.js";
+import { apiLink, overviewLink, ownershipLink, reviewLink, setupLink } from "../links.js";
 import type { StructuredCall } from "../llm/claude.js";
 import { mapReplyToChoice, type Offered } from "../llm/replyChoice.js";
 import { enqueueMessage, type TaskStatus } from "../messages.js";
 import type { HumanStep } from "../humanSteps.js";
-import { parseOpenApi } from "../openapi/parse.js";
-import { findLinks, formatCommand, formatTusdm, LinkError, parseCommand, SUGGESTED_PACK, validateOpenApiUrl, type Command } from "./replies.js";
-import { apiForTask, confirmSell, createTaskApi, linkedSeller, listOps, opLine, savePrice, type ListedOp, type TaskApi } from "./sellerActions.js";
+import { describeAuthHint, parseOpenApi, type AuthHint } from "../openapi/parse.js";
+import {
+  findLinks, findSamplesIntake, formatCommand, formatTusdm, isOnlySamples, LinkError, looksLikeSecret, parseCommand, SUGGESTED_PACK, validateOpenApiUrl,
+  type Command, type SamplesIntake,
+} from "./replies.js";
+import {
+  apiAuthHint, apiForTask, confirmSell, createTaskApi, linkedSeller, listOps, opLine, savePrice, type ListedOp, type TaskApi,
+} from "./sellerActions.js";
 
 /**
  * The seller's side of a Sokosumi task. A link in the brief or a reply starts onboarding; typed replies the coworker
@@ -34,6 +40,49 @@ const SUGGESTED_PRICE = `${formatTusdm(SUGGESTED_PACK.priceMicros)} tUSDM for ${
  */
 export const OWNERSHIP_HOW =
   "add the x-hirakumi-verify line from this page at the root of your OpenAPI file, then sign once with your Cardano wallet (no payment):";
+/** Without an OpenAPI file: a small proof file in the API's base folder (@hirakumi/core SAMPLES_PROOF_FILE). */
+export const OWNERSHIP_HOW_SAMPLES =
+  `serve a file named ${SAMPLES_PROOF_FILE} in your API's base folder with the code from this page (the page shows its exact address), then sign once with your Cardano wallet (no payment):`;
+
+export const ownershipHow = (api: Pick<TaskApi, "intakeKind">) => (api.intakeKind === "samples" ? OWNERSHIP_HOW_SAMPLES : OWNERSHIP_HOW);
+
+/** Keys are added on the ownership page (sealed so only the gateway reads them), never in a comment. */
+const keyLine = (hint: AuthHint | null) =>
+  hint ? ` Your API needs a key (${describeAuthHint(hint)}): add it on the same page. Never paste it in a comment.` : "";
+
+const NO_OPENAPI_HINT = "No OpenAPI file? Reply with your API's base URL and a few example requests, one per line, like GET /price?symbol=ADA";
+
+/** Neither stored nor repeated: the comment is only answered. */
+const SECRET_WARNING =
+  "Your message looks like it has a key, token or password in it, so I didn't use or save it. Please delete that comment, and change the key if others can see this task. " +
+  "Never paste keys here.";
+
+/**
+ * Where the key form is for the API's state (apps/web): the ownership page while proving ownership, the review page
+ * after failed test calls and before publishing, the API's page once registering or live. Other pages redirect away.
+ */
+function keyFormLine(api: TaskApi | null, web: string): string {
+  const sealed = "where only the Hirakumi gateway can read it";
+  if (!api) return "You'll add your API's key on its ownership page. You'll get that page's link after you choose endpoints.";
+  switch (api.state) {
+    case "endpoints_confirmed":
+      return `Add your API's key on its ownership page, ${sealed}: ${ownershipLink(web, api.id)}`;
+    case "ownership_verified":
+      return api.failed
+        ? `Add your API's key on its review page, ${sealed}. The test calls then run again: ${reviewLink(web, api.id)}`
+        : `If the test calls need the key, you can add it on the review page, ${sealed}: ${reviewLink(web, api.id)}`;
+    case "rule_built":
+    case "priced":
+      return `Add your API's key on its review page, ${sealed}: ${reviewLink(web, api.id)}`;
+    case "registering":
+    case "live":
+      return `Add your API's key on its page, ${sealed}: ${overviewLink(web, api.id)}`;
+    default:
+      return api.failed
+        ? "You'll add your API's key on the ownership page after you start over and choose endpoints."
+        : `You'll be able to add your API's key at the ownership step, after you choose endpoints: ${ownershipLink(web, api.id)}`;
+  }
+}
 
 async function say(db: Db, task: TaskRef, key: string, body: string, o: { step?: HumanStep; status?: TaskStatus; apiId?: string | null } = {}) {
   await enqueueMessage(db, { apiId: o.apiId ?? null, taskId: task.taskId, body, taskStatus: o.status ?? null, dedupeKey: key, ...(o.step ? { step: o.step } : {}) });
@@ -41,11 +90,19 @@ async function say(db: Db, task: TaskRef, key: string, body: string, o: { step?:
 
 /** The text a brand-new task arrived with (name, description, early comments). */
 export async function handleBrief(deps: ConversationDeps, task: TaskRef, brief: string): Promise<void> {
+  if (looksLikeSecret(brief)) {
+    await say(deps.pool, task, `brief:${task.taskId}`,
+      `${SECRET_WARNING} ${keyFormLine(null, deps.webBaseUrl)} Now reply with your OpenAPI link, or your base URL and example requests, without the key.`,
+      { status: "INPUT_REQUIRED" });
+    return;
+  }
+  const samples = findSamplesIntake(brief);
+  if (samples) return handleSamples(deps, task, samples, `brief:${task.taskId}`);
   const links = findLinks(brief);
   if (links.length === 0) {
     await say(
       deps.pool, task, `setup:${task.taskId}`,
-      `Hi! I'll put your API on the agent market. Reply here with the https link to your OpenAPI file, or open this setup link and paste it there (about 3 minutes, 4 clicks): ${setupLink(deps.webBaseUrl, task.setupToken)}`,
+      `Hi! I'll put your API on the agent market. Reply here with the https link to your OpenAPI file, or open this setup link and paste it there (about 3 minutes, 4 clicks): ${setupLink(deps.webBaseUrl, task.setupToken)} ${NO_OPENAPI_HINT}.`,
       { status: "INPUT_REQUIRED" },
     );
     return;
@@ -56,10 +113,21 @@ export async function handleBrief(deps: ConversationDeps, task: TaskRef, brief: 
 /** One seller comment on a known task. */
 export async function handleReply(deps: ConversationDeps, task: TaskRef, eventId: string, text: string): Promise<void> {
   const key = `reply:${eventId}`;
-  const links = findLinks(text);
-  if (links.length) return handleLink(deps, task, links[0], key);
-
   const api = await apiForTask(deps.pool, task.taskId);
+  if (looksLikeSecret(text)) {
+    await say(deps.pool, task, key, `${SECRET_WARNING} ${keyFormLine(api, deps.webBaseUrl)}`, { apiId: api?.id ?? null });
+    return;
+  }
+  // Once an API is under way, a command wins ("price 2" with a note and a docs link under it). Example requests
+  // start over only when there is no API yet, it failed, or the reply is nothing but links and example lines.
+  const underWay = api !== null && !api.failed;
+  if (!(underWay && parseCommand(text))) {
+    const samples = findSamplesIntake(text);
+    if (samples && (!underWay || isOnlySamples(text))) return handleSamples(deps, task, samples, key);
+    const links = findLinks(text);
+    if (links.length) return handleLink(deps, task, links[0], key);
+  }
+
   const ops = api ? await listOps(deps.pool, api.id) : [];
   let cmd: Command | null = parseCommand(text);
   let understood = "";
@@ -73,12 +141,21 @@ export async function handleReply(deps: ConversationDeps, task: TaskRef, eventId
 
   if (!api) {
     await say(deps.pool, task, key,
-      `There's no API on this task yet. Reply with the https link to your OpenAPI file. If you already sent it, sign in with your wallet and paste it on the setup page: ${setupLink(deps.webBaseUrl, task.setupToken)}`,
+      `There's no API on this task yet. Reply with the https link to your OpenAPI file. If you already sent it, sign in with your wallet and paste it on the setup page: ${setupLink(deps.webBaseUrl, task.setupToken)} ${NO_OPENAPI_HINT}.`,
       { status: "INPUT_REQUIRED" });
     return;
   }
+  if (api.failed && api.failedStep === "qa" && api.state === "ownership_verified") {
+    // Ownership is proven, so starting over would lose it. A refused test call (401/403) is fixed with the key form,
+    // and saving the key there runs the test calls again.
+    await say(deps.pool, task, key,
+      `The test calls stopped at the step I described above. If your API needs a key, add it on the review page and the test calls run again: ${reviewLink(deps.webBaseUrl, api.id)} Never paste the key in a comment. ` +
+        `For any other problem, fix your API, then reply with your ${api.intakeKind === "samples" ? "base URL and example requests" : "OpenAPI link"} again to start over.`,
+      { apiId: api.id, step: "Test calls", status: "INPUT_REQUIRED" });
+    return;
+  }
   if (api.failed) {
-    await say(deps.pool, task, key, "Onboarding stopped at the step I described above. Fix it, then reply with your OpenAPI link again to start over.", { apiId: api.id, status: "INPUT_REQUIRED" });
+    await say(deps.pool, task, key, `Onboarding stopped at the step I described above. Fix it, then reply with your ${api.intakeKind === "samples" ? "base URL and example requests" : "OpenAPI link"} again to start over.`, { apiId: api.id, status: "INPUT_REQUIRED" });
     return;
   }
   if (cmd?.kind === "publish") {
@@ -95,7 +172,7 @@ export async function handleReply(deps: ConversationDeps, task: TaskRef, eventId
     }
     await say(deps.pool, task, key, `${understood}${r.message}`, { apiId: api.id, step: "Choose endpoints", status: "RUNNING" });
     await say(deps.pool, task, `${key}:ownership`,
-      `Prove you own ${api.origin}: ${OWNERSHIP_HOW} ${ownershipLink(deps.webBaseUrl, api.id)}`,
+      `Prove you own ${api.origin}: ${ownershipHow(api)} ${ownershipLink(deps.webBaseUrl, api.id)}${keyLine(await apiAuthHint(deps.pool, api.id))}`,
       { apiId: api.id, step: "Prove ownership", status: "INPUT_REQUIRED" });
     return;
   }
@@ -108,7 +185,8 @@ export async function handleReply(deps: ConversationDeps, task: TaskRef, eventId
       { apiId: api.id, step: "Write the promise", status: "INPUT_REQUIRED" });
     return;
   }
-  await say(deps.pool, task, key, helpFor(api, deps.webBaseUrl), { apiId: api.id });
+  const hint = api.state === "endpoints_confirmed" ? await apiAuthHint(deps.pool, api.id) : null;
+  await say(deps.pool, task, key, helpFor(api, deps.webBaseUrl, hint), { apiId: api.id });
 }
 
 /** What a reply may choose at this point (for the LLM mapping), or null when the coworker asked for nothing. */
@@ -120,15 +198,15 @@ function offeredFor(api: TaskApi, ops: ListedOp[]): Offered | null {
   return null;
 }
 
-function helpFor(api: TaskApi, web: string): string {
+function helpFor(api: TaskApi, web: string, hint: AuthHint | null): string {
   switch (api.state) {
     case "intake":
     case "parsed":
-      return "I'm still reading your OpenAPI file. I'll post here as soon as it's done.";
+      return `I'm still reading your ${api.intakeKind === "samples" ? "example requests" : "OpenAPI file"}. I'll post here as soon as it's done.`;
     case "described":
       return "Choose the endpoints to sell: reply `sell 1` with the numbers from my list (for example `sell 1 2`).";
     case "endpoints_confirmed":
-      return `Next, prove you own the API: ${OWNERSHIP_HOW} ${ownershipLink(web, api.id)} (To change the endpoints first, reply \`sell\` with new numbers.)`;
+      return `Next, prove you own the API: ${ownershipHow(api)} ${ownershipLink(web, api.id)}${keyLine(hint)} (To change the endpoints first, reply \`sell\` with new numbers.)`;
     case "ownership_verified":
       return "Test calls are running. I'll post the promise and a suggested price here when they're done.";
     case "rule_built":
@@ -154,6 +232,21 @@ export function chooseEndpointsPrompt(ops: ListedOp[], sellable: number, web: st
   ].join("\n");
 }
 
+/** What the seller sent to start onboarding: an OpenAPI link, or (any API) a base URL and example requests. */
+type Intake = {
+  name: string;
+  origin: string;
+  /** The OpenAPI file, or for samples the ownership proof file in the base folder. */
+  openapiUrl: string;
+  samples?: { base: string; lines: string };
+  /** "your example requests for https://…" or the link: what "Reading … now" and "I couldn't read …" name. */
+  label: string;
+  specText: () => Promise<string>;
+  /** What to paste on the setup page, and how to retry after an error. */
+  setupHint: string;
+  retryHint: string;
+};
+
 /** An OpenAPI link from the brief or a reply: start onboarding (linked seller) or read it and ask for the sign-in. */
 async function handleLink(deps: ConversationDeps, task: TaskRef, raw: string, key: string): Promise<void> {
   let link: { url: string; origin: string; hostname: string };
@@ -164,6 +257,54 @@ async function handleLink(deps: ConversationDeps, task: TaskRef, raw: string, ke
     await say(deps.pool, task, key, `${e.message} Reply with the public https link to your OpenAPI file.`, { step: "Read your file", status: "INPUT_REQUIRED" });
     return;
   }
+  await startIntake(deps, task, key, {
+    name: link.hostname,
+    origin: link.origin,
+    openapiUrl: link.url,
+    label: link.url,
+    // First time: read the file now (SSRF-safe fetch).
+    specText: () => deps.fetchSpec(link.url),
+    setupHint: "paste the same link on this setup page",
+    retryHint: `Reply with the corrected link to try again. ${NO_OPENAPI_HINT}.`,
+  });
+}
+
+/**
+ * A base URL and example requests (no OpenAPI file): checked here with the same rules as the setup page. Nothing
+ * is fetched: the endpoints come from the lines themselves.
+ */
+async function handleSamples(deps: ConversationDeps, task: TaskRef, intake: SamplesIntake, key: string): Promise<void> {
+  if ("choices" in intake) {
+    await say(deps.pool, task, key,
+      `I found more than one link: ${intake.choices.join(" and ")}. Which one is your API's base URL? ` +
+        "Reply with just that link, then your example requests, one per line.",
+      { step: "Read your file", status: "INPUT_REQUIRED" });
+    return;
+  }
+  let base: ReturnType<typeof normalizeSamplesBase>;
+  let samples: ReturnType<typeof parseSampleLines>;
+  try {
+    base = normalizeSamplesBase(intake.base, deps.allowInsecure);
+    samples = parseSampleLines(intake.lines);
+  } catch (e) {
+    if (!(e instanceof SampleError)) throw e;
+    await say(deps.pool, task, key, `${e.message} Reply with your API's base URL and example requests, one per line, for example GET /price?symbol=ADA`,
+      { step: "Read your file", status: "INPUT_REQUIRED" });
+    return;
+  }
+  await startIntake(deps, task, key, {
+    name: base.hostname,
+    origin: base.origin,
+    openapiUrl: base.proofUrl,
+    samples: { base: base.base, lines: intake.lines },
+    label: `your example requests for ${base.base}`,
+    specText: async () => JSON.stringify(specFromSamples({ title: base.hostname, base: base.base, samples })),
+    setupHint: `choose "I don't" (no OpenAPI file) on this setup page and paste the same base URL and example requests`,
+    retryHint: "Reply with the corrected base URL and example requests to try again.",
+  });
+}
+
+async function startIntake(deps: ConversationDeps, task: TaskRef, key: string, intake: Intake): Promise<void> {
   const existing = await apiForTask(deps.pool, task.taskId);
   if (existing && !existing.failed) {
     await say(deps.pool, task, key,
@@ -174,26 +315,31 @@ async function handleLink(deps: ConversationDeps, task: TaskRef, raw: string, ke
   const sellerId = await linkedSeller(deps.pool, task.sokosumiUserId);
   if (sellerId) {
     // This Sokosumi account signed in with its wallet on an earlier setup link, so the API can start right here.
-    const apiId = await createTaskApi(deps.pool, { sellerId, taskId: task.taskId, name: link.hostname, origin: link.origin, openapiUrl: link.url });
-    await say(deps.pool, task, key, `Got your link. Reading ${link.url} now.`, { apiId, step: "Read your file", status: "RUNNING" });
+    const apiId = await createTaskApi(deps.pool, {
+      sellerId, taskId: task.taskId, name: intake.name, origin: intake.origin, openapiUrl: intake.openapiUrl,
+      ...(intake.samples ? { samples: intake.samples } : {}),
+    });
+    await say(deps.pool, task, key, `Got your ${intake.samples ? "example requests" : "link"}. Reading ${intake.label} now.`, { apiId, step: "Read your file", status: "RUNNING" });
     return;
   }
-  // First time: read the file now (SSRF-safe fetch), and ask for the one sign-in that ties the task to a wallet.
+  // First time: read it now, and ask for the one sign-in that ties the task to a wallet.
   let summary: string;
   try {
-    const parsed = await parseOpenApi(await deps.fetchSpec(link.url));
-    if (parsed.operations.length === 0) throw new PermanentError(`Your OpenAPI file has no endpoints we can sell yet${parsed.skipped.length ? ` (${parsed.skipped.map((s) => `${s.method} ${s.path}: ${s.reason}`).join("; ")})` : ""}.`);
+    const parsed = await parseOpenApi(await intake.specText());
+    const what = intake.samples ? "Your example requests have" : "Your OpenAPI file has";
+    if (parsed.operations.length === 0) throw new PermanentError(`${what} no endpoints we can sell yet${parsed.skipped.length ? ` (${parsed.skipped.map((s) => `${s.method} ${s.path}: ${s.reason}`).join("; ")})` : ""}.`);
     const list = parsed.operations.map((o, i) => `${i + 1}. ${o.method.toUpperCase()} ${o.path} (${o.opId})${o.llm.summary ? `: ${o.llm.summary}` : ""}`);
     summary = [
-      `I read ${parsed.title || link.hostname} and found ${parsed.operations.length} endpoints${parsed.skipped.length ? ` (I skipped ${parsed.skipped.length})` : ""}:`,
+      `I read ${intake.samples ? intake.label : parsed.title || intake.name} and found ${parsed.operations.length} endpoints${parsed.skipped.length ? ` (I skipped ${parsed.skipped.length})` : ""}:`,
       ...list,
       `Suggested price: ${SUGGESTED_PRICE}. I write the promise (what a good answer looks like) from real test calls, which run after you prove you own the API.`,
-      `Next, sign in with your Cardano wallet (one signature, no payment) and paste the same link on this setup page: ${setupLink(deps.webBaseUrl, task.setupToken)}`,
+      ...(parsed.authHint ? [`Your API needs a key (${describeAuthHint(parsed.authHint)}). You'll add it on the ownership page later. Never paste it in a comment.`] : []),
+      `Next, sign in with your Cardano wallet (one signature, no payment) and ${intake.setupHint}: ${setupLink(deps.webBaseUrl, task.setupToken)}`,
       "After that, everything except proving ownership and approving the publish happens here in this task.",
     ].join("\n");
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    await say(deps.pool, task, key, `I couldn't read ${link.url}: ${msg} Reply with the corrected link to try again.`, { step: "Read your file", status: "INPUT_REQUIRED" });
+    await say(deps.pool, task, key, `I couldn't read ${intake.label}: ${msg} ${intake.retryHint}`, { step: "Read your file", status: "INPUT_REQUIRED" });
     return;
   }
   await say(deps.pool, task, key, summary, { step: "Read your file", status: "INPUT_REQUIRED" });

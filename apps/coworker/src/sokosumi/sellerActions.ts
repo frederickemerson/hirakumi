@@ -1,6 +1,7 @@
 import { newId } from "@hirakumi/core";
 import type pg from "pg";
 import type { Db } from "../db.js";
+import type { AuthHint } from "../openapi/parse.js";
 import { withTx } from "../db.js";
 import { formatTusdm, MIN_PRICE_MICROS, SUGGESTED_PACK, tusdmToMicros } from "./replies.js";
 
@@ -10,15 +11,22 @@ import { formatTusdm, MIN_PRICE_MICROS, SUGGESTED_PACK, tusdmToMicros } from "./
  * it needs the seller's wallet.
  */
 
-export type TaskApi = { id: string; name: string; state: string; origin: string; failed: boolean };
+/**
+ * intakeKind: 'openapi' (the seller gave an OpenAPI link) or 'samples' (a base URL and example requests).
+ * failedStep: the step that failed for good, when `failed`.
+ */
+export type TaskApi = {
+  id: string; name: string; state: string; origin: string; failed: boolean; failedStep: string | null; intakeKind: "openapi" | "samples";
+};
 export type ListedOp = { ref: string; id: string; opId: string; method: string; path: string; description: string | null; sideEffectsLikely: boolean };
 export type ActionResult = { ok: true; message: string } | { ok: false; error: string };
 
 /** The task's API: the newest one that isn't retired. `failed` = a step failed for good (a new link may restart). */
 export async function apiForTask(db: Db, taskId: string): Promise<TaskApi | null> {
   const { rows } = await db.query<TaskApi>(
-    `select id, name, state, origin,
-            exists (select 1 from onboard_steps s where s.api_id = apis.id and s.status = 'failed') as failed
+    `select id, name, state, origin, intake_kind as "intakeKind",
+            exists (select 1 from onboard_steps s where s.api_id = apis.id and s.status = 'failed') as failed,
+            (select s.step from onboard_steps s where s.api_id = apis.id and s.status = 'failed' order by s.updated_at desc limit 1) as "failedStep"
      from apis where sokosumi_task_id = $1 and state <> 'retired' order by created_at desc limit 1`,
     [taskId],
   );
@@ -127,12 +135,26 @@ export async function linkedSeller(db: Db, sokosumiUserId: string): Promise<stri
   return rows.length === 1 ? rows[0].id : null;
 }
 
-/** Creates the task's API for a linked seller; the driver then reads and describes it. */
-export async function createTaskApi(db: Db, a: { sellerId: string; taskId: string; name: string; origin: string; openapiUrl: string }): Promise<string> {
+/**
+ * Creates the task's API for a linked seller; the driver then reads and describes it. With samples (any API, no
+ * OpenAPI file), openapiUrl is the ownership proof file in the base folder (@hirakumi/core normalizeSamplesBase).
+ */
+export async function createTaskApi(
+  db: Db,
+  a: { sellerId: string; taskId: string; name: string; origin: string; openapiUrl: string; samples?: { base: string; lines: string } },
+): Promise<string> {
   const id = newId("api");
   await db.query(
-    `insert into apis (id, seller_id, name, origin, openapi_url, sokosumi_task_id) values ($1, $2, $3, $4, $5, $6)`,
-    [id, a.sellerId, a.name.slice(0, 80), a.origin, a.openapiUrl, a.taskId],
+    `insert into apis (id, seller_id, name, origin, openapi_url, sokosumi_task_id, intake_kind, samples) values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)`,
+    [id, a.sellerId, a.name.slice(0, 80), a.origin, a.openapiUrl, a.taskId, a.samples ? "samples" : "openapi", a.samples ? JSON.stringify(a.samples) : null],
   );
   return id;
+}
+
+/** Where the API's key goes (the parse step's authHint), or null when it needs none or was not read yet. */
+export async function apiAuthHint(db: Db, apiId: string): Promise<AuthHint | null> {
+  const { rows } = await db.query<{ hint: AuthHint | null }>(
+    `select output->'authHint' as hint from onboard_steps where api_id = $1 and step = 'parse'`, [apiId]);
+  const h = rows[0]?.hint;
+  return h && typeof h === "object" && (h.in === "header" || h.in === "query") && typeof h.name === "string" ? h : null;
 }

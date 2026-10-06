@@ -1,7 +1,7 @@
 import SwaggerParser from "@apidevtools/swagger-parser";
 import type { OpenAPI } from "openapi-types";
 import YAML, { YAMLParseError } from "yaml";
-import { firstServerUrl, unsafePathReason } from "@hirakumi/core";
+import { firstServerUrl, unsafePathReason, UpstreamAuthError, validateUpstreamAuth } from "@hirakumi/core";
 import { PermanentError } from "../errors.js";
 
 export class OpenApiError extends PermanentError {}
@@ -21,10 +21,23 @@ export type OpForLlm = {
   description: string | null;
   parameters: { name: string; in: string; description: string | null }[];
 };
-export type ParsedOperation = { opId: string; method: HttpMethod; path: string; inputSchema: InputSchema; llm: OpForLlm };
+/** needsKey: the operation is only callable with the API's key (the gateway adds it, see AuthHint). */
+export type ParsedOperation = { opId: string; method: HttpMethod; path: string; inputSchema: InputSchema; llm: OpForLlm; needsKey: boolean };
 export type SkippedOperation = { method: HttpMethod; path: string; reason: string };
+/**
+ * Where the API reads its key, from the file's security schemes, for the seller's key form (onboard_steps
+ * parse output `authHint`). prefix goes before the key in the value, e.g. "Bearer " for http bearer.
+ * Hirakumi keeps one key per API, so this is the scheme most operations use.
+ */
+export type AuthHint = { in: "header" | "query"; name: string; prefix?: string };
 /** serverUrl = servers[0].url with {variables} filled from their defaults, or null when the file has no servers. */
-export type ParseResult = { title: string; serverUrl: string | null; operations: ParsedOperation[]; skipped: SkippedOperation[] };
+export type ParseResult = {
+  title: string;
+  serverUrl: string | null;
+  operations: ParsedOperation[];
+  skipped: SkippedOperation[];
+  authHint: AuthHint | null;
+};
 
 type Json = Record<string, unknown>;
 type Param = { name: string; in: string; required?: boolean; description?: string; schema?: Json; example?: unknown; examples?: unknown };
@@ -83,10 +96,17 @@ function mergeParams(pathLevel: unknown, opLevel: unknown): Param[] {
   return [...byKey.values()];
 }
 
-function buildInputSchema(params: Param[], requestBody: unknown): { schema: InputSchema } | { reason: string } {
+/** True when a declared parameter is where the gateway puts the API's key: it is not a buyer input. */
+export function isAuthParam(p: { name: string; in: string }, hint: AuthHint | null): boolean {
+  if (!hint || p.in !== hint.in) return false;
+  return hint.in === "header" ? p.name.toLowerCase() === hint.name.toLowerCase() : p.name === hint.name;
+}
+
+function buildInputSchema(params: Param[], requestBody: unknown, hint: AuthHint | null): { schema: InputSchema } | { reason: string } {
   const properties: Record<string, Json> = {};
   const required: string[] = [];
   for (const p of params) {
+    if (isAuthParam(p, hint)) continue;
     if (p.in === "header" || p.in === "cookie") {
       if (p.required) return { reason: `needs the ${p.in} "${p.name}" (not supported yet)` };
       continue;
@@ -109,10 +129,79 @@ function buildInputSchema(params: Param[], requestBody: unknown): { schema: Inpu
   return { schema };
 }
 
-function requiresAuth(op: Json, doc: Json): boolean {
+type AuthNeed = { kind: "none" } | { kind: "key"; options: AuthHint[] } | { kind: "unsupported"; reason: string };
+
+/** One security scheme as a key Hirakumi can supply, or the reason it can't (same name rules as the seller's key form). */
+function schemeHint(scheme: unknown): AuthHint | string {
+  if (!isRecord(scheme)) return "uses a security scheme the file doesn't define";
+  if (scheme.type === "apiKey") {
+    if (scheme.in === "cookie") return "needs a key in a cookie (not supported yet)";
+    if ((scheme.in !== "header" && scheme.in !== "query") || typeof scheme.name !== "string") return "has an apiKey scheme without a header or query name";
+    try {
+      validateUpstreamAuth({ in: scheme.in, name: scheme.name, value: "x".repeat(16) });
+    } catch (e) {
+      if (e instanceof UpstreamAuthError) return `needs a key Hirakumi can't send: ${e.message}`;
+      throw e;
+    }
+    return { in: scheme.in, name: scheme.name.trim() };
+  }
+  if (scheme.type === "http") {
+    const name = typeof scheme.scheme === "string" ? scheme.scheme.toLowerCase() : "";
+    if (name === "bearer") return { in: "header", name: "Authorization", prefix: "Bearer " };
+    if (name === "basic") return "needs HTTP basic sign-in (not supported yet)";
+    return `needs HTTP ${name || "unknown"} sign-in (not supported yet)`;
+  }
+  if (scheme.type === "oauth2") return "needs OAuth 2 sign-in (not supported yet)";
+  if (scheme.type === "openIdConnect") return "needs OpenID Connect sign-in (not supported yet)";
+  if (scheme.type === "mutualTLS") return "needs a client certificate (not supported yet)";
+  return "uses a security scheme Hirakumi doesn't know (not supported yet)";
+}
+
+/** An operation's security: none (or optional), one key Hirakumi can add (any of `options`), or unsupported. */
+function authNeed(op: Json, doc: Json): AuthNeed {
   const security = op.security ?? doc.security;
-  if (!Array.isArray(security) || security.length === 0) return false;
-  return !security.some((s) => isRecord(s) && Object.keys(s).length === 0);
+  if (!Array.isArray(security) || security.length === 0) return { kind: "none" };
+  if (security.some((s) => isRecord(s) && Object.keys(s).length === 0)) return { kind: "none" };
+  const components = isRecord(doc.components) ? doc.components : {};
+  const schemes = isRecord(components.securitySchemes) ? components.securitySchemes : {};
+  const options: AuthHint[] = [];
+  const reasons: string[] = [];
+  for (const req of security) {
+    if (!isRecord(req)) continue;
+    const names = Object.keys(req);
+    if (names.length > 1) {
+      reasons.push("needs two or more keys at once (not supported yet)");
+      continue;
+    }
+    const h = schemeHint(schemes[names[0]]);
+    if (typeof h === "string") reasons.push(h);
+    else options.push(h);
+  }
+  if (options.length) return { kind: "key", options };
+  return { kind: "unsupported", reason: reasons[0] ?? "needs authentication (not supported yet)" };
+}
+
+const sameHint = (a: AuthHint, b: AuthHint) => isAuthParam(a, b) && (a.prefix ?? "") === (b.prefix ?? "");
+
+/** The key most operations accept (the first seen wins a tie). */
+function pickAuthHint(needs: AuthNeed[]): AuthHint | null {
+  const votes: { hint: AuthHint; count: number }[] = [];
+  for (const need of needs) {
+    if (need.kind !== "key") continue;
+    for (const option of uniqueValues(need.options)) {
+      const v = votes.find((x) => sameHint(x.hint, option));
+      if (v) v.count += 1;
+      else votes.push({ hint: option, count: 1 });
+    }
+  }
+  return votes.reduce<{ hint: AuthHint; count: number } | null>((best, v) => (!best || v.count > best.count ? v : best), null)?.hint ?? null;
+}
+
+/** "the X-API-Key header", "a bearer token in the Authorization header", "the api_key query parameter". */
+export function describeAuthHint(h: AuthHint): string {
+  if (h.in === "query") return `the ${h.name} query parameter`;
+  if (h.prefix?.trim().toLowerCase() === "bearer") return `a bearer token in the ${h.name} header`;
+  return `the ${h.name} header`;
 }
 
 /**
@@ -146,50 +235,62 @@ export async function parseOpenApi(text: string): Promise<ParseResult> {
   const operations: ParsedOperation[] = [];
   const skipped: SkippedOperation[] = [];
   const seen = new Set<string>();
+  const entries: { path: string; item: Json; method: HttpMethod; op: Json; need: AuthNeed }[] = [];
   for (const [path, item] of Object.entries(isRecord(doc.paths) ? doc.paths : {})) {
     if (!isRecord(item)) continue;
     for (const m of METHODS) {
       const op = item[m];
-      if (!isRecord(op)) continue;
-      const method = m.toUpperCase() as HttpMethod;
-      // The proof covers one folder; a path like /../other would make the upstream URL leave it.
-      const unsafe = unsafePathReason(path);
-      if (unsafe) {
-        skipped.push({ method, path, reason: `${unsafe}, which could reach outside your API's folder` });
-        continue;
-      }
-      if (requiresAuth(op, doc)) {
-        skipped.push({ method, path, reason: "needs authentication (not supported yet)" });
-        continue;
-      }
-      const params = mergeParams(item.parameters, op.parameters);
-      const built = buildInputSchema(params, op.requestBody);
-      if ("reason" in built) {
-        skipped.push({ method, path, reason: built.reason });
-        continue;
-      }
-      const opId = toOpId(op.operationId, method, path);
-      if (seen.has(opId)) {
-        skipped.push({ method, path, reason: `duplicate operation id "${opId}"` });
-        continue;
-      }
-      seen.add(opId);
-      operations.push({
+      if (isRecord(op)) entries.push({ path, item, method: m.toUpperCase() as HttpMethod, op, need: authNeed(op, doc) });
+    }
+  }
+  // The proof covers one folder; a path like /../other would make the upstream URL leave it.
+  const safe = entries.filter((e) => !unsafePathReason(e.path));
+  const authHint = pickAuthHint(safe.map((e) => e.need));
+  for (const { path, item, method, op, need } of entries) {
+    const unsafe = unsafePathReason(path);
+    if (unsafe) {
+      skipped.push({ method, path, reason: `${unsafe}, which could reach outside your API's folder` });
+      continue;
+    }
+    if (need.kind === "unsupported") {
+      skipped.push({ method, path, reason: need.reason });
+      continue;
+    }
+    if (need.kind === "key" && !need.options.some((o) => authHint && sameHint(o, authHint))) {
+      skipped.push({ method, path, reason: `needs a different key (${describeAuthHint(need.options[0])}) than your other endpoints, and Hirakumi keeps one key per API` });
+      continue;
+    }
+    const params = mergeParams(item.parameters, op.parameters);
+    const built = buildInputSchema(params, op.requestBody, authHint);
+    if ("reason" in built) {
+      skipped.push({ method, path, reason: built.reason });
+      continue;
+    }
+    const opId = toOpId(op.operationId, method, path);
+    if (seen.has(opId)) {
+      skipped.push({ method, path, reason: `duplicate operation id "${opId}"` });
+      continue;
+    }
+    seen.add(opId);
+    const visible = params.filter((p) => !isAuthParam(p, authHint));
+    operations.push({
+      opId,
+      method,
+      path,
+      inputSchema: built.schema,
+      // A declared key parameter (with no security scheme) also means the gateway must add the key.
+      needsKey: need.kind === "key" || visible.length !== params.length,
+      llm: {
         opId,
         method,
         path,
-        inputSchema: built.schema,
-        llm: {
-          opId,
-          method,
-          path,
-          summary: clip(op.summary),
-          description: clip(op.description),
-          parameters: params.map((p) => ({ name: p.name, in: p.in, description: clip(p.description) })),
-        },
-      });
-    }
+        summary: clip(op.summary),
+        description: clip(op.description),
+        parameters: visible.map((p) => ({ name: p.name, in: p.in, description: clip(p.description) })),
+      },
+    });
   }
   const info = isRecord(doc.info) ? doc.info : {};
-  return { title: clip(info.title) ?? "Untitled API", serverUrl: firstServerUrl(doc.servers), operations, skipped };
+  const used = operations.some((o) => o.needsKey) ? authHint : null;
+  return { title: clip(info.title) ?? "Untitled API", serverUrl: firstServerUrl(doc.servers), operations, skipped, authHint: used };
 }

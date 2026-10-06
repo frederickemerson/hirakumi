@@ -24,7 +24,7 @@ describe("one API, one listing: the parse step tells the seller as soon as it le
     const msgs = await messagesFor(db.pool, apiId);
     expect(msgs).toHaveLength(1);
     expect(msgs[0]).toMatchObject({ task_id: "tsk_dup", task_status: "INPUT_REQUIRED" });
-    expect(msgs[0].body).toBe(`Step 1 of 7, Read your file: I had to stop at "reading your OpenAPI file": ${TAKEN}`);
+    expect(msgs[0].body).toBe(`Step 1 of 7, Read your file: I had to stop at "reading your API": ${TAKEN}`);
     expect(msgs[0].body).not.toMatch(/Secret Prices/);
   });
 

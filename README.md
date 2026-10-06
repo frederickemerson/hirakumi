@@ -2,13 +2,20 @@
 
 # Hirakumi
 
-Turn any read-only OpenAPI API into a paid supplier for AI agents on Cardano. Buyers pay once for a pack of calls with x402, and a credit is used **only when the response passes the published promise**. Built for TOKEN2049 Origins, Cardano "Agentic Commerce" track. Preprod only.
+Turn any read-only API into a paid supplier for AI agents on Cardano. Buyers pay once for a pack of calls with x402, and a credit is used **only when the response passes the published promise**. Built for TOKEN2049 Origins, Cardano "Agentic Commerce" track. Preprod only.
 
 - Live dashboard: https://hirakumi.vercel.app
 - Try a live API (real preprod credits): https://hirakumi.vercel.app/p/api_eejiaioyqt/try
 - Gateway (x402 + MIP-003): https://52-70-235-103.sslip.io
 - Demo seller API: https://price.52-70-235-103.sslip.io/openapi.json
 - Video, slides, write-up: see `docs/submission/`
+
+## What APIs it takes
+- **With an OpenAPI file:** paste its link. Hirakumi reads the endpoints from it.
+- **Without one:** give the base URL and a few example requests, one per line, for example `GET /price?symbol=ADA`, `GET /coins/{id=cardano}?days?=7` (a path parameter and an optional query) or `POST /search {"q": "ada"}` (a JSON body). Hirakumi builds an OpenAPI 3.1 file from them (`packages/core/src/samples.ts`), and every value is also an example for the test calls. This is on the setup page of the website (choose "I don't"), or in a Sokosumi task comment.
+- **APIs that need a key:** the seller adds it on the ownership page, as a header (for example `Authorization: Bearer …`) or a query parameter. The web app seals it with the gateway's public key (X25519, bound to the API's id), so only the gateway can read it, and the page never shows it again (at most its last 4 characters). The gateway adds the key only after the call's URL is checked to be inside the proven origin and folder, and it withholds any answer that contains the key.
+- **Answers:** JSON is checked against a JSON Schema as before. Text answers (CSV, XML, plain text, YAML) are checked as text: not empty, and starting with the same first line (for example a CSV header) when every test answer did. Binary answers (images, PDF, files) are not supported.
+- Every endpoint must be read-only. Endpoints that look like they may change data are sold only after the seller confirms they change nothing.
 
 ## Who you trust, in each payment mode
 With `PACK_MODE=hybrid` (the default) the gateway picks one of the first two per purchase: escrow for a pack of 2 tUSDM or more, a seller under 99% uptime over 7 days, or a listing under 7 days old; direct otherwise, or when the buyer sends no IOU key. The 402 says which and why in `extra.settlement`. A buyer that sends `X-Hirakumi-Settlement: escrow` always gets escrow, or a 503 if this pack can't be escrowed (never a quiet direct offer); the buyer agent does this with `REQUIRE_ESCROW=1`.
@@ -30,7 +37,7 @@ The pass/fail check runs on our gateway in every mode, against a rule whose hash
 - `agents/buyer/src/payClient.ts`: buyer agent using `@x402/fetch` `wrapFetchWithPayment`, `toClientCardanoSigner`, spend controls for `USDM_PREPROD_ASSET`
 - `agents/buyer/src/packBuyer.ts`, `agents/buyer/src/cli/pack.ts`: the pack-buyer demo agent
 - `apps/web/`: CIP-30 wallet signature for login and ownership (any CIP-30 wallet: Lace, Eternl, …); public status page and the try-it-live page
-  - Ownership proof is folder-scoped: the seller adds `x-hirakumi-verify: "<code>"` at the root of the OpenAPI file at their `openapi_url` (same origin as the API, no `?query` or `#fragment`, no redirects), which covers only APIs in that file's folder or below it.
+  - Ownership proof is folder-scoped: the seller adds `x-hirakumi-verify: "<code>"` at the root of the OpenAPI file at their `openapi_url` (same origin as the API, no `?query` or `#fragment`, no redirects), which covers only APIs in that file's folder or below it. A seller without an OpenAPI file serves `{"x-hirakumi-verify": "<code>"}` as `hirakumi-verify.json` in the base URL's folder, and the gateway checks it the same way, with the same origin and folder rules.
 
 ### Masumi
 - `packages/masumi/`: payment-service and registry client (registration, payment requests, result submission, purchases)
@@ -52,14 +59,16 @@ Requirements: Node 22+, pnpm, Docker. A funded preprod wallet (tADA from https:/
 ```bash
 pnpm install
 cp .env.example .env            # fill in the values; see comments
+pnpm --filter @hirakumi/gateway upstream-auth-keys   # UPSTREAM_AUTH_PUBLIC_KEY for the web app, UPSTREAM_AUTH_PRIVATE_KEY for the gateway only
 pnpm test                       # all workspace tests
 docker compose up -d            # postgres, payment-service, gateway, coworker, caddy
 pnpm --filter @hirakumi/price-api dev                                   # demo seller on :4100
 pnpm --filter @hirakumi/buyer run pack -- --api <apiId> --calls 10      # buy a pack, call with credits ("run": plain `pack` is pnpm's own command)
 pnpm --filter @hirakumi/buyer run escrow -- --api <apiId>                # one escrow job
 ```
+For APIs other than the demo, `pack` takes `--op <opId>`, and both take `--query name=value` (repeatable). Text answers (CSV, XML) are printed as they came.
 ### Sell an API from a Sokosumi task
-Assign a task to the Hirakumi coworker and put your OpenAPI link in its description (or reply with it). The coworker reads the file through the SSRF-safe fetch and posts each of the web's 7 steps as a task comment. Replies it understands: `sell 1 2` (choose endpoints; add `readonly` for endpoints that may change data), `price 2` or `price 3.5 for 200 calls` (pack price, before publishing). Free text is mapped to the offered choice by one structured LLM step and then validated the same way. Signing in, proving ownership and approving the publish need your wallet, so for those it posts one deep link to that exact web step; a `publish` comment is refused. A first-time seller signs in once through the setup link; after that the Sokosumi account is linked to the wallet and new tasks start at once. When the API is Live the task gets the status page, try page and registry token links and is set `COMPLETED`.
+Assign a task to the Hirakumi coworker and put your OpenAPI link in its description (or reply with it). An API without an OpenAPI file works too: put its base URL and the example requests, one per line, in the description or a reply. A linked seller's API starts from them at once; a first-time seller gets the endpoint list and pastes the same lines on the website's setup page. The coworker reads the file through the SSRF-safe fetch and posts each of the web's 7 steps as a task comment. Replies it understands: `sell 1 2` (choose endpoints; add `readonly` for endpoints that may change data), `price 2` or `price 3.5 for 200 calls` (pack price, before publishing). Free text is mapped to the offered choice by one structured LLM step and then validated the same way. Signing in, proving ownership and approving the publish need your wallet, so for those it posts one deep link to that exact web step; a `publish` comment is refused. A first-time seller signs in once through the setup link; after that the Sokosumi account is linked to the wallet and new tasks start at once. When the API is Live the task gets the status page, try page and registry token links and is set `COMPLETED`.
 
 Break the demo seller (needs `ADMIN_TOKEN`):
 ```bash

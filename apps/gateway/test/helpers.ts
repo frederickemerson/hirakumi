@@ -8,15 +8,18 @@ import type { Sql } from "@hirakumi/db";
 import type { GatewayConfig } from "../src/config";
 import type { MasumiPort, PaymentRequestResult, PaymentState } from "../src/masumi-port";
 
-export type StubMode = "ok" | "empty" | "stale" | "error500" | "slow" | "html";
+/** echo: a passing price answer that also repeats the request URL and headers, as a careless API might. */
+export type StubMode = "ok" | "empty" | "stale" | "error500" | "slow" | "html" | "echo";
 export type StubUpstream = {
   origin: string;
   setMode(m: StubMode): void;
-  /** Serve `body` at `path` (any path but /price), e.g. the seller's OpenAPI file. */
-  setFile(path: string, body: string, opts?: { status?: number; contentType?: string; headers?: Record<string, string> }): void;
+  /** Serve `body` at `path` (any path but /price), e.g. the seller's OpenAPI file. A Buffer is sent byte for byte. */
+  setFile(path: string, body: string | Buffer, opts?: { status?: number; contentType?: string; headers?: Record<string, string> }): void;
   fileHits(path: string): number;
   hits(): number;
   lastHeaders(): http.IncomingHttpHeaders | null;
+  /** Path and query of the last request, to any path. */
+  lastUrl(): string | null;
   close(): Promise<void>;
 };
 
@@ -25,10 +28,12 @@ export async function startStubUpstream(): Promise<StubUpstream> {
   let mode: StubMode = "ok";
   let hits = 0;
   let last: http.IncomingHttpHeaders | null = null;
-  const files = new Map<string, { body: string; status: number; headers: Record<string, string> }>();
+  let lastUrl: string | null = null;
+  const files = new Map<string, { body: string | Buffer; status: number; headers: Record<string, string> }>();
   const fileHits = new Map<string, number>();
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://stub");
+    lastUrl = req.url ?? null;
     const file = files.get(url.pathname);
     if (file) {
       fileHits.set(url.pathname, (fileHits.get(url.pathname) ?? 0) + 1);
@@ -47,6 +52,9 @@ export async function startStubUpstream(): Promise<StubUpstream> {
         res.end(JSON.stringify({ symbol, price: 0.42, updatedAt: new Date(Date.now() - 3_600_000).toISOString() })); return;
       case "error500": res.writeHead(500, { "content-type": "application/json" }); res.end('{"error":"boom"}'); return;
       case "html": res.writeHead(200, { "content-type": "text/html" }); res.end("<html></html>"); return;
+      case "echo":
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ...JSON.parse(ok()), echo: { url: req.url, headers: req.headers } })); return;
       case "slow": setTimeout(() => { res.writeHead(200, { "content-type": "application/json" }); res.end(ok()); }, 1500); return;
     }
   });
@@ -61,6 +69,7 @@ export async function startStubUpstream(): Promise<StubUpstream> {
     fileHits: (path) => fileHits.get(path) ?? 0,
     hits: () => hits,
     lastHeaders: () => last,
+    lastUrl: () => lastUrl,
     close: () => new Promise((r) => { server.closeAllConnections(); server.close(() => r()); }),
   };
 }
@@ -184,7 +193,7 @@ export function testConfig(over: Partial<GatewayConfig> = {}): GatewayConfig {
     facilitatorUrl: "http://facilitator.invalid", databaseUrl: "unused", probeIntervalMs: 10_000,
     thresholds: { failsToDown: 2, passesToHeal: 2 }, l1Confirmations: 0, upstreamTimeoutMs: 500,
     escrow: { payByMs: 10 * 60_000, submitResultMs: 20 * 60_000, unit: "16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d" }, blockfrostProjectId: null, masumi: null,
-    packMode: "direct", packEscrow: null, settlement: { ...DEFAULT_SETTLEMENT_POLICY }, startJobTrustedCidrs: [], tryLiveApis: [],
+    packMode: "direct", packEscrow: null, settlement: { ...DEFAULT_SETTLEMENT_POLICY }, startJobTrustedCidrs: [], tryLiveApis: [], upstreamAuthPrivateKey: null,
     ...over,
   };
 }
@@ -211,7 +220,7 @@ export async function makeHarness(
   const seeded = await seedLiveApi(db.sql, stub.origin, opts.seed);
   const config = testConfig(opts.config);
   const health = new HealthTracker(config.thresholds);
-  const registry = new ApiRegistry(db.sql, health);
+  const registry = new ApiRegistry(db.sql, health, config.upstreamAuthPrivateKey);
   const facilitator = new FakeFacilitator();
   if (opts.facilitatorMethods) facilitator.methods = opts.facilitatorMethods;
   const masumi = new FakeMasumi();

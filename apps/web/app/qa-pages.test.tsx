@@ -9,6 +9,7 @@ import { seedApi, seedOnboardStep, seedSeller } from "@/test/factories";
 import AccountPage from "./account/page";
 import ApisPage, { metadata as apisMetadata } from "./apis/page";
 import ApiLayout, { generateMetadata as apiLayoutMetadata } from "./apis/[apiId]/layout";
+import ReviewPage from "./apis/[apiId]/review/page";
 import SalesPage from "./apis/[apiId]/sales/page";
 import LoginPage, { metadata as loginMetadata } from "./login/page";
 import NotFound from "./not-found";
@@ -126,5 +127,16 @@ describe("page titles (QA 17, 20)", () => {
     await getSql()`select 1`;
     render(await AccountPage());
     expect(screen.getByRole("link", { name: "Go to your APIs" })).toHaveAttribute("href", "/apis");
+  });
+});
+
+describe("key rotation before publishing", () => {
+  it.each(["rule_built", "priced"] as const)("the review page at %s shows the key form with the stored key", async (state) => {
+    const api = await seedApi(sellerId, state);
+    await getSql()`update apis set upstream_auth = ${getSql().json({ in: "header", name: "X-API-Key", sealed: "hks1.x", hint: "WXYZ" })} where id = ${api.id}`;
+    render(await ReviewPage({ params: Promise.resolve({ apiId: api.id }) }));
+    expect(screen.getByRole("heading", { name: "Your API's key" })).toBeInTheDocument();
+    expect(screen.getByTestId("upstream-auth-current")).toHaveTextContent("X-API-Key in header, ending in WXYZ");
+    expect(document.body.textContent).not.toContain("hks1");
   });
 });

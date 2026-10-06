@@ -1,6 +1,7 @@
 import { lookup as dnsLookup, type LookupAddress } from "node:dns";
 import { BlockList, isIP, type LookupFunction } from "node:net";
 import { Agent, request, type Dispatcher } from "undici";
+import { isJsonMediaType, mediaTypeOf } from "./rules";
 
 export type UpstreamResult = { status: number; contentType: string | null; body: string; latencyMs: number };
 export class UpstreamBlockedError extends Error { override name = "UpstreamBlockedError"; }
@@ -80,6 +81,36 @@ function discard(body: NodeJS.ReadableStream & { destroy(): void }): void {
   body.destroy();
 }
 
+/** The charset parameter of a Content-Type header, lowercased, or null. */
+function charsetOf(contentType: string | null): string | null {
+  const m = /;\s*charset\s*=\s*"?([^";\s]+)"?/i.exec(contentType ?? "");
+  return m ? m[1].toLowerCase() : null;
+}
+
+/**
+ * The body as text. A byte order mark wins (UTF-8, UTF-16LE or UTF-16BE), then the declared charset when
+ * TextDecoder knows it (utf-16le/be, iso-8859-1/latin1, windows-1252, …), else UTF-8. JSON is always UTF-8 (RFC 8259
+ * gives its charset parameter no meaning, and a wrong label must not change answers that pass today).
+ * A leading BOM is never part of the text: buyers read answers with WHATWG res.text(), which drops it, so rule
+ * checks, output hashes, stored outputs and what the gateway passes on (always as UTF-8) all see the buyer's string.
+ */
+export function decodeBody(bytes: Uint8Array, contentType: string | null): string {
+  let encoding = "utf-8";
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) encoding = "utf-16be";
+  else if (bytes[0] === 0xff && bytes[1] === 0xfe) encoding = "utf-16le";
+  else if (!(bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf)) {
+    const declared = isJsonMediaType(mediaTypeOf(contentType)) ? null : charsetOf(contentType);
+    if (declared) {
+      try {
+        encoding = new TextDecoder(declared).encoding;
+      } catch { /* unknown charset: keep UTF-8 */ }
+    }
+  }
+  // TextDecoder drops the BOM it decodes. Any U+FEFF still at the start goes too: the gateway passes answers on as
+  // UTF-8, so a body starting with U+FEFF would reach the buyer as a BOM, which res.text() drops again.
+  return new TextDecoder(encoding).decode(bytes).replace(/^\uFEFF+/, "");
+}
+
 export async function safeFetch(
   url: string,
   init: { method: string; headers?: Record<string, string>; body?: string },
@@ -133,10 +164,11 @@ export async function safeFetch(
       chunks.push(chunk as Buffer);
     }
     const ct = res.headers["content-type"];
+    const contentType = Array.isArray(ct) ? (ct[0] ?? null) : (ct ?? null);
     return {
       status: res.statusCode,
-      contentType: Array.isArray(ct) ? (ct[0] ?? null) : (ct ?? null),
-      body: Buffer.concat(chunks).toString("utf8"),
+      contentType,
+      body: decodeBody(Buffer.concat(chunks), contentType),
       latencyMs: Math.round(performance.now() - started),
     };
   } catch (err) {

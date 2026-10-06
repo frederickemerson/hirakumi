@@ -19,7 +19,7 @@ const applied = await migrate(sql);
 if (applied.length) console.log(`[gateway] migrations applied: ${applied.join(", ")}`);
 
 const health = new HealthTracker(config.thresholds);
-const registry = new ApiRegistry(sql, health);
+const registry = new ApiRegistry(sql, health, config.upstreamAuthPrivateKey);
 const facilitator = new HTTPFacilitatorClient({ url: config.facilitatorUrl });
 const masumi = config.masumi ? masumiPortFrom(config.masumi) : null;
 if (!masumi) console.warn("[gateway] PAYMENT_SERVICE_URL/TOKEN not set: start_job answers 503 escrow_unavailable");

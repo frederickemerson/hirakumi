@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import type { StructuredCall } from "../src/llm/claude.js";
 import { mapReplyToChoice, type Offered } from "../src/llm/replyChoice.js";
 import { stepPrefix } from "../src/humanSteps.js";
-import { findLinks, formatCommand, LinkError, parseCommand, tusdmToMicros, validateOpenApiUrl } from "../src/sokosumi/replies.js";
+import {
+  findLinks, findSampleLines, findSamplesIntake, formatCommand, isOnlySamples, LinkError, looksLikeOpenApiLink, looksLikeSecret, parseCommand, tusdmToMicros, validateOpenApiUrl,
+} from "../src/sokosumi/replies.js";
 
 describe("validateOpenApiUrl (same rules as the web setup form)", () => {
   it("normalises a good link", () => {
@@ -19,6 +21,8 @@ describe("validateOpenApiUrl (same rules as the web setup form)", () => {
     // audit I1: a query or a content-serving route would prove the whole host from one file
     ["https://victim.example/proxy?u=https://evil.example/openapi.json", "Remove the ?query from the link."],
     ["https://price.example.dev/openapi.json#top", "Remove the #fragment from the link."],
+    ["https://price.example.dev./openapi.json", "Remove the dot at the end of the host name in the link."],
+    ["https://price.example.dev.:8443/openapi.json", "Remove the dot at the end of the host name in the link."],
   ])("refuses %j", (input, message) => {
     expect(() => validateOpenApiUrl(input, false)).toThrow(LinkError);
     expect(() => validateOpenApiUrl(input, false)).toThrow(message);
@@ -51,6 +55,11 @@ describe("parseCommand", () => {
     for (const s of ["sell", "sell readonly", "price", "price two", "price -1", "price 1.1234567", "please publish it", "yes", "sell 1; drop table"]) {
       expect(parseCommand(s)).toBeNull();
     }
+  });
+  it("reads the command on the first line; lines under it are notes", () => {
+    expect(parseCommand("price 2\n/history needs ?days=7 though, see https://docs.example.com/guide")).toEqual({ kind: "price", priceText: "2", calls: null });
+    expect(parseCommand("\nsell 1 2\nthanks")).toEqual({ kind: "sell", refs: ["1", "2"], readOnlyConfirmed: false });
+    expect(parseCommand("thanks\nprice 2")).toBeNull();
   });
   it("formats a command back the way the seller would type it", () => {
     expect(formatCommand({ kind: "sell", refs: ["1", "2"], readOnlyConfirmed: true })).toBe("sell 1 2 readonly");
@@ -98,4 +107,87 @@ describe("mapReplyToChoice (the one LLM step for replies)", () => {
     expect(await mapReplyToChoice(llmReturning({ choice: "price", endpoints: [], price_tusdm: "2.5", calls: 200 }), "2.5 for 200", { kind: "price" }))
       .toEqual({ kind: "price", priceText: "2.5", calls: 200 });
   });
+});
+
+describe("samples intake (any API, no OpenAPI file)", () => {
+  it("finds example request lines, with or without a method, list markers or backticks", () => {
+    expect(findSampleLines("My API is https://api.x.dev/v1\n- GET /price?symbol=ADA\n* `/coins/{id=cardano}`\n2. post /search {\"q\": \"ada\"}\nthanks"))
+      .toEqual(["GET /price?symbol=ADA", "/coins/{id=cardano}", "post /search {\"q\": \"ada\"}"]);
+    expect(findSampleLines("see //comment and https://x.dev/a")).toEqual([]);
+  });
+
+  it("is a samples intake only with a base URL, at least one line, and no OpenAPI link", () => {
+    expect(findSamplesIntake("Base: https://api.x.dev/v1\nGET /price?symbol=ADA\nGET /history?days?=7"))
+      .toEqual({ base: "https://api.x.dev/v1", lines: "GET /price?symbol=ADA\nGET /history?days?=7" });
+    expect(findSamplesIntake("GET /price?symbol=ADA")).toBeNull();
+    expect(findSamplesIntake("https://api.x.dev/v1 and nothing else")).toBeNull();
+    expect(findSamplesIntake("https://api.x.dev/openapi.json\nGET /price?symbol=ADA")).toBeNull();
+  });
+
+  it.each([
+    "My spec: https://raw.githubusercontent.com/acme/api/main/spec\nEndpoints:\n- GET /pets\n- GET /pets/{petId}",
+    "https://gist.githubusercontent.com/u/abc/raw/petstore\n`/pets`",
+    "Spec: https://api.example.com/v1/spec\n/price is the main endpoint",
+    "https://api.example.com/v1/spec\nGET /quote",
+    "Here is our OpenAPI: https://api.example.com/v1/petstore\nGET /pets",
+  ])("leaves a message with a link that may be an OpenAPI file to the link flow: %j", (text) => expect(findSamplesIntake(text)).toBeNull());
+
+  it("still reads a base URL with plain paths as samples, also when the seller says there is no spec", () => {
+    expect(findSamplesIntake("https://api.x.dev/v1\nGET /price")).toEqual({ base: "https://api.x.dev/v1", lines: "GET /price" });
+    expect(findSamplesIntake("No OpenAPI file. https://api.x.dev/v1\nGET /price")).toEqual({ base: "https://api.x.dev/v1", lines: "GET /price" });
+    expect(findSamplesIntake("My spec is not written yet, base https://api.x.dev\nGET /price?symbol=ADA")).toEqual({ base: "https://api.x.dev", lines: "GET /price?symbol=ADA" });
+  });
+
+  it.each([
+    ["Docs: https://docs.example.com/guide\nAPI: https://api.example.com/v1\nGET /price?symbol=ADA", "https://api.example.com/v1"],
+    ["Base URL: https://api.example.com/v1, guide at https://example.com/docs/start\nGET /price?symbol=ADA", "https://api.example.com/v1"],
+    ["See https://docs.example.com/guide for details\nhttps://api.example.com/v1\nGET /price?symbol=ADA", "https://api.example.com/v1"],
+    ["https://example.readme.io/reference\nMy API is https://api.example.com/v1\nGET /price?symbol=ADA", "https://api.example.com/v1"],
+    ["Our site is https://www.example.com and the docs say so\nhttps://api.example.com/v1\nGET /price?symbol=ADA", "https://api.example.com/v1"],
+    // A link inside an example line is example data, not the base.
+    ["https://api.example.com/v1\nGET /fetch?url=https://example.org/page", "https://api.example.com/v1"],
+  ])("chooses the base URL that fits: %j", (text, base) => {
+    expect(findSamplesIntake(text)).toMatchObject({ base });
+  });
+
+  it("asks which link is the base when several could be", () => {
+    expect(findSamplesIntake("API: https://one.example.com/v1\nAPI: https://two.example.com/v1\nGET /price?symbol=ADA"))
+      .toEqual({ choices: ["https://one.example.com/v1", "https://two.example.com/v1"], lines: "GET /price?symbol=ADA" });
+    expect(findSamplesIntake("Try https://one.example.com/v1 or https://two.example.com/v1\nGET /price?symbol=ADA"))
+      .toEqual({ choices: ["https://one.example.com/v1", "https://two.example.com/v1"], lines: "GET /price?symbol=ADA" });
+  });
+
+  it("tells a message of only links and example lines from one with other words in it", () => {
+    expect(isOnlySamples("Docs: https://docs.example.com/guide\nAPI: https://api.example.com/v1\n- GET /price?symbol=ADA\n")).toBe(true);
+    expect(isOnlySamples("price 2\n/history needs ?days=7 though, see https://docs.example.com/guide")).toBe(false);
+    expect(isOnlySamples("")).toBe(false);
+  });
+
+  it.each(["https://x.dev/openapi.json", "https://x.dev/spec.yaml", "https://x.dev/v3/api-docs", "https://x.dev/swagger"])("treats %s as an OpenAPI link", (l) => {
+    expect(looksLikeOpenApiLink(l)).toBe(true);
+  });
+  it("treats a plain base URL as a base URL", () => expect(looksLikeOpenApiLink("https://api.x.dev/v1")).toBe(false));
+});
+
+describe("looksLikeSecret", () => {
+  it.each([
+    "my api key: 9f8e7d6c5b4a3210",
+    "X-API-Key=abcd1234efgh5678",
+    "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.sig",
+    "GET /price?symbol=ADA&apikey=a1b2c3d4e5f6",
+    "token = ghp_abcdefghijklmnopqrstuvwxyz0123",
+    "use sk-proj-abcdefghijklmnop1234 please",
+    "password: s3cretpassw0rd",
+  ])("flags %j", (text) => expect(looksLikeSecret(text)).toBe(true));
+
+  it.each([
+    "sell 1 2",
+    "My API needs an api key: required in the X-API-Key header",
+    "GET /price?symbol=ADA&apikey=YOUR_KEY",
+    "Authorization: Bearer <token>",
+    "https://api.x.dev/v1\nGET /coins/{id=cardano}?vs=usd",
+    "https://api.example.com\nGET /quote?token=0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "GET /price?token=cardano12",
+    "GET /verify?signature=abcdef123456",
+  ])("does not flag %j", (text) => expect(looksLikeSecret(text)).toBe(false));
 });

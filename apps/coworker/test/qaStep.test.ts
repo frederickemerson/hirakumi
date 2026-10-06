@@ -86,6 +86,15 @@ describe("qaStep (ownership_verified → rule_built)", () => {
     expect((await db.pool.query(`select state from apis where id = $1`, [apiId])).rows[0].state).toBe("ownership_verified");
     expect((await messagesFor(db.pool, apiId)).at(-1)?.body).toMatch(/can't tell them apart/);
   });
+
+  it("a refused test call (401) fails for good and links the review page, where the key form is", async () => {
+    const apiId = await seedApi(db.pool, { state: "ownership_verified" });
+    await seedOperation(db.pool, apiId);
+    const preview = vi.fn(async () => json(401, { error: "missing api key" }));
+    expect(await qaStep({ pool: db.pool, gateway: { preview } as GatewayClient, llm, webBaseUrl: "https://web.test" }, apiId)).toBe("failed");
+    expect((await messagesFor(db.pool, apiId)).at(-1)?.body)
+      .toMatch(new RegExp(`refused \\(HTTP 401\\)\\. If your API needs a key, add it on the review page\\. The test calls then run again\\. Review page: https://web\\.test/apis/${apiId}/review$`));
+  });
 });
 
 describe("qaSummaryLine", () => {

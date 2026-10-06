@@ -48,4 +48,20 @@ describe("driveOnce", () => {
     expect(seen).toContain(fresh);
     expect(seen.filter((id) => failed.includes(id))).toEqual([]);
   });
+
+  it("never drives an API replaced on its Sokosumi task, even after its failed step is reset", async () => {
+    const seen: string[] = [];
+    const record = async (id: string) => { seen.push(id); };
+    const handlers = { intake: record, parsed: record, ownership_verified: record, registering: record };
+    const task = `tsk_${Math.random().toString(36).slice(2, 10)}`;
+    const replaced = await seedApi(db.pool, { state: "ownership_verified", sokosumiTaskId: task });
+    await db.pool.query(`update apis set created_at = created_at - interval '1 second' where id = $1`, [replaced]);
+    await db.pool.query(`insert into onboard_steps (api_id, step, status, output) values ($1, 'qa', 'pending', '{}')`, [replaced]);
+    const newer = await seedApi(db.pool, { state: "intake", sokosumiTaskId: task });
+    const untasked = await seedApi(db.pool, { state: "intake" });
+    await driveOnce(db.pool, handlers, new Set(), { error: () => {}, info: () => {} });
+    expect(seen).toContain(newer);
+    expect(seen).toContain(untasked);
+    expect(seen).not.toContain(replaced);
+  });
 });

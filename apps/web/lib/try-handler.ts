@@ -1,4 +1,4 @@
-import { outputHash } from "@hirakumi/core";
+import { isJsonMediaType, mediaTypeOf, outputHash } from "@hirakumi/core";
 import { clientAddress } from "./client-address";
 import { errorJson, json, readJson, sameOrigin } from "./http";
 import { buildGatewayCall, describeTryResult, type TryReceipt } from "./try";
@@ -27,8 +27,13 @@ export function visitorKey(req: Request): string {
   return clientAddress(req);
 }
 
-function parseBody(text: string): unknown {
+/**
+ * The answer for display. A paid answer (200) can be text, such as CSV or XML, and stays text even when it would
+ * parse as JSON ("42"). The gateway's own answers (402, 422, 503...) are JSON.
+ */
+function parseBody(text: string, status: number, contentType: string): unknown {
   const clipped = text.length > MAX_BODY_CHARS ? `${text.slice(0, MAX_BODY_CHARS)}…` : text;
+  if (status === 200 && contentType && !isJsonMediaType(contentType)) return clipped;
   try {
     return JSON.parse(text);
   } catch {
@@ -81,7 +86,8 @@ export function createTryHandler(d: TryDeps) {
       return errorJson(502, "We couldn't reach the Hirakumi gateway. Try again in a minute.");
     }
     const latencyMs = Math.round(now() - started);
-    const body = parseBody(text);
+    const contentType = mediaTypeOf(res.headers.get("content-type"));
+    const body = parseBody(text, res.status, contentType);
     const remaining = res.headers.get("x-credits-remaining");
     const creditsRemaining = remaining !== null && /^\d+$/.test(remaining) ? Number(remaining) : null;
     const result = describeTryResult(res.status, body);
@@ -93,7 +99,7 @@ export function createTryHandler(d: TryDeps) {
       receiptsUrl: receiptsPath(apiId),
       ...(escrow ? { escrow } : {}),
     };
-    return json({ status: res.status, latencyMs, creditsRemaining, result, receipt, body, request: { method, url: call.url } });
+    return json({ status: res.status, latencyMs, creditsRemaining, result, receipt, body, contentType: contentType || null, request: { method, url: call.url } });
   };
 }
 

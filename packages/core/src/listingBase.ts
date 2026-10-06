@@ -18,13 +18,17 @@ export const overlapWarning = (name: string) => `This overlaps your listing ${na
 
 export const duplicateOwn = (name: string) => `You already list this API as ${name}. Retire that listing first.`;
 
-/** Lowercased, without a default port or trailing slash. Same string steps as the SQL column. */
+/**
+ * Lowercased, without a default port, trailing slash or trailing host dot (api.example.com. is the same host as
+ * api.example.com). Same string steps as the SQL column.
+ */
 export function normalizeOrigin(origin: string): string {
   return origin
     .replace(/\/+$/, "")
     .toLowerCase()
     .replace(/^(https:\/\/[^/]+):443$/, "$1")
-    .replace(/^(http:\/\/[^/]+):80$/, "$1");
+    .replace(/^(http:\/\/[^/]+):80$/, "$1")
+    .replace(/^(https?:\/\/[^/:]*[^/:.])\.+(:[0-9]+)?$/, "$1$2");
 }
 
 /** The base path as a directory with a trailing slash, as checkSpecBinding treats it. */

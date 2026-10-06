@@ -22,7 +22,7 @@ describe("parseOpenApi", () => {
     expect(r.operations[2].inputSchema.properties.body).toMatchObject({ examples: [{ symbol: "ADA" }] });
     expect(r.operations[0].llm).toMatchObject({ opId: "getPrice", summary: "Current price for a symbol" });
     expect(r.skipped).toEqual([
-      { method: "GET", path: "/me", reason: "needs authentication (not supported yet)" },
+      { method: "GET", path: "/me", reason: "needs HTTP basic sign-in (not supported yet)" },
       { method: "POST", path: "/upload", reason: "request body is not JSON (not supported yet)" },
       { method: "GET", path: "/ext", reason: "uses a circular or external schema reference (not supported yet)" },
     ]);
@@ -86,5 +86,103 @@ describe("parseOpenApi: paths that leave the proven folder (audit C1)", () => {
     const r = await parseOpenApi(spec(["/v1.2/data.json", "/files/{name}", "/a..b"]));
     expect(r.operations.map((o) => o.path)).toEqual(["/ok", "/v1.2/data.json", "/files/{name}", "/a..b"]);
     expect(r.skipped).toEqual([]);
+  });
+});
+
+describe("parseOpenApi: APIs that need a key", () => {
+  const spec = (o: { schemes: Record<string, unknown>; security?: unknown; paths: Record<string, Record<string, unknown>> }) =>
+    JSON.stringify({
+      openapi: "3.0.3",
+      info: { title: "Keyed", version: "1" },
+      ...(o.security ? { security: o.security } : {}),
+      paths: Object.fromEntries(Object.entries(o.paths).map(([p, op]) => [p, { get: { responses: { "200": { description: "ok" } }, ...op } }])),
+      components: { securitySchemes: o.schemes },
+    });
+
+  it("sells operations that need an apiKey header and says where the key goes", async () => {
+    const r = await parseOpenApi(spec({
+      schemes: { key: { type: "apiKey", in: "header", name: "X-API-Key" } },
+      security: [{ key: [] }],
+      paths: {
+        "/price": { parameters: [{ name: "x-api-key", in: "header", required: true, schema: { type: "string" } }, { name: "symbol", in: "query", required: true, schema: { type: "string" } }] },
+        "/open": { security: [] },
+      },
+    }));
+    expect(r.authHint).toEqual({ in: "header", name: "X-API-Key" });
+    expect(r.skipped).toEqual([]);
+    expect(r.operations.map((o) => [o.path, o.needsKey])).toEqual([["/price", true], ["/open", false]]);
+    // The key header is the gateway's to add, never a buyer input.
+    expect(r.operations[0].inputSchema.required).toEqual(["symbol"]);
+    expect(r.operations[0].llm.parameters.map((p) => p.name)).toEqual(["symbol"]);
+  });
+
+  it("maps http bearer to the Authorization header with a Bearer prefix", async () => {
+    const r = await parseOpenApi(spec({ schemes: { jwt: { type: "http", scheme: "bearer" } }, paths: { "/me": { security: [{ jwt: [] }] } } }));
+    expect(r.authHint).toEqual({ in: "header", name: "Authorization", prefix: "Bearer " });
+    expect(r.operations[0].needsKey).toBe(true);
+  });
+
+  it("drops a query key parameter from the inputs", async () => {
+    const r = await parseOpenApi(spec({
+      schemes: { q: { type: "apiKey", in: "query", name: "api_key" } },
+      security: [{ q: [] }],
+      paths: { "/p": { parameters: [{ name: "api_key", in: "query", required: true, schema: { type: "string" } }] } },
+    }));
+    expect(r.authHint).toEqual({ in: "query", name: "api_key" });
+    expect(r.operations[0].inputSchema).toMatchObject({ properties: {}, required: [] });
+  });
+
+  it("treats optional security ({}) as no key, and an API with no secured operation has no hint", async () => {
+    const r = await parseOpenApi(spec({ schemes: { key: { type: "apiKey", in: "header", name: "X-Key" } }, security: [{ key: [] }, {}], paths: { "/p": {} } }));
+    expect(r.authHint).toBeNull();
+    expect(r.operations[0].needsKey).toBe(false);
+  });
+
+  it("skips schemes Hirakumi can't supply, each with a clear reason", async () => {
+    const r = await parseOpenApi(spec({
+      schemes: {
+        basic: { type: "http", scheme: "basic" },
+        oauth: { type: "oauth2", flows: { clientCredentials: { tokenUrl: "https://x.example/token", scopes: {} } } },
+        oidc: { type: "openIdConnect", openIdConnectUrl: "https://x.example/.well-known/openid-configuration" },
+        cookie: { type: "apiKey", in: "cookie", name: "sid" },
+        host: { type: "apiKey", in: "header", name: "Host" },
+        a: { type: "apiKey", in: "header", name: "X-A" },
+        b: { type: "apiKey", in: "header", name: "X-B" },
+      },
+      paths: {
+        "/basic": { security: [{ basic: [] }] },
+        "/oauth": { security: [{ oauth: [] }] },
+        "/oidc": { security: [{ oidc: [] }] },
+        "/cookie": { security: [{ cookie: [] }] },
+        "/host": { security: [{ host: [] }] },
+        "/both": { security: [{ a: [], b: [] }] },
+      },
+    }));
+    expect(r.operations).toEqual([]);
+    expect(r.authHint).toBeNull();
+    expect(r.skipped.map((s) => [s.path, s.reason])).toEqual([
+      ["/basic", "needs HTTP basic sign-in (not supported yet)"],
+      ["/oauth", "needs OAuth 2 sign-in (not supported yet)"],
+      ["/oidc", "needs OpenID Connect sign-in (not supported yet)"],
+      ["/cookie", "needs a key in a cookie (not supported yet)"],
+      ["/host", expect.stringMatching(/^needs a key Hirakumi can't send: Hirakumi sets the Host header itself/)],
+      ["/both", "needs two or more keys at once (not supported yet)"],
+    ]);
+  });
+
+  it("keeps the key most operations use and skips operations that need a different one", async () => {
+    const r = await parseOpenApi(spec({
+      schemes: { a: { type: "apiKey", in: "header", name: "X-A" }, b: { type: "apiKey", in: "query", name: "b_key" }, jwt: { type: "http", scheme: "bearer" } },
+      paths: {
+        "/one": { security: [{ b: [] }] },
+        "/two": { security: [{ a: [] }] },
+        "/three": { security: [{ jwt: [] }, { a: [] }] },
+      },
+    }));
+    expect(r.authHint).toEqual({ in: "header", name: "X-A" });
+    expect(r.operations.map((o) => o.path)).toEqual(["/two", "/three"]);
+    expect(r.skipped).toEqual([
+      { method: "GET", path: "/one", reason: "needs a different key (the b_key query parameter) than your other endpoints, and Hirakumi keeps one key per API" },
+    ]);
   });
 });

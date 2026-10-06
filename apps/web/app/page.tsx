@@ -36,8 +36,8 @@ const WHY: Paragraph[] = [
 
 const STEPS: { title: string; body: string; rb: string }[] = [
   {
-    title: "Paste your OpenAPI link",
-    body: "Hirakumi reads it and lists the read-only endpoints it can sell. To prove it is yours, add a code to your OpenAPI file and sign once with your wallet.",
+    title: "Paste a link or example requests",
+    body: "Give your OpenAPI link, or your API's address and a few example requests. Hirakumi lists the read-only endpoints it can sell. To prove it is yours, add a code to your OpenAPI file or serve a small file, then sign once with your wallet.",
     rb: "rb-coral",
   },
   {
@@ -117,7 +117,7 @@ export default function Home() {
               Make your APIs monetizable
             </h1>
             <p className="mt-6 max-w-[36rem] text-body-lg animate-rise [animation-delay:70ms] sm:text-sub">
-              Paste your OpenAPI link, sign with your Cardano wallet, set a pack price. AI agents pay in USDM, and stale or empty answers cost them nothing.
+              Paste an OpenAPI link or a few example requests, sign with your Cardano wallet, set a pack price. AI agents pay in USDM, and stale or empty answers cost them nothing.
             </p>
             <div className="mt-8 flex flex-col items-stretch gap-4 animate-rise [animation-delay:140ms] sm:flex-row sm:items-center">
               <ListApiLink className={buttonVariants({ size: "lg" })}>{PRIMARY_CTA}</ListApiLink>
@@ -262,7 +262,7 @@ export default function Home() {
           <Mascot className="h-16" title="" />
           <h2 className="mt-6 text-h font-light uppercase sm:text-h-lg">Start with one link</h2>
           <p className="mt-4 max-w-[34rem] text-body-lg">
-            Paste your OpenAPI link, sign with your Cardano wallet, approve the promise and the price. That is the whole onboarding.
+            Paste an OpenAPI link or a few example requests, sign with your Cardano wallet, approve the promise and the price. That is the whole onboarding.
           </p>
           <div className="mt-8 flex w-full flex-col items-stretch gap-4 sm:w-auto sm:flex-row">
             <ListApiLink className={buttonVariants({ size: "lg" })}>{PRIMARY_CTA}</ListApiLink>

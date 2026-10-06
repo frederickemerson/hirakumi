@@ -10,6 +10,7 @@ import { RetireButton } from "@/components/retire-button";
 import { PackSalesTable } from "@/components/sales-tables";
 import { EmptyState, WaitingState } from "@/components/states";
 import { TryLiveLink } from "@/components/try-live-link";
+import { UpstreamAuthForm } from "@/components/upstream-auth-form";
 import { OverviewStatGrid } from "@/components/stat";
 import { formatTime } from "@/lib/copy";
 import { getSql } from "@/lib/db";
@@ -20,9 +21,11 @@ import { loadApiPage } from "@/lib/page-auth";
 import { listOnboardSteps } from "@/lib/repo/apis";
 import { getPack } from "@/lib/repo/packs";
 import { listLatestRules } from "@/lib/repo/rules";
+import { getUpstreamAuth } from "@/lib/repo/upstream-auth";
 import { getOverviewStats, listIncidents, listPackSales } from "@/lib/repo/stats";
 import { progressFor } from "@/lib/progress";
 import { buildBuyerSnippet } from "@/lib/snippet";
+import { isTextPromise } from "@/lib/answer-format";
 import { buildTimeline } from "@/lib/timeline";
 import { registryLinks } from "@/lib/try";
 
@@ -35,9 +38,9 @@ export default async function OverviewPage({ params }: { params: Promise<{ apiId
     redirect(`/apis/${apiId}/${stepForState(api.state)}`);
   }
   const sql = getSql();
-  const [stats, incidents, pack, promises, sales, steps] = await Promise.all([
+  const [stats, incidents, pack, promises, sales, steps, upstreamAuth] = await Promise.all([
     getOverviewStats(sql, apiId), listIncidents(sql, apiId), getPack(sql, apiId),
-    listLatestRules(sql, apiId), listPackSales(sql, apiId, 5), listOnboardSteps(sql, apiId),
+    listLatestRules(sql, apiId), listPackSales(sql, apiId, 5), listOnboardSteps(sql, apiId), getUpstreamAuth(sql, apiId),
   ]);
   const downReasons = api.state === "live" && api.health === "down"
     ? await getGateway().getHealth(apiId).then((h) => h.lastReasons).catch(() => [])
@@ -121,12 +124,17 @@ export default async function OverviewPage({ params }: { params: Promise<{ apiId
         {pack && snippetOp ? (
           <BuyerSnippet code={buildBuyerSnippet({
             gatewayBaseUrl: publicBase, apiId, packId: pack.id, packCalls: pack.calls,
-            packPriceMicros: pack.priceMicros, opId: snippetOp.opId, method: snippetOp.method,
+            packPriceMicros: pack.priceMicros, opId: snippetOp.opId, method: snippetOp.method, textAnswer: isTextPromise(snippetOp.definition),
           })} />
         ) : (
           <EmptyState title="No buyer code yet" detail="The code appears once your API has a price and a promise." />
         )}
       </div>
+
+      {api.state !== "retired" && (
+        // For key rotation: a new key takes effect on the next call, nothing else changes.
+        <UpstreamAuthForm apiId={apiId} initial={upstreamAuth} hint={null} title="Your API's key" />
+      )}
 
       {api.state === "live" && <RetireButton apiId={apiId} name={api.name} />}
     </section>

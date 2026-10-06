@@ -12,9 +12,13 @@ export async function driveOnce(pool: pg.Pool, handlers: StateHandlers, inFlight
   const { rows } = await pool.query<{ id: string; state: DrivenState }>(
     // A failed step is never re-run, so such an API has nothing left for the driver; skipping it keeps
     // failed onboardings from filling the oldest-first window and stalling new ones.
+    // An API replaced on its Sokosumi task (the seller started over there) is never driven again, even if a
+    // step of it is reset: it would post to the task next to the new one.
     `select id, state from apis
      where state in ('intake', 'parsed', 'ownership_verified', 'registering')
        and not exists (select 1 from onboard_steps s where s.api_id = apis.id and s.status = 'failed')
+       and not exists (select 1 from apis newer where newer.sokosumi_task_id = apis.sokosumi_task_id
+                         and newer.id <> apis.id and newer.created_at > apis.created_at)
      order by created_at limit 50`,
   );
   await Promise.all(

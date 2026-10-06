@@ -1,4 +1,4 @@
-import { formatMicros, messageOf, safeJson, type FetchLike } from "./gatewayClient.js";
+import { formatAnswer, formatMicros, messageOf, safeJson, type FetchLike } from "./gatewayClient.js";
 
 export type StartJobResponse = {
   job_id: string; blockchainIdentifier: string; payByTime: number; submitResultTime: number; unlockTime: number;
@@ -125,7 +125,8 @@ export async function runEscrowJob(deps: EscrowDeps, o: EscrowOptions): Promise<
     if (st.status === "completed") {
       const output = st.output ?? "";
       const outputVerified = st.output_hash !== undefined && st.output_hash === deps.outputHash(purchaserId, output);
-      deps.log(`Result: ${output}`);
+      // The output is the API's answer as text: JSON, CSV, XML or plain text.
+      deps.log(`Result: ${formatAnswer(output)}`);
       deps.log(outputVerified ? "Output hash verified (MIP-004)." : "OUTPUT HASH MISMATCH: dispute before the dispute window closes.");
       return { outcome: "completed", output, outputVerified };
     }

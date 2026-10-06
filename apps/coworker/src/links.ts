@@ -5,6 +5,8 @@ export const apiLink = (webBaseUrl: string, apiId: string) => `${webBaseUrl}/api
 /** The wallet steps: each deep link opens exactly that step (apps/web/app/apis/[apiId]/<step>/page.tsx). */
 export const ownershipLink = (webBaseUrl: string, apiId: string) => `${apiLink(webBaseUrl, apiId)}/ownership`;
 export const reviewLink = (webBaseUrl: string, apiId: string) => `${apiLink(webBaseUrl, apiId)}/review`;
+/** A registering or live API's page, which also has its key form. */
+export const overviewLink = (webBaseUrl: string, apiId: string) => `${apiLink(webBaseUrl, apiId)}/overview`;
 /** Public pages (apps/web/app/p/[apiId]). */
 export const statusPageLink = (webBaseUrl: string, apiId: string) => `${webBaseUrl}/p/${encodeURIComponent(apiId)}`;
 export const tryPageLink = (webBaseUrl: string, apiId: string) => `${statusPageLink(webBaseUrl, apiId)}/try`;

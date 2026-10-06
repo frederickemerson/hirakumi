@@ -1,6 +1,6 @@
 // The escrow pack demo: buy (after checking the datum), call, verify each pass locally, sign IOUs, close.
 import { ruleHash, type RuleDefinition } from "@hirakumi/core";
-import { choosePack, formatMicros, parseCreditsRequired, safeJson, type FetchLike } from "./gatewayClient.js";
+import { ANSWER_ACCEPT, choosePack, formatAnswer, formatMicros, parseCreditsRequired, safeJson, type FetchLike } from "./gatewayClient.js";
 import { PackPurchaseError, PaymentNotSentError, type EscrowPurchase, type OfferCheck } from "./payClient.js";
 import {
   DEFAULT_MAX_DIRECT_MICROS, EscrowOfferError, checkDirectOffer, checkEscrowOffer, escrowCall, offerMode, offerReasons, requestEscrowClose,
@@ -98,7 +98,7 @@ export async function runEscrowPack(deps: EscrowFlowDeps, o: EscrowFlowOptions):
   const resumed = await resumeUnaccounted(deps, o.apiId);
 
   // Find the offer (the unauthenticated call answers 402 credits_required with the packs).
-  const first = await deps.fetch(callUrl.toString(), { headers: { accept: "application/json" } });
+  const first = await deps.fetch(callUrl.toString(), { headers: { accept: ANSWER_ACCEPT } });
   const firstBody = safeJson(await first.text());
   if (first.status !== 402) throw new Error(`expected 402 credits_required, got HTTP ${first.status}`);
   const offer = parseCreditsRequired(firstBody, o.gatewayUrl);
@@ -191,7 +191,7 @@ export async function runEscrowPack(deps: EscrowFlowDeps, o: EscrowFlowOptions):
     if (r.kind === "pass") {
       s.passed++;
       if (r.signed !== null) s.signed = r.signed;
-      deps.log(`#${i} 200, checked locally: pass. Signed IOU ${r.signed ?? "-"}  ${JSON.stringify(r.body)}`);
+      deps.log(`#${i} 200, checked locally: pass. Signed IOU ${r.signed ?? "-"}  ${formatAnswer(r.body)}`);
     } else if (r.kind === "dispute") {
       s.disputed = true;
       s.stoppedFor = "dispute";

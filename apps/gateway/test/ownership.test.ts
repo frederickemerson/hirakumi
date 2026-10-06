@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import request from "supertest";
-import { newId, newVerifyCode } from "@hirakumi/core";
+import { newId, newVerifyCode, normalizeSamplesBase } from "@hirakumi/core";
 import { anotherBase, makeHarness, seedLiveApi, type Harness } from "./helpers";
 
 let h: Harness;
@@ -23,7 +23,7 @@ describe("ownership check: x-hirakumi-verify in the OpenAPI file", () => {
     const code = await giveCode(h.seeded.apiId);
     h.stub.setFile("/openapi.json", specJson({ "x-hirakumi-verify": code }));
     const ok = await check();
-    expect(ok.body).toEqual({ ok: true, reason: "verified", triedUrl: `${h.stub.origin}/openapi.json`, detail: "Found your code. The OpenAPI file is verified." });
+    expect(ok.body).toEqual({ ok: true, reason: "verified", triedUrl: `${h.stub.origin}/openapi.json`, detail: "Found your code. The file is verified." });
     const [row] = await h.sql<{ consumed_at: Date | null; proof: unknown }[]>`select consumed_at, proof from challenges`;
     expect(row.consumed_at).toBeNull();
     expect(row.proof).toBeNull();
@@ -145,5 +145,18 @@ describe("ownership check: x-hirakumi-verify in the OpenAPI file", () => {
       h.stub.setFile("/team-a/openapi.json", specJson({ "x-hirakumi-verify": code }, [{ url: "/" }]));
       expect((await check()).body).toMatchObject({ ok: false, reason: "outside_directory" });
     });
+  });
+});
+
+describe("ownership check: proof file for an API without an OpenAPI file", () => {
+  it("passes for { x-hirakumi-verify } served at hirakumi-verify.json in the base folder, and nowhere else", async () => {
+    const code = await giveCode(h.seeded.apiId);
+    const { proofUrl } = normalizeSamplesBase(`${h.stub.origin}/v1`, true);
+    await h.sql`update apis set openapi_url = ${proofUrl}, path_prefix = '/v1' where id = ${h.seeded.apiId}`;
+    h.stub.setFile("/v1/hirakumi-verify.json", JSON.stringify({ "x-hirakumi-verify": code }));
+    expect((await check()).body).toMatchObject({ ok: true, reason: "verified", triedUrl: `${h.stub.origin}/v1/hirakumi-verify.json` });
+    // A proof file for /v1/ never covers a base outside that folder.
+    await h.sql`update apis set path_prefix = '/v2' where id = ${h.seeded.apiId}`;
+    expect((await check()).body).toMatchObject({ ok: false, reason: "outside_directory" });
   });
 });

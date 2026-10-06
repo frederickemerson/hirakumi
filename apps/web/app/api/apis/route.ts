@@ -1,18 +1,30 @@
+import { normalizeSamplesBase, parseSampleLines, SampleError } from "@hirakumi/core";
 import { getSql } from "@/lib/db";
 import { env } from "@/lib/env";
 import { errorJson, json, readJson, requireSeller } from "@/lib/http";
-import { createApi, createApiForTask, findCoworkerTask, LISTED_BY_OTHER } from "@/lib/repo/apis";
+import { createApi, createApiForTask, findCoworkerTask, LISTED_BY_OTHER, type ApiInput } from "@/lib/repo/apis";
 import { validateApiName, validateOpenApiUrl, ValidationError } from "@/lib/validate";
+
+/** An OpenAPI link, or (no OpenAPI file) a base URL plus example requests, checked now so mistakes show at once. */
+function readIntake(body: Record<string, unknown>, sellerId: string): ApiInput {
+  if (body.mode === "samples") {
+    const { base, origin, hostname, proofUrl } = normalizeSamplesBase(body.baseUrl, env.allowInsecureUpstream());
+    const lines = typeof body.samples === "string" ? body.samples.trim() : "";
+    if (lines.length > 20_000) throw new SampleError("The example requests are too long.");
+    parseSampleLines(lines);
+    return { sellerId, name: validateApiName(body.name, hostname), origin, openapiUrl: proofUrl, samples: { base, lines } };
+  }
+  const { url, origin, hostname } = validateOpenApiUrl(body.openapiUrl, env.allowInsecureUpstream());
+  return { sellerId, name: validateApiName(body.name, hostname), origin, openapiUrl: url };
+}
 
 export async function POST(req: Request): Promise<Response> {
   const session = requireSeller(req);
   if (session instanceof Response) return session;
   const body = await readJson(req);
-  if (!body) return errorJson(400, "Paste the link to your OpenAPI description.");
+  if (!body) return errorJson(400, "Paste the link to your OpenAPI description, or your base URL and example requests.");
   try {
-    const { url, origin, hostname } = validateOpenApiUrl(body.openapiUrl, env.allowInsecureUpstream());
-    const name = validateApiName(body.name, hostname);
-    const input = { sellerId: session.sellerId, name, origin, openapiUrl: url };
+    const input = readIntake(body, session.sellerId);
     let result: Awaited<ReturnType<typeof createApi>>;
     if (typeof body.setupToken === "string" && body.setupToken) {
       const task = await findCoworkerTask(getSql(), body.setupToken);
@@ -29,7 +41,7 @@ export async function POST(req: Request): Promise<Response> {
     const { api, created } = result;
     return json({ apiId: api.id, state: api.state, created }, created ? 201 : 200);
   } catch (e) {
-    if (e instanceof ValidationError) return errorJson(400, e.message);
+    if (e instanceof ValidationError || e instanceof SampleError) return errorJson(400, e.message);
     throw e;
   }
 }

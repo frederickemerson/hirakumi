@@ -20,5 +20,7 @@ export const env = {
   chatFallback: () => process.env.CHAT_FALLBACK === "1",
   /** Optional: without it, "Ask Hirakumi" answers from its small offline FAQ. */
   openaiApiKey: () => process.env.OPENAI_API_KEY || null,
+  /** Optional: the gateway's public key for sealing API keys sellers give (UPSTREAM_AUTH_PRIVATE_KEY opens them). */
+  upstreamAuthPublicKey: () => process.env.UPSTREAM_AUTH_PUBLIC_KEY || null,
   secureCookies: () => process.env.NODE_ENV === "production",
 };
