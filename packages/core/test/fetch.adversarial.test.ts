@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { isBlockedAddress, safeFetch, UpstreamBlockedError } from "../src/fetch";
-import { httpChallengePath } from "../src/challenge";
 
 afterEach(() => { delete process.env.ALLOW_INSECURE_UPSTREAM; });
 
@@ -36,8 +35,3 @@ describe("adversarial: IP literal encodings stay blocked", () => {
   });
 });
 
-describe("adversarial: challenge path", () => {
-  it.each(["../x", "a/b", "%2e%2e", "x.txt", "", "api x"])("rejects api id %j", (id) => {
-    expect(() => httpChallengePath(id)).toThrow();
-  });
-});

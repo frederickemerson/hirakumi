@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { buildWalletChallenge } from "@hirakumi/core";
 import { env } from "@/lib/env";
 import { errorJson, json, type ApiRouteContext } from "@/lib/http";
-import { createWalletChallenge, hasPassedHttpChallenge } from "@/lib/repo/challenges";
+import { createWalletChallenge, hasFreshVerifyPass } from "@/lib/repo/challenges";
 import { loadOwnedApi, wrongStep } from "@/lib/route-helpers";
 
 const WALLET_CHALLENGE_TTL_MS = 30 * 60 * 1000;
@@ -12,7 +12,7 @@ export async function POST(req: Request, ctx: ApiRouteContext): Promise<Response
   if (loaded instanceof Response) return loaded;
   const { api, sql, session } = loaded;
   if (api.state !== "endpoints_confirmed") return wrongStep(api);
-  if (!(await hasPassedHttpChallenge(sql, api.id))) return errorJson(409, "Check your verification file first.");
+  if (!(await hasFreshVerifyPass(sql, api.id))) return errorJson(409, "Check your OpenAPI file first.");
   const nonce = randomBytes(16).toString("hex");
   const expiresAt = new Date(Date.now() + WALLET_CHALLENGE_TTL_MS);
   const message = buildWalletChallenge({

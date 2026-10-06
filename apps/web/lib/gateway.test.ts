@@ -10,9 +10,9 @@ function gatewayWith(fetchImpl: typeof fetch) {
 
 describe("gateway client", () => {
   it("calls the challenge check with the bearer token and returns the result", async () => {
-    const fetchImpl = vi.fn(async () => jsonResponse({ ok: false, triedUrl: "https://x/.well-known/hirakumi/api_1.txt", detail: "Got HTTP 404" }));
+    const fetchImpl = vi.fn(async () => jsonResponse({ ok: false, reason: "http_status", status: 404, triedUrl: "https://x/openapi.json", detail: "Your server answered 404, not 200." }));
     const result = await gatewayWith(fetchImpl).checkChallenge("api_1");
-    expect(result).toEqual({ ok: false, triedUrl: "https://x/.well-known/hirakumi/api_1.txt", detail: "Got HTTP 404" });
+    expect(result).toEqual({ ok: false, reason: "http_status", status: 404, triedUrl: "https://x/openapi.json", detail: "Your server answered 404, not 200." });
     const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://gw.test/internal/challenge/api_1/check");
     expect(init.method).toBe("POST");

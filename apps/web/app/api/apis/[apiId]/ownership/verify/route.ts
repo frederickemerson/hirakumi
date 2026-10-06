@@ -1,7 +1,7 @@
 import { AddressError, toPreprodBech32, verifyCip30Signature } from "@/lib/cardano";
 import { shortAddress } from "@/lib/copy";
 import { errorJson, json, readJson, type ApiRouteContext } from "@/lib/http";
-import { finalizeOwnership, getOpenWalletChallenge, hasPassedHttpChallenge } from "@/lib/repo/challenges";
+import { finalizeOwnership, getOpenWalletChallenge, hasFreshVerifyPass } from "@/lib/repo/challenges";
 import { loadOwnedApi, wrongStep } from "@/lib/route-helpers";
 
 export async function POST(req: Request, ctx: ApiRouteContext): Promise<Response> {
@@ -27,8 +27,8 @@ export async function POST(req: Request, ctx: ApiRouteContext): Promise<Response
   }
   const challenge = await getOpenWalletChallenge(sql, body.challengeId, api.id);
   if (!challenge) return errorJson(409, "This signing request expired or was already used. Start the signing step again.");
-  if (!(await hasPassedHttpChallenge(sql, api.id))) {
-    return errorJson(409, "Check your verification file again. Checks expire after 30 minutes.");
+  if (!(await hasFreshVerifyPass(sql, api.id))) {
+    return errorJson(409, "Check your OpenAPI file again. A passing check counts for 30 minutes.");
   }
   // Authoritative check: the signature must come from the seller's own payout address.
   const ok = await verifyCip30Signature(challenge.message, { signature: body.signature, key: body.key }, session.addr);

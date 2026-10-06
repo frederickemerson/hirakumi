@@ -1,9 +1,56 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { Router, type RequestHandler } from "express";
-import { httpChallengePath, safeFetch, UpstreamBlockedError, UpstreamTimeoutError } from "@hirakumi/core";
-import { getActiveHttpChallenge, insertCall } from "@hirakumi/db";
+import {
+  checkSpecBinding, firstServerUrl, MAX_RESPONSE_BYTES, readSpec, safeFetch, UpstreamBlockedError, UpstreamRedirectError,
+  UpstreamTimeoutError, UpstreamTooLargeError, verifyDocField, VERIFY_FIELD,
+} from "@hirakumi/core";
+import { getOpenVerifyCode, getOwnershipTarget, insertCall } from "@hirakumi/db";
 import type { AppDeps } from "./deps";
 import { runOperation } from "./upstream";
+
+export type OwnershipReason =
+  | "verified" | "no_code" | "bad_url" | "origin_mismatch" | "outside_directory" | "redirect" | "blocked"
+  | "timeout" | "too_large" | "unreachable" | "http_status" | "unreadable" | "missing" | "mismatch";
+export type OwnershipCheck = { ok: boolean; reason: OwnershipReason; triedUrl: string; detail: string; status?: number };
+
+async function checkOwnership(
+  d: AppDeps,
+  target: { id: string; origin: string; path_prefix: string; openapi_url: string },
+): Promise<OwnershipCheck> {
+  const triedUrl = target.openapi_url;
+  const fail = (reason: OwnershipReason, detail: string, status?: number): OwnershipCheck =>
+    ({ ok: false, reason, triedUrl, detail, ...(status === undefined ? {} : { status }) });
+  // Same origin, and the base path under the spec's directory, before anything is fetched.
+  const binding = checkSpecBinding({ openapiUrl: target.openapi_url, origin: target.origin, pathPrefix: target.path_prefix });
+  if (!binding.ok) return fail(binding.reason, binding.detail);
+  const code = await getOpenVerifyCode(d.sql, target.id);
+  if (!code) return fail("no_code", "This API has no verification code yet. Open the ownership page to get one.");
+  let got;
+  try {
+    got = await safeFetch(triedUrl, { method: "GET", headers: { accept: "application/json, application/yaml, text/yaml, */*" } },
+      { timeoutMs: 10_000, maxBytes: MAX_RESPONSE_BYTES });
+  } catch (e) {
+    if (e instanceof UpstreamRedirectError) {
+      return fail("redirect", `Your server answered ${e.status} (a redirect). Hirakumi does not follow redirects. Serve the file at this exact URL.`, e.status);
+    }
+    if (e instanceof UpstreamBlockedError) return fail("blocked", `This address is not allowed: ${e.message}`);
+    if (e instanceof UpstreamTimeoutError) return fail("timeout", "Your server did not answer within 10 seconds.");
+    if (e instanceof UpstreamTooLargeError) return fail("too_large", "The file is over 1 MB.");
+    return fail("unreachable", `Could not reach your server: ${(e as Error).message}`);
+  }
+  if (got.status !== 200) return fail("http_status", `Your server answered ${got.status}, not 200.`, got.status);
+  const doc = readSpec(got.body);
+  if (!doc) return fail("unreadable", "The file is not valid JSON or YAML.");
+  // Re-check the binding against the servers[0] the file declares now.
+  const current = checkSpecBinding({
+    openapiUrl: target.openapi_url, origin: target.origin, pathPrefix: target.path_prefix, serverUrl: firstServerUrl(doc.servers),
+  });
+  if (!current.ok) return fail(current.reason, current.detail);
+  const field = verifyDocField(doc, code.token);
+  if (field.kind === "missing") return fail("missing", `We read your OpenAPI file, but it has no ${VERIFY_FIELD} field at the root.`);
+  if (field.kind === "mismatch") return fail("mismatch", `Found ${VERIFY_FIELD}, but its value does not match this API's code. Copy the code shown on this page.`);
+  return { ok: true, reason: "verified", triedUrl, detail: "Found your code. The OpenAPI file is verified." };
+}
 
 const digest = (s: string) => createHash("sha256").update(s).digest();
 
@@ -41,34 +88,14 @@ export function internalRouter(d: AppDeps): Router {
     } catch (e) { next(e); }
   });
 
+  // Ownership proof: the API's own code at the root of its OpenAPI file (x-hirakumi-verify), served from a
+  // directory that covers the API's base path on the same origin. Read-only (contract v1.1 D3): the web app
+  // records the pass and consumes the code when ownership is finalised.
   r.post("/internal/challenge/:apiId/check", async (req, res, next) => {
     try {
-      const loaded = await d.registry.get(req.params.apiId, { fresh: true });
-      if (!loaded) { res.status(404).json({ error: "api_not_found" }); return; }
-      const triedUrl = new URL(httpChallengePath(loaded.api.id), loaded.api.origin).toString();
-      const challenge = await getActiveHttpChallenge(d.sql, loaded.api.id);
-      if (!challenge) {
-        res.json({ ok: false, triedUrl, detail: "There is no open ownership challenge. Download a new challenge file and try again." });
-        return;
-      }
-      let detail: string;
-      try {
-        const got = await safeFetch(triedUrl, { method: "GET", headers: { accept: "text/plain" } }, { timeoutMs: 10_000, maxBytes: 4096 });
-        if (got.status !== 200) {
-          detail = `Your server answered ${got.status} instead of 200. Upload the file to exactly this address.`;
-        } else if (got.body.trim() !== challenge.token.trim()) {
-          detail = "The file was found, but its contents do not match the challenge. Upload the file you downloaded, unchanged.";
-        } else {
-          // Read-only (contract v1.1 D3): the web app records the pass and consumes the row at finalisation.
-          res.json({ ok: true, triedUrl, detail: "Ownership file verified." });
-          return;
-        }
-      } catch (e) {
-        if (e instanceof UpstreamBlockedError) detail = `This address is not allowed: ${e.message}`;
-        else if (e instanceof UpstreamTimeoutError) detail = "Your server did not answer within 10 seconds.";
-        else detail = `Could not reach your server: ${(e as Error).message}`;
-      }
-      res.json({ ok: false, triedUrl, detail });
+      const target = await getOwnershipTarget(d.sql, req.params.apiId);
+      if (!target) { res.status(404).json({ error: "api_not_found" }); return; }
+      res.json(await checkOwnership(d, target));
     } catch (e) { next(e); }
   });
 

@@ -15,7 +15,7 @@ export function makeApp(over: Partial<AppDeps> & { modes?: ModeStore } = {}) {
     modes: memoryModeStore(),
     now: () => NOW,
     adminToken: ADMIN,
-    challenges: {},
+    verifyCodes: {},
     publicUrl: "https://price.test",
     log: () => {},
     ...over,

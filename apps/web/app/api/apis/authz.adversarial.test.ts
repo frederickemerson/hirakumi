@@ -7,7 +7,7 @@ import { cookieFor, ctx, jsonRequest } from "@/test/requests";
 import { POST as retire } from "./[apiId]/retire/route";
 import { POST as publish } from "./[apiId]/publish/route";
 import { POST as pricing } from "./[apiId]/pricing/route";
-import { GET as challengeFile } from "./[apiId]/challenge-file/route";
+import { POST as specCheck } from "./[apiId]/ownership/spec-check/route";
 
 const stateOf = async (id: string) => (await getSql()<{ state: string }[]>`select state from apis where id = ${id}`)[0].state;
 
@@ -18,7 +18,7 @@ describe("adversarial: seller isolation (IDOR)", () => {
   });
   afterEach(() => setGatewayForTests(null));
 
-  it("another seller cannot retire, publish, price or fetch the challenge of a victim's API", async () => {
+  it("another seller cannot retire, publish, price or check or read the verification code of a victim's API", async () => {
     const victim = await seedSeller();
     const attacker = await seedSeller();
     const live = await seedApi(victim.id, "live");
@@ -28,7 +28,8 @@ describe("adversarial: seller isolation (IDOR)", () => {
     expect((await retire(jsonRequest(`/x`, { cookie: c, body: {} }), ctx(live.id))).status).toBe(404);
     expect((await publish(jsonRequest(`/x`, { cookie: c, body: {} }), ctx(priced.id))).status).toBe(404);
     expect((await pricing(jsonRequest(`/x`, { cookie: c, body: { packCalls: "10", packPrice: "1", escrowPrice: "1" } }), ctx(priced.id))).status).toBe(404);
-    expect((await challengeFile(jsonRequest(`/x`, { cookie: c }), ctx(ec.id))).status).toBe(404);
+    expect((await specCheck(jsonRequest(`/x`, { cookie: c, body: {} }), ctx(ec.id))).status).toBe(404);
+    expect(await getSql()`select 1 from challenges where api_id = ${ec.id}`).toHaveLength(0);
     expect(await stateOf(live.id)).toBe("live");
     expect(await stateOf(priced.id)).toBe("priced");
   });

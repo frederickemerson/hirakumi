@@ -1,4 +1,4 @@
-import { newId, sha256Hex } from "@hirakumi/core";
+import { checkSpecBinding, newId, sha256Hex } from "@hirakumi/core";
 import type pg from "pg";
 import { withTx } from "../db.js";
 import { PermanentError } from "../errors.js";
@@ -11,19 +11,27 @@ export type ParseDeps = { pool: pg.Pool; fetchSpec: (url: string) => Promise<str
 /** intake → parsed: fetch + parse the spec, insert operations (all disabled), save the LLM context. */
 /**
  * Where the operations live (review I7). servers[0].url may be absolute or relative to the OpenAPI file.
- * Ownership is proven for the file's host only, so a server on another host is refused.
+ * The seller proves ownership by adding a code (x-hirakumi-verify) to this OpenAPI file, which only vouches
+ * for APIs on the file's own origin and at or under its folder. A server elsewhere is refused now, before
+ * the seller reaches the ownership step (the gateway re-checks the same rule when it reads the code).
  */
 function serverPathPrefix(serverUrl: string | null, openapiUrl: string, origin: string): string {
-  if (!serverUrl) return "/";
+  if (!serverUrl) return checked("/", null, openapiUrl, origin);
   let base: URL;
   try { base = new URL(serverUrl, openapiUrl); } catch { throw new PermanentError(`The servers URL in your OpenAPI file is not a valid link: ${serverUrl}`); }
   if (base.origin !== new URL(origin).origin) {
     throw new PermanentError(
-      `Your OpenAPI file says the API runs on ${base.origin}, but the file itself is on ${new URL(origin).origin}. Ownership is proven for the file's host, so host the OpenAPI file on ${base.origin} and paste that link instead.`,
+      `Your OpenAPI file says the API runs on ${base.origin}, but the file itself is on ${new URL(origin).origin}. The ownership code in your OpenAPI file only covers its own host, so host the OpenAPI file on ${base.origin} and paste that link instead.`,
     );
   }
   const prefix = base.pathname.replace(/\/+$/, "");
-  return prefix === "" ? "/" : prefix;
+  return checked(prefix === "" ? "/" : prefix, serverUrl, openapiUrl, origin);
+}
+
+function checked(pathPrefix: string, serverUrl: string | null, openapiUrl: string, origin: string): string {
+  const binding = checkSpecBinding({ openapiUrl, origin, pathPrefix, serverUrl });
+  if (!binding.ok) throw new PermanentError(binding.detail);
+  return pathPrefix;
 }
 
 export async function parseStep(deps: ParseDeps, apiId: string): Promise<StepOutcome> {

@@ -4,6 +4,13 @@ import { Agent, request, type Dispatcher } from "undici";
 
 export type UpstreamResult = { status: number; contentType: string | null; body: string; latencyMs: number };
 export class UpstreamBlockedError extends Error { override name = "UpstreamBlockedError"; }
+/** A 3xx answer. Never followed: a redirect would let a URL vouch for content served somewhere else. */
+export class UpstreamRedirectError extends UpstreamBlockedError {
+  override name = "UpstreamRedirectError";
+  constructor(readonly status: number, readonly location: string | null) {
+    super(`redirects are not followed (status ${status})`);
+  }
+}
 export class UpstreamTimeoutError extends Error { override name = "UpstreamTimeoutError"; }
 export class UpstreamTooLargeError extends Error { override name = "UpstreamTooLargeError"; }
 
@@ -112,7 +119,8 @@ export async function safeFetch(
     });
     if (res.statusCode >= 300 && res.statusCode < 400) {
       discard(res.body);
-      throw new UpstreamBlockedError(`redirects are not followed (status ${res.statusCode})`);
+      const loc = res.headers.location;
+      throw new UpstreamRedirectError(res.statusCode, (Array.isArray(loc) ? loc[0] : loc) ?? null);
     }
     const chunks: Buffer[] = [];
     let size = 0;

@@ -22,8 +22,3 @@ export function buildWalletChallenge(f: WalletChallengeFields): string {
     `expires: ${f.expires}`,
   ].join("\n");
 }
-
-export function httpChallengePath(apiId: string): string {
-  if (!/^[A-Za-z0-9_-]+$/.test(apiId)) throw new Error(`invalid api id: ${apiId}`);
-  return `/.well-known/hirakumi/${apiId}.txt`;
-}

@@ -70,6 +70,22 @@ describe("parseStep honours servers[0].url (review I7)", () => {
     await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(PRICE_SPEC) }, apiId);
     expect((await prefixOf(apiId)).path_prefix).toBe("/");
   });
+  it("accepts a base path under the OpenAPI file's folder", async () => {
+    const apiId = await seedApi(db.pool, { openapiUrl: "https://price.example.dev/team-a/openapi.json" });
+    await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(withServers([{ url: "v1" }])) }, apiId);
+    expect(await prefixOf(apiId)).toEqual({ path_prefix: "/team-a/v1", state: "parsed" });
+  });
+  it("refuses a base path outside the OpenAPI file's folder (the code in that file only covers its folder)", async () => {
+    const apiId = await seedApi(db.pool, { openapiUrl: "https://price.example.dev/team-a/openapi.json" });
+    const r = await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(withServers([{ url: "/team-b" }])) }, apiId);
+    expect(r).toBe("failed");
+    expect((await getStep(db.pool, apiId, "parse"))?.output?.error).toMatch(/only prove ownership of APIs under \/team-a\//);
+    expect((await prefixOf(apiId)).state).toBe("intake");
+  });
+  it("refuses a file in a folder whose API has no servers (the API would be the whole host)", async () => {
+    const apiId = await seedApi(db.pool, { openapiUrl: "https://price.example.dev/team-a/openapi.json" });
+    expect(await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(PRICE_SPEC) }, apiId)).toBe("failed");
+  });
   it("refuses an API that runs on a different host than its OpenAPI file (ownership covers the file's host only)", async () => {
     const apiId = await seedApi(db.pool, {});
     const r = await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(withServers([{ url: "https://other-host.example/v1" }])) }, apiId);

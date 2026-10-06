@@ -300,11 +300,19 @@ export async function getRuleByHash(sql: Sql, hash: string): Promise<(RuleRow & 
   return row ?? null;
 }
 
-export async function getActiveHttpChallenge(sql: Sql, apiId: string): Promise<{ id: string; token: string } | null> {
+/** What the ownership check needs: where the spec is, and where the API it must cover lives. */
+export async function getOwnershipTarget(sql: Sql, apiId: string): Promise<{ id: string; origin: string; path_prefix: string; openapi_url: string } | null> {
+  const [row] = await sql<{ id: string; origin: string; path_prefix: string; openapi_url: string }[]>`
+    select id, origin, path_prefix, openapi_url from apis where id = ${apiId}`;
+  return row ?? null;
+}
+
+/** This API's open verification code (kind 'openapi'); at most one exists (unique index, migration 0009). */
+export async function getOpenVerifyCode(sql: Sql, apiId: string): Promise<{ id: string; token: string } | null> {
   const [row] = await sql<{ id: string; token: string }[]>`
     select id, token from challenges
-    where api_id = ${apiId} and kind = 'http' and consumed_at is null and expires_at > now()
-    order by expires_at desc limit 1`;
+    where api_id = ${apiId} and kind = 'openapi' and consumed_at is null
+    limit 1`;
   return row ?? null;
 }
 
