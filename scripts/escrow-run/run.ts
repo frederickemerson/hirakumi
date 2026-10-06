@@ -343,7 +343,15 @@ async function debugSettle(name: string) {
   log(`evaluate: ${res.status} ${(await res.text()).slice(0, 3000)}`);
 }
 
+/** Moves the fee wallet's ADA (and the fee tokens) to the operator, which funds payout min-ADA. */
+async function sweepFee() {
+  const fee = mk(need("FEE_MNEMONIC"));
+  const sb = await fee.newTx().sendAll({ to: Address.fromBech32(operatorW.address) }).build();
+  await submit("sweep fee wallet → operator", sb, fee, (await sb.toTransaction()).body.fee);
+}
+
 const phases: Record<string, () => Promise<void>> = {
+  sweepFee,
   debug1: () => debugSettle("run1"),
   setup,
   lock1: () => lock("run1"),

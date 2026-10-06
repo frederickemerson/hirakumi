@@ -351,6 +351,9 @@ importers:
       '@evolution-sdk/evolution':
         specifier: 0.5.17
         version: 0.5.17
+      '@hirakumi/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@hirakumi/escrow':
         specifier: workspace:*
         version: link:../../packages/escrow
