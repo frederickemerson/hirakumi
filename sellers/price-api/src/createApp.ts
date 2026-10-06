@@ -80,6 +80,19 @@ export function createApp(deps: AppDeps): Express {
     res.json({ mode });
   });
 
+  // Demo stand-in for "upload the file to your server": the seller (or the demo operator) sets the
+  // ownership challenge without a redeploy. Kept in memory; restarts fall back to HIRAKUMI_CHALLENGE.
+  app.put("/admin/challenge/:apiId", requireAdmin, express.text({ limit: "1kb", type: "*/*" }), (req, res) => {
+    const apiId = String(req.params.apiId);
+    const token = typeof req.body === "string" ? req.body.trim() : "";
+    if (!/^api_[A-Za-z0-9]+$/.test(apiId) || !token) {
+      res.status(400).json({ error: "bad_request", message: "PUT /admin/challenge/api_xxx with the file contents as text/plain" });
+      return;
+    }
+    deps.challenges[apiId] = token;
+    res.status(204).end();
+  });
+
   app.get("/admin/break", requireAdmin, async (_req, res) => {
     res.json({ mode: await deps.modes.get(), store: deps.modes.kind });
   });

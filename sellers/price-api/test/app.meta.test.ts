@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import request from "supertest";
-import { makeApp } from "./helpers.js";
+import { ADMIN, makeApp } from "./helpers.js";
 import { buildOpenApi } from "../src/openapi.js";
 import { parseChallenges } from "../src/challenge.js";
 
@@ -41,6 +41,18 @@ describe("ownership challenge", () => {
     expect(res.headers["content-type"]).toMatch(/^text\/plain/);
     expect(res.text).toBe("hk-challenge-token-xyz");
     expect(res.headers["cache-control"]).toBe("no-store");
+  });
+
+  it("the seller can upload a challenge file through the admin API (demo stand-in for uploading it to their server)", async () => {
+    const app = makeApp({ challenges: {} });
+    const auth = { authorization: `Bearer ${ADMIN}` };
+    expect((await request(app).put("/admin/challenge/api_new1").set(auth).type("text/plain").send("tok-123")).status).toBe(204);
+    const got = await request(app).get("/.well-known/hirakumi/api_new1.txt");
+    expect(got.status).toBe(200);
+    expect(got.text).toBe("tok-123");
+    expect((await request(app).put("/admin/challenge/api_new1").type("text/plain").send("x")).status).toBe(401);
+    expect((await request(app).put("/admin/challenge/__proto__").set(auth).type("text/plain").send("x")).status).toBe(400);
+    expect((await request(app).put("/admin/challenge/api_new2").set(auth).type("text/plain").send("")).status).toBe(400);
   });
 
   it("404s for unknown ids and non-api names", async () => {
