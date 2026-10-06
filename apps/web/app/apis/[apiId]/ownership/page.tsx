@@ -12,11 +12,13 @@ export default async function OwnershipPage({ params }: { params: Promise<{ apiI
   if (api.state !== "endpoints_confirmed") redirect(`/apis/${apiId}/${stepForState(api.state)}`);
   const passed = await hasPassedHttpChallenge(getSql(), apiId);
   return (
-    <section className="space-y-4">
-      <h1 className="text-2xl font-semibold">Prove you own this API</h1>
-      <p className="text-muted-foreground">
-        Two quick checks stop anyone from selling someone else's API: a file on your server, and one signature from your wallet.
-      </p>
+    <section className="space-y-6">
+      <div className="space-y-3">
+        <h1 className="text-h font-medium uppercase">Prove you own this API</h1>
+        <p className="max-w-2xl text-body-lg">
+          Two quick checks stop anyone from selling someone else&apos;s API: a file on your server, and one signature from your wallet.
+        </p>
+      </div>
       <OwnershipPanel apiId={apiId} fileUrl={`${api.origin}${httpChallengePath(apiId)}`} initiallyPassed={passed} />
     </section>
   );

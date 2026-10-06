@@ -1,7 +1,10 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { BuyerSnippet } from "@/components/buyer-snippet";
 import { HealthBadge } from "@/components/health-badge";
 import { StatusPanel } from "@/components/status-panel";
+import { Badge } from "@/components/ui/badge";
+import { buttonVariants } from "@/components/ui/button";
 import { getSql } from "@/lib/db";
 import { env } from "@/lib/env";
 import { formatTusdm } from "@/lib/money";
@@ -23,27 +26,40 @@ export default async function PublicApiPage({ params }: { params: Promise<{ apiI
   const op = promises.find((p) => p.opId === api.escrowOpId) ?? promises[0];
   const publicBase = env.publicBaseUrl();
   return (
-    <section className="space-y-6">
-      <div className="flex items-center gap-4">
-        <h1 className="text-2xl font-semibold">{api.name}</h1>
-        <HealthBadge state={api.state} health={api.health} checkedAt={api.healthCheckedAt} />
+    <section className="space-y-8">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center gap-4">
+          <h1 className="text-h font-medium uppercase">{api.name}</h1>
+          <HealthBadge state={api.state} health={api.health} checkedAt={api.healthCheckedAt} />
+        </div>
+        <Link href={`/p/${apiId}/try`} className={buttonVariants({ variant: "outline", size: "sm" })}>Try it live</Link>
       </div>
       <StatusPanel status={status} incidents={incidents} />
-      {pack && <p>{`${pack.calls} credits for ${formatTusdm(pack.priceMicros)} tUSDM, paid once on Cardano preprod. A credit is used only when the response keeps the promise.`}</p>}
-      <ul className="space-y-2">
-        {promises.map((p) => (
-          <li key={p.operationId} className="rounded-lg border p-4">
-            <p className="font-mono text-sm">{p.method.toUpperCase()} {p.path}</p>
-            <p>{p.plainEnglish ?? "See the exact check below."}</p>
-            <a href={`${publicBase}/r/${p.hash}`} className="text-sm underline">The exact check (JSON)</a>
-          </li>
-        ))}
-      </ul>
+      {pack && (
+        <p className="rounded-[2px] border-2 border-ink bg-canary p-4 text-body-lg">
+          {`${pack.calls} credits for ${formatTusdm(pack.priceMicros)} tUSDM, paid once on Cardano preprod. A credit is used only when the response keeps the promise.`}
+        </p>
+      )}
+      <div className="space-y-3">
+        <h2 className="text-sub font-semibold uppercase">The promise</h2>
+        <ul className="space-y-3">
+          {promises.map((p) => (
+            <li key={p.operationId} className="space-y-2 rounded-[2px] border-2 border-ink bg-frost p-5">
+              <p className="flex items-center gap-2 text-body-lg"><Badge variant="sky">{p.method.toUpperCase()}</Badge><code>{p.path}</code></p>
+              <p className="text-body-lg">{p.plainEnglish ?? "See the exact check below."}</p>
+              <a href={`${publicBase}/r/${p.hash}`} className="inline-block text-body underline underline-offset-4">The exact check (JSON)</a>
+            </li>
+          ))}
+        </ul>
+      </div>
       {pack && op && (
-        <BuyerSnippet code={buildBuyerSnippet({
-          gatewayBaseUrl: publicBase, apiId, packId: pack.id, packCalls: pack.calls,
-          packPriceMicros: pack.priceMicros, opId: op.opId, method: op.method,
-        })} />
+        <div className="space-y-3">
+          <h2 className="text-sub font-semibold uppercase">For agent builders</h2>
+          <BuyerSnippet code={buildBuyerSnippet({
+            gatewayBaseUrl: publicBase, apiId, packId: pack.id, packCalls: pack.calls,
+            packPriceMicros: pack.priceMicros, opId: op.opId, method: op.method,
+          })} />
+        </div>
       )}
     </section>
   );

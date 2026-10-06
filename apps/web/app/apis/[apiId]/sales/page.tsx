@@ -11,19 +11,19 @@ export default async function SalesPage({ params }: { params: Promise<{ apiId: s
   const [sales, jobs] = await Promise.all([listPackSales(sql, apiId), listEscrowJobs(sql, apiId)]);
   return (
     <section className="space-y-8">
-      <h1 className="text-2xl font-semibold">Sales</h1>
+      <h1 className="text-h font-medium uppercase">Sales</h1>
       <div className="space-y-3">
-        <h2 className="text-lg font-medium">Credit packs</h2>
-        <p className="text-sm text-muted-foreground">Pack payments go straight to your wallet in one transaction each.</p>
+        <h2 className="text-sub font-semibold uppercase">Credit packs</h2>
+        <p className="text-body">Pack payments go straight to your wallet in one transaction each.</p>
         <PackSalesTable sales={sales} />
       </div>
       <div className="space-y-3">
-        <h2 className="text-lg font-medium">Per-job hires (Masumi escrow)</h2>
-        <p className="text-sm text-muted-foreground">
-          Masumi releases each passed job's payment after its unlock time and keeps 5%. A failed job is refunded to the buyer automatically.
+        <h2 className="text-sub font-semibold uppercase">Per-job hires (Masumi escrow)</h2>
+        <p className="text-body">
+          Masumi releases each passed job&apos;s payment after its unlock time and keeps 5%. A failed job is refunded to the buyer automatically.
         </p>
         {env.escrowSweepNotice() && (
-          <p role="note" className="text-sm text-amber-700">
+          <p role="note" className="border-l-4 border-bill pl-3 text-body">
             During the demo, per-job earnings arrive in the Hirakumi collection wallet and we forward them to you by hand.
           </p>
         )}

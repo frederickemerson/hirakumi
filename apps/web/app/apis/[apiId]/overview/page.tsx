@@ -23,14 +23,13 @@ import { buildBuyerSnippet } from "@/lib/snippet";
 
 function Stat({ label, value, note }: { label: string; value: string; note?: string }) {
   return (
-    <div className="rounded-lg border p-4">
-      <p className="text-sm text-muted-foreground">{label}</p>
-      <p className="text-2xl font-semibold tabular-nums">{value}</p>
-      {note && <p className="text-xs text-muted-foreground">{note}</p>}
+    <div className="rounded-[2px] border-2 border-ink bg-frost p-4">
+      <p className="text-caption uppercase tracking-[0.04em] text-graphite">{label}</p>
+      <p className="mt-1 text-h-sm font-medium tabular-nums">{value}</p>
+      {note && <p className="mt-1 text-caption text-graphite">{note}</p>}
     </div>
   );
 }
-
 
 export default async function OverviewPage({ params }: { params: Promise<{ apiId: string }> }) {
   const { apiId } = await params;
@@ -49,39 +48,40 @@ export default async function OverviewPage({ params }: { params: Promise<{ apiId
   const publicBase = env.publicBaseUrl();
   const buyerBase = `${publicBase}/a/${apiId}`;
   const snippetOp = promises.find((p) => p.opId === api.escrowOpId) ?? promises[0];
+  const running = steps.find((s) => s.status === "running");
 
   return (
     <section className="space-y-8">
       <AutoRefresh everyMs={5000} />
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-2xl font-semibold">{api.name}</h1>
+        <h1 className="text-h font-medium uppercase">{api.name}</h1>
         <HealthBadge state={api.state} health={api.health} checkedAt={api.healthCheckedAt} />
       </div>
 
       {api.state === "registering" && (
         <WaitingState title="Registering on the Masumi network. This takes about a minute."
-          detail="Your API goes Live as soon as the registry lists it.">
+          detail="Your API goes Live as soon as the registry lists it." since={running?.updatedAt ?? null}>
           <StepList steps={steps} />
         </WaitingState>
       )}
       {downReasons.length > 0 && (
-        <div role="alert" className="rounded-lg border border-destructive/50 p-4 text-sm">
-          <p className="font-medium">Your API is Down. Buyers get a "try later" answer and no credits are used.</p>
+        <div role="alert" className="rounded-[2px] border-2 border-ink border-l-8 border-l-coral bg-frost p-4 text-body">
+          <p className="font-medium">Your API is Down. Buyers get a &quot;try later&quot; answer and no credits are used.</p>
           <ul className="list-disc pl-5">{downReasons.map((r) => <li key={r}>{r}</li>)}</ul>
         </div>
       )}
 
-      <dl className="grid gap-2 text-sm sm:grid-cols-[180px_1fr]">
-        <dt className="text-muted-foreground">Agent ID</dt><dd className="break-all">{api.agentIdentifier ?? "Assigned after registration"}</dd>
-        <dt className="text-muted-foreground">Buyer URL</dt><dd className="break-all">{buyerBase}</dd>
-        <dt className="text-muted-foreground">Health check URL</dt><dd className="break-all">{`${buyerBase}/availability`}</dd>
+      <dl className="grid gap-x-6 gap-y-2 rounded-[2px] border-2 border-ink bg-frost p-4 text-body sm:grid-cols-[200px_1fr]">
+        <dt className="text-graphite">Agent ID</dt><dd className="break-all">{api.agentIdentifier ?? "Assigned after registration"}</dd>
+        <dt className="text-graphite">Buyer URL</dt><dd className="break-all">{buyerBase}</dd>
+        <dt className="text-graphite">Health check URL</dt><dd className="break-all">{`${buyerBase}/availability`}</dd>
         {promises.map((p) => (
           <div key={p.operationId} className="contents">
-            <dt className="text-muted-foreground">{`Promise for ${p.method.toUpperCase()} ${p.path}`}</dt>
+            <dt className="text-graphite">{`Promise for ${p.method.toUpperCase()} ${p.path}`}</dt>
             <dd className="break-all">{`${publicBase}/r/${p.hash}`}</dd>
           </div>
         ))}
-        {api.state === "live" && (<><dt className="text-muted-foreground">Public page</dt><dd><Link href={`/p/${apiId}`} className="underline">{`/p/${apiId}`}</Link></dd></>)}
+        {api.state === "live" && (<><dt className="text-graphite">Public page</dt><dd><Link href={`/p/${apiId}`} className="underline underline-offset-4">{`/p/${apiId}`}</Link></dd></>)}
       </dl>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -94,24 +94,24 @@ export default async function OverviewPage({ params }: { params: Promise<{ apiId
       </div>
 
       <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-medium">Latest pack sales</h2>
-          <Link href={`/apis/${apiId}/sales`} className="text-sm underline">See all sales</Link>
+        <div className="flex items-center justify-between gap-4">
+          <h2 className="text-sub font-semibold uppercase">Latest pack sales</h2>
+          <Link href={`/apis/${apiId}/sales`} className="text-body underline underline-offset-4">See all sales</Link>
         </div>
         <PackSalesTable sales={sales} />
       </div>
 
       <div className="space-y-3">
-        <h2 className="text-lg font-medium">Downtime</h2>
+        <h2 className="text-sub font-semibold uppercase">Downtime</h2>
         {incidents.length === 0 ? (
           <EmptyState title="No downtime recorded" detail="If your API stops keeping its promise, Hirakumi marks it Down and tells you here." />
         ) : (
           <ul className="space-y-3">
             {incidents.map((i) => (
-              <li key={new Date(i.downAt).toISOString()} className="rounded-lg border p-4 text-sm">
+              <li key={new Date(i.downAt).toISOString()} className="rounded-[2px] border-2 border-ink border-l-8 border-l-coral bg-frost p-4 text-body">
                 <p className="font-medium">{`Down from ${formatTime(i.downAt)} ${i.upAt ? `to ${formatTime(i.upAt)}` : "until now"}`}</p>
                 <p>{`${i.creditsUsed} credits used while Down. ${i.callsNotPassed} paid calls didn't pass and used no credits.`}</p>
-                <ul className="list-disc pl-5 text-muted-foreground">{formatHealthReasons(i.reasons).map((r) => <li key={r}>{r}</li>)}</ul>
+                <ul className="list-disc pl-5 text-graphite">{formatHealthReasons(i.reasons).map((r) => <li key={r}>{r}</li>)}</ul>
               </li>
             ))}
           </ul>
@@ -119,7 +119,7 @@ export default async function OverviewPage({ params }: { params: Promise<{ apiId
       </div>
 
       <div className="space-y-3">
-        <h2 className="text-lg font-medium">For agent builders</h2>
+        <h2 className="text-sub font-semibold uppercase">For agent builders</h2>
         {pack && snippetOp ? (
           <BuyerSnippet code={buildBuyerSnippet({
             gatewayBaseUrl: publicBase, apiId, packId: pack.id, packCalls: pack.calls,

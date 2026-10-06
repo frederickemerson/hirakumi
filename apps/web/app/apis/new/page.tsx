@@ -8,8 +8,8 @@ export default async function NewApiPage({ searchParams }: { searchParams: Promi
   const { openapiUrl } = await searchParams;
   return (
     <section className="max-w-xl space-y-6">
-      <h1 className="text-2xl font-semibold">Put your API on the agent market</h1>
-      <p className="text-muted-foreground">
+      <h1 className="text-h font-medium uppercase">Put your API on the agent market</h1>
+      <p className="text-body-lg">
         Paste the link to your OpenAPI 3 description. Hirakumi reads it and lists the endpoints it could sell.
         Nothing is published until you approve it.
       </p>
