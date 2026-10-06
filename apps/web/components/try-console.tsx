@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { coerceInput, type TryField, type TryKind, type TryResult } from "@/lib/try";
+import { cn } from "@/lib/utils";
 
 export type TryOp = {
   opId: string;
@@ -32,14 +34,18 @@ export function stageAt(elapsedMs: number): number {
   return elapsedMs < 400 ? 0 : elapsedMs < 1800 ? 1 : 2;
 }
 
+/* The outcome card takes the verdict's colour from the house palette: mint kept, canary refused, coral down. */
 const KIND_STYLE: Record<TryKind, string> = {
-  kept: "border-emerald-600 bg-emerald-50",
-  not_kept: "border-amber-500 bg-amber-50",
-  payment_required: "border-sky-500 bg-sky-50",
-  down: "border-red-500 bg-red-50",
-  invalid_input: "border-amber-500 bg-amber-50",
-  error: "border-red-500 bg-red-50",
+  kept: "bg-mint/25",
+  not_kept: "bg-canary",
+  payment_required: "bg-ice",
+  down: "bg-coral/40",
+  invalid_input: "bg-canary",
+  error: "bg-coral/40",
 };
+
+const FIELD =
+  "block w-full rounded-[2px] border-2 border-ink bg-frost text-body text-ink outline-none transition-colors duration-100 focus-visible:border-sky";
 
 export function TryConsole({ apiId, ops, hasDemoCredits }: { apiId: string; ops: TryOp[]; hasDemoCredits: boolean }) {
   const [opIndex, setOpIndex] = useState(0);
@@ -53,7 +59,7 @@ export function TryConsole({ apiId, ops, hasDemoCredits }: { apiId: string; ops:
 
   useEffect(() => () => { if (timer.current) clearInterval(timer.current); }, []);
 
-  if (!op) return <p className="text-muted-foreground">This API has no endpoints open for buyers yet.</p>;
+  if (!op) return <p className="text-body text-graphite">This API has no endpoints open for buyers yet.</p>;
 
   function pickOp(i: number) {
     setOpIndex(i);
@@ -93,6 +99,7 @@ export function TryConsole({ apiId, ops, hasDemoCredits }: { apiId: string; ops:
 
   const latest = history[0];
   const stage = stageAt(elapsed);
+  const progress = busy ? (busy.paid ? ((stage + 1) / 3) * 0.9 : Math.min(0.9, elapsed / 2000)) : 0;
 
   return (
     <div className="space-y-6">
@@ -100,106 +107,135 @@ export function TryConsole({ apiId, ops, hasDemoCredits }: { apiId: string; ops:
         <div role="radiogroup" aria-label="Endpoint" className="flex flex-wrap gap-2">
           {ops.map((o, i) => (
             <Button key={o.opId} type="button" variant={i === opIndex ? "default" : "outline"} aria-pressed={i === opIndex} onClick={() => pickOp(i)}>
-              <span className="font-mono">{o.method.toUpperCase()} {o.path}</span>
+              {o.method.toUpperCase()} {o.path}
             </Button>
           ))}
         </div>
       )}
 
-      <div className="space-y-1">
-        <p className="font-mono text-sm">{op.method.toUpperCase()} {op.path}</p>
-        {op.description && <p className="text-sm text-muted-foreground">{op.description}</p>}
-        {op.promise && <p className="text-sm"><span className="font-medium">Promise: </span>{op.promise}</p>}
+      <div className="rounded-[2px] border-2 border-ink bg-frost p-5 sm:p-6">
+        <p className="flex flex-wrap items-center gap-2 text-body-lg">
+          <Badge variant="sky">{op.method.toUpperCase()}</Badge>
+          <code>{op.path}</code>
+        </p>
+        {op.description && <p className="mt-3 text-body text-graphite">{op.description}</p>}
+        {op.promise && (
+          <p className="mt-4 border-t border-ink pt-4 text-body">
+            <span className="font-semibold">Promise: </span>
+            {op.promise}
+          </p>
+        )}
+
+        <form
+          className="mt-6 space-y-5 border-t border-ink pt-6"
+          onSubmit={(e) => { e.preventDefault(); if (!busy) void run(hasDemoCredits); }}
+        >
+          {op.fields.length === 0 && <p className="text-body text-graphite">This endpoint takes no input.</p>}
+          {op.fields.map((f) => (
+            <label key={f.name} className="block space-y-2">
+              <span className="block text-caption font-semibold uppercase tracking-[0.04em]">
+                {f.name}{f.required ? "" : " (optional)"}
+              </span>
+              {f.options ? (
+                <select
+                  className={cn(FIELD, "h-11 max-w-xs px-3")}
+                  value={values[f.name] ?? ""}
+                  onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))}
+                >
+                  {!f.required && <option value="">(none)</option>}
+                  {f.options.map((o) => <option key={o} value={o}>{o}</option>)}
+                </select>
+              ) : f.json ? (
+                <textarea
+                  className={cn(FIELD, "min-h-24 p-3 text-caption leading-relaxed")}
+                  value={values[f.name] ?? ""}
+                  placeholder={f.example}
+                  onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))}
+                />
+              ) : (
+                <Input
+                  className="max-w-xs"
+                  value={values[f.name] ?? ""}
+                  placeholder={f.example}
+                  onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))}
+                />
+              )}
+              {f.description && <span className="block text-caption text-graphite">{f.description}</span>}
+            </label>
+          ))}
+          <div className="flex flex-wrap gap-4 pt-1">
+            {hasDemoCredits && (
+              <Button type="submit" disabled={!!busy}>
+                {busy?.paid ? "Calling…" : "Call it with a demo credit"}
+              </Button>
+            )}
+            <Button type="button" variant="outline" disabled={!!busy} onClick={() => void run(false)}>
+              {busy && !busy.paid ? "Asking…" : "See what an unpaid agent gets"}
+            </Button>
+          </div>
+        </form>
       </div>
 
-      <form
-        className="space-y-4"
-        onSubmit={(e) => { e.preventDefault(); if (!busy) void run(hasDemoCredits); }}
-      >
-        {op.fields.length === 0 && <p className="text-sm text-muted-foreground">This endpoint takes no input.</p>}
-        {op.fields.map((f) => (
-          <label key={f.name} className="block space-y-1">
-            <span className="text-sm font-medium">{f.name}{f.required ? "" : " (optional)"}</span>
-            {f.options ? (
-              <select
-                className="block h-9 w-full max-w-xs rounded-md border bg-background px-2 text-sm"
-                value={values[f.name] ?? ""}
-                onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))}
-              >
-                {!f.required && <option value="">(none)</option>}
-                {f.options.map((o) => <option key={o} value={o}>{o}</option>)}
-              </select>
-            ) : f.json ? (
-              <textarea
-                className="block min-h-24 w-full rounded-md border bg-background p-2 font-mono text-xs"
-                value={values[f.name] ?? ""}
-                placeholder={f.example}
-                onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))}
-              />
-            ) : (
-              <Input
-                className="max-w-xs"
-                value={values[f.name] ?? ""}
-                placeholder={f.example}
-                onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))}
-              />
-            )}
-            {f.description && <span className="block text-xs text-muted-foreground">{f.description}</span>}
-          </label>
-        ))}
-        <div className="flex flex-wrap gap-3">
-          {hasDemoCredits && (
-            <Button type="submit" disabled={!!busy}>
-              {busy?.paid ? "Calling…" : "Call it with a demo credit"}
-            </Button>
-          )}
-          <Button type="button" variant="outline" disabled={!!busy} onClick={() => void run(false)}>
-            {busy && !busy.paid ? "Asking…" : "See what an unpaid agent gets"}
-          </Button>
-        </div>
-      </form>
-
       {busy && (
-        <div aria-live="polite" className="space-y-2 rounded-md border p-4">
-          <div className="flex justify-between text-sm">
-            <span>{busy.paid ? STAGES[stage] : "Asking the gateway for its price"}…</span>
-            <span className="font-mono tabular-nums">{(elapsed / 1000).toFixed(1)}s</span>
+        <div aria-live="polite" className="space-y-3 rounded-[2px] border-2 border-ink bg-frost p-5">
+          <div className="flex justify-between gap-4 text-body">
+            <span className="font-medium">{busy.paid ? STAGES[stage] : "Asking the gateway for its price"}…</span>
+            <span className="tabular-nums text-graphite">{(elapsed / 1000).toFixed(1)}s</span>
           </div>
-          <div className="h-2 overflow-hidden rounded-sm bg-muted" role="progressbar" aria-valuemin={0} aria-valuemax={3} aria-valuenow={stage + 1}>
-            <div className="h-full bg-sky-400 transition-[width] duration-300" style={{ width: `${busy.paid ? ((stage + 1) / 3) * 90 : Math.min(90, elapsed / 20)}%` }} />
+          <div className="h-2.5 overflow-hidden rounded-[2px] border border-ink bg-chalk" role="progressbar" aria-valuemin={0} aria-valuemax={3} aria-valuenow={stage + 1}>
+            <div className="h-full w-full origin-left stripes-sky transition-transform duration-300 ease-[var(--ease-snap)]" style={{ transform: `scaleX(${progress})` }} />
           </div>
           {busy.paid && (
-            <ol className="flex flex-wrap gap-x-4 text-xs text-muted-foreground">
-              {STAGES.map((s, i) => <li key={s} className={i <= stage ? "text-foreground" : ""}>{i < stage ? "✓ " : ""}{s}</li>)}
+            <ol className="flex flex-wrap gap-x-5 gap-y-1 text-caption uppercase tracking-[0.04em] text-graphite">
+              {STAGES.map((s, i) => <li key={s} className={i <= stage ? "text-ink" : ""}>{i < stage ? "✓ " : ""}{s}</li>)}
             </ol>
           )}
         </div>
       )}
 
-      {error && <p role="alert" className="rounded-md border border-red-500 bg-red-50 p-3 text-sm">{error}</p>}
+      {error && (
+        <p role="alert" className="rounded-[2px] border-2 border-ink border-l-8 border-l-coral bg-frost p-4 text-body">
+          {error}
+        </p>
+      )}
 
       {latest && !busy && (
-        <div className={`space-y-3 rounded-md border-2 p-4 ${KIND_STYLE[latest.result.kind]}`} aria-live="polite">
-          <p className="font-medium">{latest.result.headline}</p>
-          <dl className="grid grid-cols-3 gap-2 text-sm">
-            <div><dt className="text-muted-foreground">HTTP</dt><dd className="font-mono">{latest.status}</dd></div>
-            <div><dt className="text-muted-foreground">Time</dt><dd className="font-mono">{latest.latencyMs} ms</dd></div>
-            <div><dt className="text-muted-foreground">Credits left</dt><dd className="font-mono">{latest.creditsRemaining ?? "–"}</dd></div>
+        <div className={cn("space-y-4 rounded-[2px] border-2 border-ink p-5 shadow-hard sm:p-6", KIND_STYLE[latest.result.kind])} aria-live="polite">
+          <p className="text-body-lg font-semibold">{latest.result.headline}</p>
+          <dl className="grid grid-cols-3 gap-3 border-t border-ink pt-4 text-body">
+            <div>
+              <dt className="text-caption uppercase tracking-[0.04em] text-graphite">HTTP</dt>
+              <dd className="text-h-sm font-medium tabular-nums">{latest.status}</dd>
+            </div>
+            <div>
+              <dt className="text-caption uppercase tracking-[0.04em] text-graphite">Time</dt>
+              <dd className="text-h-sm font-medium tabular-nums">{latest.latencyMs} ms</dd>
+            </div>
+            <div>
+              <dt className="text-caption uppercase tracking-[0.04em] text-graphite">Credits left</dt>
+              <dd className="text-h-sm font-medium tabular-nums">{latest.creditsRemaining ?? "n/a"}</dd>
+            </div>
           </dl>
           {latest.result.reasons.length > 0 && (
-            <ul className="list-disc pl-5 text-sm">{latest.result.reasons.map((r) => <li key={r}>{r}</li>)}</ul>
+            <ul className="list-disc pl-5 text-body">{latest.result.reasons.map((r) => <li key={r}>{r}</li>)}</ul>
           )}
-          <p className="break-all font-mono text-xs text-muted-foreground">{latest.request.method} {latest.request.url}</p>
-          <pre className="max-h-80 overflow-auto rounded-sm bg-white/70 p-3 text-xs"><code>{typeof latest.body === "string" ? latest.body : JSON.stringify(latest.body, null, 2)}</code></pre>
+          <p className="break-all text-caption text-graphite">{latest.request.method} {latest.request.url}</p>
+          <pre className="max-h-80 overflow-auto rounded-[2px] border border-ink bg-frost p-3 text-caption leading-relaxed"><code>{typeof latest.body === "string" ? latest.body : JSON.stringify(latest.body, null, 2)}</code></pre>
         </div>
       )}
 
       {history.length > 1 && (
-        <div className="space-y-1">
-          <h3 className="text-sm font-medium">Earlier calls</h3>
-          <ul className="text-xs text-muted-foreground">
+        <div className="space-y-2">
+          <h3 className="text-caption font-semibold uppercase tracking-[0.04em]">Earlier calls</h3>
+          <ul className="divide-y divide-silver text-caption text-graphite">
             {history.slice(1).map((h, i) => (
-              <li key={`${h.at}-${i}`} className="font-mono">{h.at} · {h.paid ? "paid" : "unpaid"} · HTTP {h.status} · {h.latencyMs} ms · {h.result.headline}</li>
+              <li key={`${h.at}-${i}`} className="flex flex-wrap gap-x-4 gap-y-1 py-2">
+                <span className="tabular-nums">{h.at}</span>
+                <span>{h.paid ? "paid" : "unpaid"}</span>
+                <span>HTTP {h.status}</span>
+                <span className="tabular-nums">{h.latencyMs} ms</span>
+                <span className="text-ink">{h.result.headline}</span>
+              </li>
             ))}
           </ul>
         </div>

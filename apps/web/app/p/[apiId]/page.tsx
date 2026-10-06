@@ -27,17 +27,22 @@ export default async function PublicApiPage({ params }: { params: Promise<{ apiI
   const publicBase = env.publicBaseUrl();
   return (
     <section className="space-y-8">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex flex-wrap items-center gap-4">
-          <h1 className="text-h font-medium uppercase">{api.name}</h1>
-          <HealthBadge state={api.state} health={api.health} checkedAt={api.healthCheckedAt} />
+      <div className="flex flex-wrap items-end justify-between gap-6">
+        <div className="space-y-3">
+          <p className="text-caption font-medium uppercase tracking-[0.06em] text-graphite">Public status page</p>
+          <div className="flex flex-wrap items-center gap-4">
+            <h1 className="text-h font-normal uppercase sm:text-h-lg">{api.name}</h1>
+            <HealthBadge state={api.state} health={api.health} checkedAt={api.healthCheckedAt} />
+          </div>
+          <p className="max-w-2xl text-body-lg text-graphite">What Hirakumi&apos;s monitor saw in the last 24 hours, and the promise every paid answer is checked against.</p>
         </div>
-        <Link href={`/p/${apiId}/try`} className={buttonVariants({ variant: "outline", size: "sm" })}>Try it live</Link>
+        <Link href={`/p/${apiId}/try`} className={buttonVariants()}>Try it live</Link>
       </div>
       <StatusPanel status={status} incidents={incidents} />
       {pack && (
-        <p className="rounded-[2px] border-2 border-ink bg-canary p-4 text-body-lg">
-          {`${pack.calls} credits for ${formatTusdm(pack.priceMicros)} tUSDM, paid once on Cardano preprod. A credit is used only when the response keeps the promise.`}
+        <p className="rounded-[2px] border-2 border-ink bg-canary p-5 text-body-lg">
+          <span className="font-semibold">{`${pack.calls} calls for ${formatTusdm(pack.priceMicros)} tUSDM`}</span>
+          {", paid once on Cardano preprod. A credit is used only when the answer keeps the promise."}
         </p>
       )}
       <div className="space-y-3">

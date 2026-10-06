@@ -30,14 +30,16 @@ export default async function TryApiPage({ params }: { params: Promise<{ apiId: 
   const creditsLeft = demoToken ? await demoCreditsLeft(sql, demoToken) : null;
   const hasDemoCredits = creditsLeft !== null;
   return (
-    <section className="space-y-6">
-      <div className="space-y-2">
-        <p className="text-sm"><Link href={`/p/${apiId}`} className="underline">{api.name}</Link> / Try it live</p>
+    <section className="space-y-8">
+      <div className="space-y-3">
+        <p className="text-caption font-medium uppercase tracking-[0.06em] text-graphite">
+          <Link href={`/p/${apiId}`} className="underline-offset-4 hover:underline">{api.name}</Link> / Try it live
+        </p>
         <div className="flex flex-wrap items-center gap-4">
-          <h1 className="text-2xl font-semibold">Try {api.name} live</h1>
+          <h1 className="text-h font-normal uppercase sm:text-h-lg">Try {api.name} live</h1>
           <HealthBadge state={api.state} health={api.health} checkedAt={api.healthCheckedAt} />
         </div>
-        <p className="max-w-2xl text-muted-foreground">
+        <p className="max-w-2xl text-body-lg text-graphite">
           {hasDemoCredits
             ? `Each paid try uses one real credit from a demo pack bought on Cardano preprod (${creditsLeft} left). The credit is only used when the answer keeps the promise.`
             : "This API has no demo credits left, so you can see the payment offer an agent gets, but not a paid answer."}

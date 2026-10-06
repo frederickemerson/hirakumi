@@ -8,9 +8,9 @@ const columns = [
     title: "Product",
     links: [
       { href: "/#how", label: "How it works" },
-      { href: "/#buy", label: "Call packs and escrow jobs" },
-      { href: DEMO_API, label: "Live demo API" },
-      { href: `${DEMO_API}/try`, label: "Try it live" },
+      { href: "/#trust", label: "Where the money sits" },
+      { href: DEMO_API, label: "Live status page" },
+      { href: `${DEMO_API}/try`, label: "Try a live API" },
       { href: "/login", label: "Put your API on the market" },
     ],
   },
@@ -34,9 +34,9 @@ export function SiteFooter() {
             <Mascot className="h-8" />
             <span>Hirakumi</span>
           </Link>
-          <p className="max-w-xs text-body">
-            開く <span className="text-graphite">hiraku</span>, to open. A Sokosumi coworker that puts your read-only API on
-            the AI-agent market on Cardano and pays your wallet directly.
+          <p className="max-w-xs text-body text-graphite">
+            開く <span className="text-ink">hiraku</span>, to open. Hirakumi puts your API on the AI-agent market on Cardano and
+            charges buyers only for answers that keep your promise.
           </p>
         </div>
         {columns.map((col) => (
@@ -46,11 +46,11 @@ export function SiteFooter() {
               {col.links.map((l) => (
                 <li key={l.href}>
                   {"external" in l && l.external ? (
-                    <a href={l.href} target="_blank" rel="noreferrer" className="hover:underline hover:underline-offset-4">
+                    <a href={l.href} target="_blank" rel="noreferrer" className="underline-offset-4 hover:underline">
                       {l.label}
                     </a>
                   ) : (
-                    <Link href={l.href} className="hover:underline hover:underline-offset-4">
+                    <Link href={l.href} className="underline-offset-4 hover:underline">
                       {l.label}
                     </Link>
                   )}
@@ -61,8 +61,8 @@ export function SiteFooter() {
         ))}
       </div>
       <div className="border-t border-silver">
-        <p className="mx-auto w-full max-w-[1200px] px-4 py-5 text-caption text-pencil">
-          © 2026 Hirakumi. Built for the TOKEN2049 hackathon. Runs on the Cardano preprod test network with test funds only.
+        <p className="mx-auto w-full max-w-[1200px] px-4 py-5 text-caption text-graphite">
+          © 2026 Hirakumi. Built for TOKEN2049. Runs on the Cardano preprod test network with test funds only.
         </p>
       </div>
     </footer>

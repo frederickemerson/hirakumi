@@ -5,8 +5,8 @@ import { cn } from "@/lib/utils";
 
 const links = [
   { href: "/#how", label: "How it works" },
-  { href: "/#buy", label: "Buying" },
-  { href: "/#status", label: "Status" },
+  { href: "/#trust", label: "Trust" },
+  { href: "/#proof", label: "Proof" },
   { href: "/#faq", label: "FAQ" },
 ];
 
@@ -21,13 +21,13 @@ export function SiteHeader() {
         </Link>
         <nav aria-label="Main" className="hidden items-center gap-7 text-caption font-medium uppercase tracking-[0.06em] md:flex">
           {links.map((l) => (
-            <Link key={l.href} href={l.href} className="py-2 hover:underline hover:underline-offset-4">
+            <Link key={l.href} href={l.href} className="py-2 underline-offset-4 transition-[text-decoration-color] duration-150 hover:underline">
               {l.label}
             </Link>
           ))}
         </nav>
         <div className="flex items-center gap-4">
-          <Link href="/apis" className="hidden py-2 text-caption font-medium uppercase tracking-[0.06em] hover:underline hover:underline-offset-4 sm:inline">
+          <Link href="/apis" className="hidden py-2 text-caption font-medium uppercase tracking-[0.06em] underline-offset-4 hover:underline sm:inline">
             Log in
           </Link>
           <Link href="/login" className={cn(buttonVariants({ variant: "nav", size: "sm" }), "min-h-9")}>
