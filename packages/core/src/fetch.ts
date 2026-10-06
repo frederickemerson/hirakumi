@@ -20,19 +20,29 @@ for (const [net, prefix] of [
 for (const [net, prefix] of [
   ["::", 128], ["::1", 128], ["64:ff9b::", 96], ["64:ff9b:1::", 48], ["2001:db8::", 32], ["2002::", 16],
   ["fc00::", 7], ["fe80::", 10], ["ff00::", 8],
+  ["fec0::", 10], // deprecated site-local
+  ["100::", 64], // discard-only
+  ["2001::", 32], // Teredo: tunnels to an embedded IPv4 address
 ] as const) blocked.addSubnet(net, prefix, "ipv6");
+
+function hexToIPv4(hiHex: string, loHex: string): string {
+  const hi = parseInt(hiHex, 16), lo = parseInt(loHex, 16);
+  return `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+}
 
 /** True for private, loopback, link-local (incl. 169.254.169.254 metadata), CGNAT, multicast, reserved, or non-IP input. */
 export function isBlockedAddress(addr: string): boolean {
-  // IPv4-mapped IPv6 (::ffff:a.b.c.d or ::ffff:hhhh:hhhh) is judged by its embedded IPv4 address.
+  // IPv4-mapped IPv6 (::ffff:a.b.c.d or ::ffff:hhhh:hhhh) and SIIT IPv4-translated IPv6
+  // (::ffff:0:a.b.c.d or ::ffff:0:hhhh:hhhh) are judged by their embedded IPv4 address.
   // (Node's BlockList can't hold ::ffff:0:0/96: it then matches every plain IPv4 address.)
   const mapped = /^(?:0{0,4}:){0,5}:?ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(addr);
   if (mapped) return isBlockedAddress(mapped[1]);
   const mappedHex = /^(?:0{0,4}:){0,5}:?ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(addr);
-  if (mappedHex) {
-    const hi = parseInt(mappedHex[1], 16), lo = parseInt(mappedHex[2], 16);
-    return isBlockedAddress(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`);
-  }
+  if (mappedHex) return isBlockedAddress(hexToIPv4(mappedHex[1], mappedHex[2]));
+  const siit = /^(?:0{0,4}:){0,4}:?ffff:0{1,4}:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(addr);
+  if (siit) return isBlockedAddress(siit[1]);
+  const siitHex = /^(?:0{0,4}:){0,4}:?ffff:0{1,4}:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(addr);
+  if (siitHex) return isBlockedAddress(hexToIPv4(siitHex[1], siitHex[2]));
   // Deprecated IPv4-compatible IPv6 (::a.b.c.d / ::hhhh:hhhh) is never a public destination.
   if (/^::(?:(?:[0-9a-f]{1,4}:)?[0-9a-f]{1,4}|\d{1,3}(?:\.\d{1,3}){3})$/i.test(addr) && addr !== "::1") return true;
   const family = isIP(addr);

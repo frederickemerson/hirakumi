@@ -1,3 +1,4 @@
+import { env } from "./env";
 import { readCookie, readSessionToken, SESSION_COOKIE, type SessionInfo } from "./session";
 
 export type ApiRouteContext = { params: Promise<{ apiId: string }> };
@@ -27,7 +28,29 @@ export async function readJson(req: Request): Promise<Record<string, unknown> | 
   }
 }
 
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/**
+ * CSRF guard for state-changing requests. Body-less POSTs (publish, retire, logout) never reach
+ * readJson's content-type check, so we also refuse requests a browser marks as cross-site.
+ * Browsers send Sec-Fetch-Site; older ones only Origin, which must match WEB_BASE_URL.
+ * Requests with neither header (curl, server-to-server) carry no ambient browser intent and pass.
+ */
+export function sameOrigin(req: Request): boolean {
+  if (SAFE_METHODS.has(req.method.toUpperCase())) return true;
+  const site = req.headers.get("sec-fetch-site");
+  if (site !== null) return site === "same-origin" || site === "none";
+  const origin = req.headers.get("origin");
+  if (origin === null) return true;
+  try {
+    return new URL(origin).origin === new URL(env.webBaseUrl()).origin;
+  } catch {
+    return false; // "null" or malformed Origin, or no WEB_BASE_URL configured: refuse
+  }
+}
+
 export function requireSeller(req: Request): SessionInfo | Response {
+  if (!sameOrigin(req)) return errorJson(403, "Cross-site request refused.");
   const token = readCookie(req.headers.get("cookie"), SESSION_COOKIE);
   const session = token ? readSessionToken(token) : null;
   return session ?? errorJson(401, "Please sign in with your wallet again.");

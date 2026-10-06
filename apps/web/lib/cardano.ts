@@ -1,4 +1,12 @@
-import { addressToBech32, checkSignature, deserializeAddress } from "@meshsdk/core-cst";
+import {
+  Address,
+  addressToBech32,
+  checkSignature,
+  CredentialType,
+  deserializeAddress,
+  Ed25519PublicKey,
+  getPublicKeyFromCoseKey,
+} from "@meshsdk/core-cst";
 
 export class AddressError extends Error {}
 
@@ -28,13 +36,18 @@ export function utf8ToHex(s: string): string {
 
 /**
  * Verifies a CIP-30 signData result. The wallet signed utf8ToHex(message), and we pass that same hex
- * so Mesh compares bytes directly. Passing `bech32` makes Mesh check that the signing key's hash
- * matches the address's payment credential.
+ * so Mesh compares bytes directly. Mesh's address check also accepts the address's stake key, so we
+ * require the signing key's blake2b-224 hash to equal the address's payment key hash ourselves:
+ * only the key that controls the payout credential can prove the address.
  */
 export async function verifyCip30Signature(message: string, sig: Cip30Signature, bech32: string): Promise<boolean> {
   if (!HEX.test(sig.signature) || !HEX.test(sig.key)) return false;
   try {
-    return await checkSignature(utf8ToHex(message), sig, bech32);
+    const ok = await checkSignature(utf8ToHex(message), sig, bech32);
+    if (!ok) return false;
+    const pkh = Ed25519PublicKey.fromBytes(getPublicKeyFromCoseKey(sig.key)).hash().hex();
+    const pay = Address.fromBech32(bech32).getProps().paymentPart;
+    return pay?.type === CredentialType.KeyHash && pay.hash === pkh;
   } catch {
     return false;
   }

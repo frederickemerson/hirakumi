@@ -29,6 +29,11 @@ describe("isBlockedAddress", () => {
     ["::ffff:7f00:1", true], ["::ffff:a9fe:a9fe", true],
     ["2002:7f00:1::1", true], ["64:ff9b:1::a00:1", true], ["::7f00:1", true], ["::a9fe:a9fe", true],
     ["8.8.8.8", false], ["2606:4700:4700::1111", false], ["::ffff:808:808", false],
+    // SIIT IPv4-translated (::ffff:0:0/96) is judged by the embedded IPv4; fec0::/10, 100::/64, 2001::/32 are blocked.
+    ["::ffff:0:7f00:1", true], ["::ffff:0:127.0.0.1", true], ["0:0:0:0:ffff:0:a9fe:a9fe", true],
+    ["0000:0000:0000:0000:ffff:0000:10.0.0.1", true], ["::ffff:0:808:808", false],
+    ["fec0::1", true], ["100::1", true], ["2001::1", true], ["2001:0:4136:e378::1", true],
+    ["2001:4860:4860::8888", false],
   ])("%s → %s", (addr, blocked) => { expect(isBlockedAddress(addr)).toBe(blocked); });
 });
 

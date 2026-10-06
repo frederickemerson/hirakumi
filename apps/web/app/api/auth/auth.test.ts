@@ -71,4 +71,13 @@ describe("wallet sign-in", () => {
     expect(res.headers.get("location")).toBe("/login");
     expect(res.headers.get("set-cookie")).toContain("Max-Age=0");
   });
+
+  it("logs out from a same-origin form post, but refuses a cross-site one", async () => {
+    const at = (headers: Record<string, string>) =>
+      logout(new Request("https://web.hirakumi.test/api/auth/logout", { method: "POST", headers }));
+    expect((await at({ "sec-fetch-site": "same-origin", origin: "https://web.hirakumi.test" })).status).toBe(303);
+    const res = await at({ "sec-fetch-site": "cross-site", origin: "https://evil.example" });
+    expect(res.status).toBe(403);
+    expect(res.headers.get("set-cookie")).toBeNull();
+  });
 });
