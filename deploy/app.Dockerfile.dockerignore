@@ -14,3 +14,4 @@ docs
 **/.pending-payments.json*
 **/.vercel
 **/coverage
+contracts/pack-escrow/build
