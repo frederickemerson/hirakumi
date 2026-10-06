@@ -33,7 +33,8 @@ All on Cardano preprod. Explorer: https://preprod.cardanoscan.io
 - Deployed agent URL (MIP-003): https://52-70-235-103.sslip.io/a/api_eejiaioyqt (`/availability`, `/input_schema`, `/start_job`, `/status`)
 - Sokosumi Coworker ID: `01a11066-4529-71cf-b1b1-21a3e47a597a` (slug `hirakumi`, vendor `01a11066-2d75-768f-a3d2-807ce41e35d7`)
 - Completed Sokosumi Task ID: `01a11067-1d95-75b8-9d9f-d9487812cdd9` ("Put my API on the agent market", status COMPLETED)
-- Masumi registry entry (agent identifier): `67ab0c92c4ac1610895a1c965ee50aba41a8f1513b15240723b3bd0b1045366ca66c83ac363d53190157962fbea7b5751c6940f81251914ab5000000`
+- Masumi registry entry, current ("Live Crypto Prices"): `67ab0c92c4ac1610895a1c965ee50aba41a8f1513b15240723b3bd0b102dd0a53732b963d1737a246197bcfa58a631686ec49d769ad7b40f30000000`, mint tx `4a1b77aa7ae49df15e10ade1e920bd22c7d5b3ed204e21e9a5742e00cdf5cac2`
+- Masumi registry entry, first registration ("Test", used by the escrow jobs below): `67ab0c92c4ac1610895a1c965ee50aba41a8f1513b15240723b3bd0b1045366ca66c83ac363d53190157962fbea7b5751c6940f81251914ab5000000`
   - Registry policy `67ab0c92…` is the registry used by payment-service 0.29; the masumi.network agent explorer currently indexes only the older policy `7e8bdaf2…`, so show the token on Cardanoscan: https://preprod.cardanoscan.io/token/67ab0c92c4ac1610895a1c965ee50aba41a8f1513b15240723b3bd0b1045366ca66c83ac363d53190157962fbea7b5751c6940f81251914ab5000000
   - Registration (mint) tx: `84deabe2ba2ad19f4fba5e421805e49c4863ea63047937a2abcf5d8b6eaa3c32`
 - Seller (node selling wallet): `addr_test1qrzww9v9n7aghkeuzput8ccjd3kt4p6kz8gfa58899meg3vf6m9s83svmhkpavx3gjhx5t82x8qtt02lsawaj8nerdwsnxwecc`
