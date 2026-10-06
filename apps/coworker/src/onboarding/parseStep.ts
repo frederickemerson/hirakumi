@@ -1,4 +1,4 @@
-import { checkSpecBinding, newId, sha256Hex } from "@hirakumi/core";
+import { checkSpecBinding, judgeListingBase, listActiveOnOrigin, newId, sha256Hex, type QueryFn } from "@hirakumi/core";
 import type pg from "pg";
 import { withTx } from "../db.js";
 import { PermanentError } from "../errors.js";
@@ -34,6 +34,18 @@ function checked(pathPrefix: string, serverUrl: string | null, openapiUrl: strin
   return pathPrefix;
 }
 
+/**
+ * One API, one listing (advisory): tell the seller now, not at the ownership step, when another account
+ * already lists this base or one overlapping it. The check when ownership is proven is the authority.
+ */
+async function refuseIfListedByOther(pool: pg.Pool, apiId: string, origin: string, pathPrefix: string): Promise<void> {
+  const query: QueryFn = async (text, params) => (await pool.query(text, params)).rows;
+  const { rows } = await pool.query<{ seller_id: string }>(`select seller_id from apis where id = $1`, [apiId]);
+  if (!rows[0]) return;
+  const verdict = judgeListingBase({ sellerId: rows[0].seller_id, origin, pathPrefix }, await listActiveOnOrigin(query, origin, apiId));
+  if (!verdict.ok && verdict.reason === "taken_by_other") throw new PermanentError(verdict.message);
+}
+
 export async function parseStep(deps: ParseDeps, apiId: string): Promise<StepOutcome> {
   return runStep(deps.pool, apiId, "parse", async () => {
     const { rows } = await deps.pool.query<{ openapi_url: string; origin: string }>(`select openapi_url, origin from apis where id = $1`, [apiId]);
@@ -41,6 +53,7 @@ export async function parseStep(deps: ParseDeps, apiId: string): Promise<StepOut
     const text = await deps.fetchSpec(rows[0].openapi_url);
     const parsed = await parseOpenApi(text);
     const pathPrefix = serverPathPrefix(parsed.serverUrl, rows[0].openapi_url, rows[0].origin);
+    await refuseIfListedByOther(deps.pool, apiId, rows[0].origin, pathPrefix);
     if (parsed.operations.length === 0) {
       const why = parsed.skipped.map((s) => `${s.method} ${s.path}: ${s.reason}`).join("; ");
       throw new PermanentError(`Your OpenAPI file has no endpoints we can sell yet${why ? ` (${why})` : ""}.`);

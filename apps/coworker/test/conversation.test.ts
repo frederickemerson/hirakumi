@@ -236,7 +236,9 @@ describe("describeStep on a Sokosumi task", () => {
     const sellerId = await linkSeller(t.user);
     await db.pool.query(`insert into coworker_tasks (task_id, sokosumi_user_id, task_name, setup_token) values ($1, $2, 'x', $3)`, [t.id, t.user, rand()]);
     const apiId = await seedTaskApi(t.id, sellerId, "intake");
-    await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(PRICE_SPEC) }, apiId);
+    // Its own folder: other tests in this file list APIs on the same host (one API, one listing).
+    const spec = JSON.stringify({ ...JSON.parse(PRICE_SPEC), servers: [{ url: `https://price.example.dev/${apiId}` }] });
+    await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(spec) }, apiId);
     const llm = vi.fn().mockResolvedValue({ operations: [
       { opId: "getPrice", description: "Latest price for a ticker.", sideEffectsLikely: false },
       { opId: "get_history_symbol", description: "Daily price history.", sideEffectsLikely: false },
