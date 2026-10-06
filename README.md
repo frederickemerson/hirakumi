@@ -53,6 +53,9 @@ pnpm --filter @hirakumi/price-api dev                                   # demo s
 pnpm --filter @hirakumi/buyer run pack -- --api <apiId> --calls 10      # buy a pack, call with credits ("run": plain `pack` is pnpm's own command)
 pnpm --filter @hirakumi/buyer run escrow -- --api <apiId>                # one escrow job
 ```
+### Sell an API from a Sokosumi task
+Assign a task to the Hirakumi coworker and put your OpenAPI link in its description (or reply with it). The coworker reads the file through the SSRF-safe fetch and posts each of the web's 7 steps as a task comment. Replies it understands: `sell 1 2` (choose endpoints; add `readonly` for endpoints that may change data), `price 2` or `price 3.5 for 200 calls` (pack price, before publishing). Free text is mapped to the offered choice by one structured LLM step and then validated the same way. Signing in, proving ownership and approving the publish need your wallet, so for those it posts one deep link to that exact web step; a `publish` comment is refused. A first-time seller signs in once through the setup link; after that the Sokosumi account is linked to the wallet and new tasks start at once. When the API is Live the task gets the status page, try page and registry token links and is set `COMPLETED`.
+
 Break the demo seller (needs `ADMIN_TOKEN`):
 ```bash
 curl -XPOST $PRICE_API_URL/admin/break -H "Authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' -d '{"mode":"empty"}'   # or "stale", "ok"
