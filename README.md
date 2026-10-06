@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/brand/logo.png" alt="Hirakumi" width="420"></p>
+
 # Hirakumi (開く)
 
 Turn any read-only OpenAPI API into a paid supplier for AI agents on Cardano. Buyers pay once for a pack of calls with x402, and a credit is used **only when the response passes the published promise**. Built for TOKEN2049 Origins, Cardano "Agentic Commerce" track. Preprod only.

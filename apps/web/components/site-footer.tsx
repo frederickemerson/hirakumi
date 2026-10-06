@@ -30,7 +30,7 @@ export function SiteFooter() {
     <footer className="border-t border-ink bg-frost">
       <div className="mx-auto grid w-full max-w-[1200px] gap-10 px-4 py-14 md:grid-cols-[1.4fr_1fr_1fr]">
         <div className="space-y-4">
-          <Link href="/" className="flex items-center gap-2 text-body-lg font-semibold">
+          <Link href="/" className="flex items-center gap-2.5 text-body-lg font-bold tracking-tight">
             <Mascot className="h-8" />
             <span>Hirakumi</span>
           </Link>

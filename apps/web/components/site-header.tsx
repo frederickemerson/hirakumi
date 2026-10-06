@@ -15,7 +15,7 @@ export function SiteHeader() {
   return (
     <header className="border-b border-ink bg-frost">
       <div className="mx-auto flex h-16 w-full max-w-[1200px] items-center justify-between gap-4 px-4">
-        <Link href="/" className="flex shrink-0 items-center gap-2 text-body-lg font-semibold">
+        <Link href="/" className="flex shrink-0 items-center gap-2.5 text-body-lg font-bold tracking-tight">
           <Mascot className="h-8" />
           <span>Hirakumi</span>
         </Link>
