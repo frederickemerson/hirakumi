@@ -52,6 +52,20 @@ describe("start_job", () => {
   });
 });
 
+describe("start_job hardening (audit I1, I3)", () => {
+  it("a purchaser id longer than the Masumi node accepts (26 hex) is a 400, not a 500", async () => {
+    const r = await start({ input_data: { symbol: "ADA" }, identifier_from_purchaser: "ab".repeat(16) });
+    expect(r.status).toBe(400);
+    expect(h.masumi.created).toHaveLength(0);
+  });
+  it("one client can't flood start_job: the 11th request within a minute gets 429", async () => {
+    for (let i = 0; i < 10; i++) expect((await start({ input_data: { symbol: "ADA" }, identifier_from_purchaser: PID })).status).toBe(200);
+    const r = await start({ input_data: { symbol: "ADA" }, identifier_from_purchaser: PID });
+    expect(r.status).toBe(429);
+    expect(h.masumi.created).toHaveLength(10);
+  });
+});
+
 describe("JobRunner", () => {
   async function newJob(): Promise<string> {
     return (await start({ input_data: { symbol: "ADA" }, identifier_from_purchaser: PID })).body.job_id as string;
@@ -95,6 +109,20 @@ describe("JobRunner", () => {
     await runner.tick();
     expect(h.stub.hits()).toBe(0);
     expect((await status(id)).body).toMatchObject({ status: "failed", error: "payment_not_received" });
+  });
+
+  it("a submit that reached Masumi but errored locally is recorded as completed, never as refunded (audit I2)", async () => {
+    const id = await newJob();
+    h.masumi.state = "FundsLocked";
+    const original = h.masumi.submitResult.bind(h.masumi);
+    h.masumi.submitResult = async (b, r) => { await original(b, r); throw new Error("timeout after the node accepted it"); };
+    await runner.tick();
+    expect((await status(id)).body.status).toBe("running");
+    h.masumi.state = "ResultSubmitted";
+    await h.sql`update jobs set submit_result_time = now() - interval '1 minute' where id = ${id}`;
+    await runner.tick();
+    expect((await status(id)).body.status).toBe("completed");
+    expect(h.masumi.submitted).toHaveLength(1);
   });
 
   it("a failed submit is retried on the next tick", async () => {

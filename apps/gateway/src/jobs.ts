@@ -38,9 +38,14 @@ export class JobRunner {
       for (const job of await listUnsubmittedPasses(this.d.sql)) {
         await this.submit(job).catch((e) => console.error(`[jobs] submit ${job.id}:`, (e as Error).message));
       }
-      for (const job of await listJobsAwaitingPayment(this.d.sql)) {
-        await this.advance(job).catch((e) => console.error(`[jobs] ${job.id}:`, e));
-      }
+      // Bounded concurrency so one slow upstream (or many unpaid jobs) can't starve a paid one (audit I1).
+      const queue = await listJobsAwaitingPayment(this.d.sql);
+      const worker = async () => {
+        for (let job = queue.shift(); job; job = queue.shift()) {
+          await this.advance(job).catch((e) => console.error(`[jobs] ${job!.id}:`, e));
+        }
+      };
+      await Promise.all(Array.from({ length: 8 }, worker));
     } catch (e) {
       console.error("[jobs] tick failed:", e);
     } finally {
@@ -82,6 +87,13 @@ export class JobRunner {
 
   private async submit(job: JobRow): Promise<void> {
     if (!job.blockchain_identifier || !job.output_hash) return;
+    // Audit I2: an earlier submit may have reached the node even though we saw an error. Ask the chain state
+    // before resubmitting or declaring a refund, so /status never says "refunded" when the seller was paid.
+    const state = await this.d.masumi.getPaymentState(job.blockchain_identifier).catch(() => null);
+    if (state === "ResultSubmitted" || state === "Withdrawn") {
+      await markJobCompleted(this.d.sql, job.id);
+      return;
+    }
     if (job.submit_result_time && Date.now() > job.submit_result_time.getTime()) {
       await failJob(this.d.sql, job.id, ["the result was ready after the submit-result deadline; the buyer is refunded automatically"]);
       return;

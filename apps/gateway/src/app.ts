@@ -9,7 +9,9 @@ import { packRouter } from "./packs";
 
 export function createApp(d: AppDeps): Express {
   const app = express();
-  app.set("trust proxy", true); // Caddy terminates TLS; x402 resource URLs must say https
+  // Exactly one proxy (Caddy) in front: trust its X-Forwarded-* only. `true` would take the client-supplied
+  // leftmost X-Forwarded-For as req.ip and make per-client limits spoofable.
+  app.set("trust proxy", 1);
   app.disable("x-powered-by");
   app.use(express.json({ limit: "256kb" }));
   app.get("/healthz", (_req, res) => { res.json({ ok: true }); });

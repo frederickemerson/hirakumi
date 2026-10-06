@@ -29,7 +29,23 @@ export function toMip003Fields(schema: Record<string, unknown>): Mip003Field[] {
   });
 }
 
-export const PURCHASER_ID = /^(?:[0-9a-f]{2}){7,32}$/;
+/** Must match what the Masumi node accepts (14-26 hex), or the payment request fails with a 500 (audit I3). */
+export const PURCHASER_ID = /^(?:[0-9a-f]{2}){7,13}$/;
+
+/** start_job creates a Masumi payment request and a job row, so unauthenticated floods are capped per client. */
+const START_JOB_LIMIT = { max: 10, windowMs: 60_000 };
+
+function createWindowLimiter(max: number, windowMs: number): (key: string, now?: number) => boolean {
+  const hits = new Map<string, number[]>();
+  return (key, now = Date.now()) => {
+    const recent = (hits.get(key) ?? []).filter((t) => now - t < windowMs);
+    if (recent.length >= max) { hits.set(key, recent); return false; }
+    recent.push(now);
+    hits.set(key, recent);
+    if (hits.size > 10_000) for (const [k, v] of hits) if (!v.some((t) => now - t < windowMs)) hits.delete(k);
+    return true;
+  };
+}
 
 function statusBody(job: JobRow) {
   const base = { job_id: job.id, id: job.id };
@@ -83,15 +99,20 @@ export function mip003Router(d: AppDeps): Router {
     } catch (e) { next(e); }
   });
 
+  const allowStart = createWindowLimiter(START_JOB_LIMIT.max, START_JOB_LIMIT.windowMs);
   r.post("/a/:apiId/start_job", async (req, res, next) => {
     try {
+      if (!allowStart(req.ip ?? "unknown")) {
+        res.status(429).json({ error: "too_many_requests", message: "Too many jobs started from your address. Try again in a minute." });
+        return;
+      }
       const loaded = await d.registry.get(req.params.apiId);
       if (!loaded || loaded.api.state !== "live") { res.status(404).json({ error: "api_not_found" }); return; }
       const op = escrowOperation(loaded);
       if (!op?.rule) { res.status(503).json({ error: "escrow_not_configured", message: "This API has no escrow operation with a published promise." }); return; }
       const { input_data, identifier_from_purchaser: pid } = (req.body ?? {}) as { input_data?: unknown; identifier_from_purchaser?: unknown };
       if (typeof pid !== "string" || !PURCHASER_ID.test(pid)) {
-        res.status(400).json({ error: "INVALID_INPUT", message: "identifier_from_purchaser must be 14-64 lowercase hex characters (even length)." });
+        res.status(400).json({ error: "INVALID_INPUT", message: "identifier_from_purchaser must be 14-26 lowercase hex characters (even length)." });
         return;
       }
       const normalized = normalizeMip003Input(input_data);

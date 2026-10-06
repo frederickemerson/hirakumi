@@ -14,6 +14,15 @@ const events = () => h.sql<{ from_health: string; to_health: string; reasons: Ar
   select from_health, to_health, reasons from health_events order by id`;
 
 describe("Monitor (demo thresholds: 2 fails → Down, 2 passes → Live)", () => {
+  it("an API with nothing it can check is not reported Live (audit I4)", async () => {
+    await h.sql`delete from test_inputs`;
+    await m.probeApi(h.seeded.apiId);
+    const t = await m.probeApi(h.seeded.apiId);
+    expect(t?.to).toBe("down");
+    expect(t?.reasons[0].reason).toMatch(/no saved test input/);
+    expect((await request(h.app).get(`/a/${h.seeded.apiId}/availability`)).status).toBe(503);
+  });
+
   it("stays Live while probes pass and logs probe calls with the probe header", async () => {
     expect(await m.probeApi(h.seeded.apiId)).toBeNull();
     expect(h.health.get(h.seeded.apiId)?.health).toBe("healthy");

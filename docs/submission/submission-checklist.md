@@ -51,7 +51,7 @@ All on Cardano preprod. Explorer: https://preprod.cardanoscan.io
 - Job `job_zfj73wqatd`, purchase `cmuwhthj3001h1op0hwc92skw`, 2 tUSDM; demo API switched to stale data
 - Payment (lock) tx: `5ffa09a7a08d8931648801a84f311f4c569d99c1528650c81a2a5fcd8734a649` (09:47:22 UTC)
 - Gateway verdict: promise not met (`/timestamp is older than 900s`), no result submitted
-- Refund tx: _pending (refund unlocks after 10:05:25 UTC)_
+- Refund tx: `8487fcc1ea74df73a170c937215a59ee2b16f2be418ccd879f67b4bf38b5d9c0` (10:16 UTC): spends the escrow lock and returns the 2 tUSDM to the buyer side (the purchasing hot wallet's configured collection address `addr_test1qp88r23…`; in this demo buyer and seller share one payment-service node)
 
 ### x402 call packs
 - First pack: tx `43844e7b86c35e680805d5916cd38743462fbcf4cbd1db580d0faad8936e6a09`, settled in 16.5 s, seller received exactly 2.00 tUSDM

@@ -66,7 +66,8 @@ export class Monitor {
         reasons.push(...(outcome.reasons.length ? outcome.reasons : [outcome.execution]).map((reason) => ({ op: opId, reason })));
       }
     }
-    if (probed === 0) return null; // nothing to probe: leave health as it is
+    // Audit I4: an API we cannot check must not stay "Live". Say so instead of trusting it blindly.
+    if (probed === 0) reasons.push({ op: "*", reason: "no saved test input for any enabled operation, so Hirakumi can't check this API" });
 
     const t = this.d.health.record(apiId, reasons.length === 0, reasons);
     if (t) {
