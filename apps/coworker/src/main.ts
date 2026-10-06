@@ -1,10 +1,12 @@
 import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 import * as masumi from "@hirakumi/masumi";
 import { processHealthEvents } from "./alerts.js";
 import { loadConfig } from "./config.js";
 import { createPool } from "./db.js";
 import { createGatewayClient } from "./gateway.js";
 import { createStructuredCall } from "./llm/claude.js";
+import { createOpenAiStructuredCall } from "./llm/openai.js";
 import { startLoop } from "./loop.js";
 import { selectMode } from "./mode.js";
 import { describeStep } from "./onboarding/describeStep.js";
@@ -20,7 +22,9 @@ import { reportOnboardingUsage } from "./sokosumi/usage.js";
 
 const config = loadConfig(process.env);
 const pool = createPool(config.databaseUrl);
-const llm = createStructuredCall(new Anthropic({ apiKey: config.anthropicApiKey }));
+const llm = config.llm.provider === "openai"
+  ? createOpenAiStructuredCall(new OpenAI({ apiKey: config.llm.apiKey }))
+  : createStructuredCall(new Anthropic({ apiKey: config.llm.apiKey }));
 const gateway = createGatewayClient(config.gatewayInternalUrl, config.internalToken);
 const masumiPort: MasumiPort = masumi;
 const fetchSpec = createSpecFetcher();

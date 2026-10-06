@@ -27,9 +27,17 @@ describe("loadConfig", () => {
     expect(c.sokosumi).toEqual({ apiUrl: "https://api.preprod.sokosumi.com", apiKey: "coworker_abc" });
   });
 
-  it("throws on a missing required variable", () => {
+  it("needs one LLM key, OpenAI or Anthropic, and prefers OpenAI when both are set", () => {
     const { ANTHROPIC_API_KEY: _drop, ...rest } = BASE;
-    expect(() => loadConfig(rest)).toThrow(/ANTHROPIC_API_KEY/);
+    expect(() => loadConfig(rest)).toThrow(/OPENAI_API_KEY or ANTHROPIC_API_KEY/);
+    expect(loadConfig(BASE).llm).toEqual({ provider: "anthropic", apiKey: "sk-ant-test" });
+    expect(loadConfig({ ...rest, OPENAI_API_KEY: "sk-proj-x" }).llm).toEqual({ provider: "openai", apiKey: "sk-proj-x" });
+    expect(loadConfig({ ...BASE, OPENAI_API_KEY: "sk-proj-x" }).llm.provider).toBe("openai");
+  });
+
+  it("throws on a missing required variable", () => {
+    const { PAYMENT_SERVICE_TOKEN: _drop, ...rest } = BASE;
+    expect(() => loadConfig(rest)).toThrow(/PAYMENT_SERVICE_TOKEN/);
   });
 
   it("rejects a non-positive onboarding fee", () => {
