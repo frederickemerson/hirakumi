@@ -50,8 +50,9 @@ export const slotOfMs = (ms: bigint) => Time.unixTimeToSlot(ms, preprod.slotConf
 export const alignMs = (ms: bigint) => msOfSlot(slotOfMs(ms));
 
 const COINS_PER_UTXO_BYTE = 4310n;
-// ≥ 150% of the largest fee we pay (Settle ≤ close_fee_budget 0.7 ADA); small so a lean wallet still has a valid collateral return.
-const COLLATERAL = 1_500_000n;
+// The ledger needs ≥ 150% of the fee; every fee here is ≤ close_fee_budget (0.7 ADA), so 1.05 ADA always
+// suffices. Asking for more makes lean wallets fail with a collateral return below min-UTxO.
+const COLLATERAL = 1_050_000n;
 
 export type LockState = { utxo: UTxO.UTxO; datum: PackDatum; lovelace: bigint; tokens: bigint };
 

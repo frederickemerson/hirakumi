@@ -7,6 +7,7 @@
 //
 // Env: ENV_FILE / ESCROW_RUN_SECRETS as for run.ts; E2E_PORT (default 4599); E2E_FEE_BPS (default 300).
 import { HTTPFacilitatorClient } from "@x402/core/server";
+import { createDb } from "@hirakumi/db";
 import { createTestDb } from "@hirakumi/db/testing";
 import { createApp } from "../../apps/gateway/src/app";
 import { ChannelWatcher } from "../../apps/gateway/src/channelWatcher";
@@ -23,10 +24,15 @@ const port = Number(process.env.E2E_PORT ?? 4599);
 const operatorMnemonic = need("OPERATOR_MNEMONIC");
 const feeAddress = process.env.E2E_FEE_ADDRESS ?? walletFor(need("FEE_MNEMONIC")).address;
 
-const db = await createTestDb();
+// E2E_SCHEMA resumes an earlier run's schema (e.g. after a restart mid-contest); its stub API is gone, so only
+// the watcher and channel routes are useful then.
+const resume = process.env.E2E_SCHEMA;
+const db = resume
+  ? { sql: createDb(process.env.TEST_DATABASE_URL ?? "postgres://hirakumi:hirakumi@localhost:5432/hirakumi", { searchPath: resume, max: 4 }), schema: resume }
+  : await createTestDb();
 const stub = await startStubUpstream();
-const seeded = await seedLiveApi(db.sql, stub.origin);
-await db.sql`update sellers set cardano_addr = ${need("SELLER_ADDRESS")} where id = ${seeded.sellerId}`;
+const seeded = resume ? { apiId: "(resumed)", packId: "(resumed)" } : await seedLiveApi(db.sql, stub.origin);
+if (!resume) await db.sql`update sellers set cardano_addr = ${need("SELLER_ADDRESS")} where id = ${(seeded as { sellerId: string }).sellerId}`;
 
 const config: GatewayConfig = {
   ...testConfig(),
