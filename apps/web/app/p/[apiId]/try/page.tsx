@@ -1,0 +1,48 @@
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { HealthBadge } from "@/components/health-badge";
+import { RegistryCard } from "@/components/registry-card";
+import { TryConsole, type TryOp } from "@/components/try-console";
+import { getSql } from "@/lib/db";
+import { env } from "@/lib/env";
+import { getLiveApi } from "@/lib/repo/apis";
+import { listLatestRules } from "@/lib/repo/rules";
+import { fieldsFromSchema, parseTryTokens } from "@/lib/try";
+import { listTryOperations } from "@/lib/try-repo";
+
+export const dynamic = "force-dynamic";
+
+export default async function TryApiPage({ params }: { params: Promise<{ apiId: string }> }) {
+  const { apiId } = await params;
+  const sql = getSql();
+  const api = await getLiveApi(sql, apiId);
+  if (!api) notFound();
+  const [rows, rules] = await Promise.all([listTryOperations(sql, apiId), listLatestRules(sql, apiId)]);
+  const ops: TryOp[] = rows.map((r) => ({
+    opId: r.opId,
+    method: r.method,
+    path: r.path,
+    description: r.description,
+    promise: rules.find((p) => p.opId === r.opId)?.plainEnglish ?? null,
+    fields: fieldsFromSchema(r.inputSchema),
+  }));
+  const hasDemoCredits = Boolean(parseTryTokens(process.env.TRY_CREDIT_TOKENS)[apiId]);
+  return (
+    <section className="space-y-6">
+      <div className="space-y-2">
+        <p className="text-sm"><Link href={`/p/${apiId}`} className="underline">{api.name}</Link> / Try it live</p>
+        <div className="flex flex-wrap items-center gap-4">
+          <h1 className="text-2xl font-semibold">Try {api.name} live</h1>
+          <HealthBadge state={api.state} health={api.health} checkedAt={api.healthCheckedAt} />
+        </div>
+        <p className="max-w-2xl text-muted-foreground">
+          {hasDemoCredits
+            ? "Each paid try uses one real credit from a demo pack bought on Cardano preprod. The credit is only used when the answer keeps the promise."
+            : "This API has no demo credits, so you can see the payment offer an agent gets, but not a paid answer."}
+        </p>
+      </div>
+      <TryConsole apiId={apiId} ops={ops} hasDemoCredits={hasDemoCredits} />
+      <RegistryCard agentIdentifier={api.agentIdentifier} agentBaseUrl={`${env.publicBaseUrl()}/a/${apiId}`} />
+    </section>
+  );
+}
