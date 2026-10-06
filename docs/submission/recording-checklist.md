@@ -2,7 +2,7 @@
 
 ## T-60 min: environment
 - [ ] EC2: `DEMO_MODE=1` in the gateway env, then `docker compose up -d gateway`. Check: `curl -s $PUBLIC_BASE_URL/a/$DEMO_API_ID/availability` → 200.
-- [ ] Price API: `curl -s $PRICE_API_URL/healthz` → `{"ok":true,"modeStore":"redis"}`; mode reset: `curl -s -XPOST $PRICE_API_URL/admin/break -H "Authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' -d '{"mode":"ok"}'`.
+- [ ] Price API: `curl -s $PRICE_API_URL/healthz` → `{"ok":true,"modeStore":"memory"}`; mode reset: `curl -s -XPOST $PRICE_API_URL/admin/break -H "Authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' -d '{"mode":"ok"}'`.
 - [ ] Buyer wallet ≥ 10 tADA and ≥ 6 tUSDM (`USDM_PREPROD_ASSET`): check `https://preprod.cardanoscan.io/address/<buyer addr>`.
 - [ ] Payment-service purchasing wallet ≥ 10 tADA and ≥ 3 escrow tUSDM (`MASUMI_ESCROW_UNIT`).
 - [ ] Registry shows the demo agent Online (Masumi agent explorer).

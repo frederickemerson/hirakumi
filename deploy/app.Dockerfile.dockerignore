@@ -7,3 +7,10 @@ deploy/masumi.env
 apps/web/.next
 vendor
 docs
+.claude
+.superpowers
+.playwright-mcp
+**/.tokens.json*
+**/.pending-payments.json*
+**/.vercel
+**/coverage

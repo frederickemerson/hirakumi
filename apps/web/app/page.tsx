@@ -46,7 +46,7 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: "What does it cost me?",
-    a: "An onboarding fee, a take rate on sales, and an optional Pro tier. Sales settle to your wallet directly; Hirakumi never holds your money.",
+    a: "Nothing during the preprod test. The plan: an onboarding fee, a small take rate on sales, and an optional Pro tier. Sales settle to your wallet directly; Hirakumi never holds your money.",
   },
   {
     q: "Do I need a wallet?",
@@ -190,7 +190,7 @@ export default function Home() {
   "price": { "type": "number" },
   "last_updated": {
     "type": "string",
-    "maxAgeSeconds": 300
+    "maxAgeSeconds": 900
   }
 }`}</pre>
             <p className="mt-4 border-t border-graphite pt-3 text-silver">
@@ -266,7 +266,7 @@ export default function Home() {
               <SectionTitle>Money goes straight to your wallet</SectionTitle>
               <p className="mt-4 text-body-lg">
                 Hirakumi is non-custodial. Pack payments settle to your Cardano address in one transaction; escrow jobs release to you when the answer passes.
-                Hirakumi earns an onboarding fee, a take rate and a Pro tier, never your balance.
+                The plan is to earn an onboarding fee, a small take rate and a Pro tier, never your balance.
               </p>
             </div>
             <dl className="mt-8 grid gap-4 sm:grid-cols-3">

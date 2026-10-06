@@ -1,3 +1,5 @@
+> Source: https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_cardano.md (x402 Foundation), copied unchanged for offline reference. Not our work; see that repository for its license.
+
 # Scheme: exact on Cardano
 
 ## Summary

@@ -1,3 +1,5 @@
+> Source: https://developers.cardano.org/x402/agent.md (Cardano Developer Portal), copied unchanged for offline reference. Not our work.
+
 # x402 on Cardano — context for coding agents
 
 Hackathon track context: "Agentic Commerce" at TOKEN2049 Origins 2026.

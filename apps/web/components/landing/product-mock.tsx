@@ -32,7 +32,7 @@ const PANES: { tab: string; title: string; lines: Line[] }[] = [
     lines: [
       { kind: "out", text: "test-calling GET /price, 5 times …" },
       { kind: "code", text: '"price": { "type": "number" }' },
-      { kind: "code", text: '"last_updated": { "maxAgeSeconds": 300 }' },
+      { kind: "code", text: '"last_updated": { "maxAgeSeconds": 900 }' },
       { kind: "out", text: "you approve: 100 credits for 2.00 tUSDM" },
       { kind: "ok", text: "registered on Masumi, NFT minted on preprod" },
     ],

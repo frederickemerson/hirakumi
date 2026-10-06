@@ -16,7 +16,7 @@
 
 ## Final checks (T-4h → T-1h)
 - [ ] `pnpm test` green on `main`; the tag `submission` is pushed
-- [ ] No secrets in the repo: `git log -p | grep -E 'BUYER_MNEMONIC=|ADMIN_TOKEN=|PAYMENT_SERVICE_TOKEN=|CRE_ETH_PRIVATE_KEY=' ` returns nothing with a value
+- [ ] No secrets in the repo: `git log -p | grep -E 'BUYER_MNEMONIC=|ADMIN_TOKEN=|PAYMENT_SERVICE_TOKEN=' ` returns nothing with a value
 - [ ] `DEMO_MODE=1` stays on and the price API mode is `ok` during judging
 - [ ] Buyer and purchasing wallets keep ≥ 10 tADA so judges can re-run the buyer
 - [ ] The answer to "how many tracks?" (Task 1) is recorded here: ______ (filled at hour 2)

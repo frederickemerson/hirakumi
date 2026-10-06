@@ -13,3 +13,6 @@ deploy/masumi.env
 .claude/
 *.tsbuildinfo
 .vercel
+.playwright-mcp/
+**/.tokens.json*
+**/.pending-payments.json*
