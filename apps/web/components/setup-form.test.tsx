@@ -33,3 +33,14 @@ describe("SetupForm", () => {
     expect(nav.push).not.toHaveBeenCalled();
   });
 });
+
+describe("SetupForm with a Sokosumi setup token (review I5)", () => {
+  it("sends the setup token with the OpenAPI link", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ apiId: "api_1", state: "intake", created: true }), { status: 201 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<SetupForm initialUrl="https://price.example.dev/openapi.json" setupToken="tok_x" />);
+    await userEvent.click(screen.getByRole("button"));
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    expect(body).toMatchObject({ openapiUrl: "https://price.example.dev/openapi.json", setupToken: "tok_x" });
+  });
+});

@@ -12,3 +12,4 @@ coverage/
 deploy/masumi.env
 .claude/
 *.tsbuildinfo
+.vercel

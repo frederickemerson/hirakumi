@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { postJson, RequestError } from "@/lib/client-fetch";
 
-export function SetupForm({ initialUrl }: { initialUrl: string }) {
+export function SetupForm({ initialUrl, setupToken }: { initialUrl: string; setupToken?: string }) {
   const router = useRouter();
   const [url, setUrl] = useState(initialUrl);
   const [name, setName] = useState("");
@@ -18,7 +18,7 @@ export function SetupForm({ initialUrl }: { initialUrl: string }) {
     setBusy(true);
     setError(null);
     try {
-      const data = await postJson<{ apiId: string }>("/api/apis", { openapiUrl: url, name });
+      const data = await postJson<{ apiId: string }>("/api/apis", { openapiUrl: url, name, ...(setupToken ? { setupToken } : {}) });
       router.push(`/apis/${data.apiId}/endpoints`);
     } catch (err) {
       setError(err instanceof RequestError ? err.message : "Something went wrong. Try again.");

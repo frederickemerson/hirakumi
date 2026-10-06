@@ -27,6 +27,34 @@ export async function createApi(
   });
 }
 
+/** A Sokosumi coworker task, found by the setup link the coworker posted on it (review I5). */
+export async function findCoworkerTask(sql: Sql, setupToken: string): Promise<{ taskId: string; sokosumiUserId: string } | null> {
+  const [row] = await sql<{ taskId: string; sokosumiUserId: string }[]>`
+    select task_id, sokosumi_user_id from coworker_tasks where setup_token = ${setupToken}`;
+  return row ?? null;
+}
+
+/** Create the API from a setup link: one API per Sokosumi task, linked so progress and billing reach the task. */
+export async function createApiForTask(
+  sql: Sql,
+  input: { sellerId: string; name: string; origin: string; openapiUrl: string },
+  task: { taskId: string; sokosumiUserId: string },
+): Promise<{ api: Api; created: boolean }> {
+  return sql.begin(async (tx) => {
+    await tx`select pg_advisory_xact_lock(hashtext(${`task|${task.taskId}`}))`;
+    await tx`update sellers set sokosumi_user_id = ${task.sokosumiUserId} where id = ${input.sellerId} and sokosumi_user_id is null`;
+    const [linked] = await tx<Api[]>`
+      select ${tx(API_COLUMNS)} from apis where sokosumi_task_id = ${task.taskId} and seller_id = ${input.sellerId} and state <> 'retired'
+      order by created_at desc limit 1`;
+    if (linked) return { api: linked, created: false };
+    const [api] = await tx<Api[]>`
+      insert into apis (id, seller_id, name, origin, openapi_url, sokosumi_task_id)
+      values (${newId("api")}, ${input.sellerId}, ${input.name}, ${input.origin}, ${input.openapiUrl}, ${task.taskId})
+      returning ${tx(API_COLUMNS)}`;
+    return { api, created: true };
+  });
+}
+
 export async function getApiForSeller(sql: Sql, apiId: string, sellerId: string): Promise<Api | null> {
   const [row] = await sql<Api[]>`select ${sql(API_COLUMNS)} from apis where id = ${apiId} and seller_id = ${sellerId}`;
   return row ?? null;
