@@ -43,7 +43,7 @@ export function demoRule(apiId: string, opId: string): RuleDefinition {
 async function setStep(tx: Tx, apiId: string, step: string, status: string, output: unknown = null): Promise<void> {
   await tx`
     insert into onboard_steps (api_id, step, status, attempts, output, updated_at)
-    values (${apiId}, ${step}, ${status}, 1, ${JSON.stringify(output)}::jsonb, now())
+    values (${apiId}, ${step}, ${status}, 1, ${output === null ? null : tx.json(output as postgres.JSONValue)}, now())
     on conflict (api_id, step) do update
       set status = excluded.status, attempts = onboard_steps.attempts + 1, output = excluded.output, updated_at = now()`;
 }
@@ -60,7 +60,7 @@ export async function fakeParse(sql: Sql, apiId: string): Promise<void> {
     for (const op of DEMO_OPERATIONS) {
       await tx`
         insert into operations (id, api_id, op_id, method, path, input_schema, description, side_effects_likely)
-        values (${newId("op")}, ${apiId}, ${op.opId}, ${op.method}, ${op.path}, ${JSON.stringify(op.inputSchema)}::jsonb,
+        values (${newId("op")}, ${apiId}, ${op.opId}, ${op.method}, ${op.path}, ${sql.json(op.inputSchema as postgres.JSONValue)},
                 ${op.description}, ${op.sideEffectsLikely})
         on conflict (api_id, op_id) do nothing`;
     }
@@ -81,7 +81,7 @@ export async function fakeBuildRules(sql: Sql, apiId: string): Promise<void> {
       const def = demoRule(apiId, op.opId);
       await tx`
         insert into rules (id, operation_id, version, definition, hash, plain_english)
-        values (${newId("rule")}, ${op.id}, 1, ${JSON.stringify(def)}::jsonb, ${ruleHash(def)}, ${DEMO_PROMISE})
+        values (${newId("rule")}, ${op.id}, 1, ${sql.json(def as postgres.JSONValue)}, ${ruleHash(def)}, ${DEMO_PROMISE})
         on conflict (operation_id, version) do nothing`;
     }
     await setStep(tx, apiId, "qa", "done", { testCalls: 5 });

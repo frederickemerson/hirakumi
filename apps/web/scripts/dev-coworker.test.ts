@@ -32,6 +32,20 @@ describe("dev coworker", () => {
     expect(row.state).toBe("rule_built");
   });
 
+  it("stores JSON columns as JSON objects, not JSON strings", async () => {
+    const seller = await seedSeller();
+    const api = await seedApi(seller.id, "intake");
+    await fakeParse(getSql(), api.id);
+    await getSql()`update operations set enabled = true where api_id = ${api.id} and op_id = 'getPrice'`;
+    await getSql()`update apis set state = 'ownership_verified' where id = ${api.id}`;
+    await fakeBuildRules(getSql(), api.id);
+    const kinds = await getSql()<{ kind: string }[]>`
+      select jsonb_typeof(input_schema) as kind from operations where api_id = ${api.id}
+      union all select jsonb_typeof(r.definition) from rules r join operations o on o.id = r.operation_id where o.api_id = ${api.id}
+      union all select jsonb_typeof(output) from onboard_steps where api_id = ${api.id} and output is not null`;
+    expect(kinds.length).toBeGreaterThan(0);
+    for (const k of kinds) expect(k.kind).toBe("object");
+  });
   it("refuses to run from the wrong state", async () => {
     const seller = await seedSeller();
     const api = await seedApi(seller.id, "priced");
