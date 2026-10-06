@@ -15,3 +15,9 @@
 		format console
 	}
 }
+
+# The demo seller's API (a separate "company" for the demo; Hirakumi proxies to it like any other seller).
+price.{$PUBLIC_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy price-api:4100
+}
