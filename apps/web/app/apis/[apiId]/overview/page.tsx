@@ -121,7 +121,7 @@ export default async function OverviewPage({ params }: { params: Promise<{ apiId
         )}
       </div>
 
-      {api.state === "live" && <RetireButton apiId={apiId} />}
+      {api.state === "live" && <RetireButton apiId={apiId} name={api.name} />}
     </section>
   );
 }

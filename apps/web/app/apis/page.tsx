@@ -16,7 +16,10 @@ export default async function ApisPage() {
         <h1 className="text-h font-medium uppercase">Your APIs</h1>
         <Link href="/apis/new" className={buttonVariants()}>Add an API</Link>
       </div>
-      <p className="text-body text-graphite">Signed in as {shortAddress(session.addr)}. Buyers pay this address.</p>
+      <p className="text-body text-graphite">
+        Signed in as {shortAddress(session.addr)}. Buyers pay this address.{" "}
+        <Link href="/account" className="underline underline-offset-4 hover:text-ink">Account settings</Link>
+      </p>
       {apis.length === 0 ? (
         <EmptyState title="You haven't listed an API yet." detail="Add your first API with a link to its OpenAPI description." />
       ) : (

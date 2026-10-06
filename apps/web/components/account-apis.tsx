@@ -1,0 +1,196 @@
+"use client";
+
+import Link from "next/link";
+import { useRef, useState, type ReactNode } from "react";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { EmptyState } from "@/components/states";
+import { toast } from "@/components/toast";
+import { Badge } from "@/components/ui/badge";
+import { buttonVariants } from "@/components/ui/button";
+import { accountTotals, passRatePct, type AccountApi, type ApiBadge } from "@/lib/account";
+import { deleteJson, postJson } from "@/lib/client-fetch";
+import { formatTime } from "@/lib/copy";
+import { formatTusdm } from "@/lib/money";
+import { cn } from "@/lib/utils";
+
+const BADGE_VARIANT: Record<ApiBadge["tone"], "sky" | "destructive" | "mint" | "secondary"> = {
+  progress: "sky",
+  failed: "destructive",
+  live: "mint",
+  down: "destructive",
+  retired: "secondary",
+};
+
+const COLLAPSE_MS = 220;
+
+/** Reduced motion (or no matchMedia, as in tests) removes a deleted row at once instead of collapsing it. */
+function motionAllowed(): boolean {
+  return typeof window !== "undefined" && typeof window.matchMedia === "function"
+    && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+/**
+ * Totals and the seller's APIs, with Retire and Delete. The list is local state seeded by the server, so a
+ * confirmed change shows at once (badge, actions and totals) without waiting on a page reload.
+ * `children` renders between the totals and the list (the account details).
+ */
+export function AccountApis({ initial, children }: { initial: AccountApi[]; children?: ReactNode }) {
+  const [apis, setApis] = useState(initial);
+  const [leaving, setLeaving] = useState<ReadonlySet<string>>(new Set());
+  const heading = useRef<HTMLHeadingElement>(null);
+  const totals = accountTotals(apis.filter((a) => !leaving.has(a.id)));
+
+  function remove(id: string) {
+    setApis((list) => list.filter((a) => a.id !== id));
+    setLeaving((s) => {
+      const next = new Set(s);
+      next.delete(id);
+      return next;
+    });
+    heading.current?.focus(); // the row that held focus is gone: land on the list, not on <body>
+  }
+
+  async function del(a: AccountApi) {
+    await deleteJson(`/api/apis/${a.id}`);
+    toast(`Deleted ${a.name}`);
+    if (!motionAllowed()) return remove(a.id);
+    setLeaving((s) => new Set(s).add(a.id));
+    setTimeout(() => remove(a.id), COLLAPSE_MS);
+  }
+
+  async function retire(a: AccountApi) {
+    await postJson(`/api/apis/${a.id}/retire`, {});
+    setApis((list) => list.map((x) => (x.id === a.id
+      ? { ...x, state: "retired", badge: { tone: "retired", label: "Retired", detail: null },
+          deleteBlocker: "This API reached the Masumi registry, so its records stay." }
+      : x)));
+    toast(`Retired ${a.name}`);
+  }
+
+  return (
+    <>
+      <ul aria-label="Totals" className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-3">
+        <Total label="Live APIs" value={String(totals.live)} />
+        <Total label="Paid calls, 24 h" value={String(totals.paidCallsDay)} />
+        <Total label="Total received" value={`${formatTusdm(totals.receivedMicros)} tUSDM`} />
+      </ul>
+
+      {children}
+
+      <section aria-labelledby="your-apis" className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 id="your-apis" ref={heading} tabIndex={-1} className="text-sub font-medium uppercase outline-none">
+            Your APIs
+          </h2>
+          <Link href="/apis/new" className={buttonVariants({ size: "sm" })}>Add an API</Link>
+        </div>
+        {apis.length === 0 ? (
+          <EmptyState title="You haven't listed an API yet." detail="Add your first API with a link to its OpenAPI description." />
+        ) : (
+          <ul className="overflow-hidden rounded-[2px] border-2 border-ink bg-frost">
+            {apis.map((a, i) => (
+              <ApiRow key={a.id} api={a} first={i === 0} leaving={leaving.has(a.id)} onDelete={() => del(a)} onRetire={() => retire(a)} />
+            ))}
+          </ul>
+        )}
+      </section>
+    </>
+  );
+}
+
+function Total({ label, value }: { label: string; value: string }) {
+  return (
+    <li className="rounded-[2px] border-2 border-ink bg-frost p-4">
+      <p className="text-caption uppercase tracking-[0.04em] text-graphite">{label}</p>
+      <p className="mt-1 text-h-sm font-medium tabular-nums">{value}</p>
+    </li>
+  );
+}
+
+function ApiRow({ api: a, first, leaving, onDelete, onRetire }: {
+  api: AccountApi;
+  first: boolean;
+  leaving: boolean;
+  onDelete: () => Promise<void>;
+  onRetire: () => Promise<void>;
+}) {
+  const nameId = `api-${a.id}-name`;
+  const rate = passRatePct(a);
+  const live = a.state === "live";
+  return (
+    <li
+      aria-labelledby={nameId}
+      aria-hidden={leaving || undefined}
+      className={cn(
+        "grid transition-[grid-template-rows,opacity] ease-out motion-reduce:transition-none",
+        leaving ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr] opacity-100",
+      )}
+      style={{ transitionDuration: `${COLLAPSE_MS}ms` }}
+    >
+      <div className="min-h-0 overflow-hidden">
+        <div className={cn("space-y-4 p-4", !first && "border-t-2 border-ink")}>
+          <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+            <div className="min-w-0 space-y-1">
+              <h3 id={nameId} className="text-body-lg font-medium break-words">{a.name}</h3>
+              {a.badge.detail && <p className="text-caption text-graphite">{a.badge.detail}</p>}
+            </div>
+            <Badge variant={BADGE_VARIANT[a.badge.tone]}>{a.badge.label}</Badge>
+          </div>
+
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-body sm:grid-cols-4">
+            <Fact label="Paid calls, 24 h" value={String(a.paidCallsDay)} />
+            <Fact label="Kept the promise" value={rate === null ? "No paid calls" : `${rate}%`} />
+            <Fact label="Received" value={`${formatTusdm(a.receivedMicros)} tUSDM`} />
+            <Fact label="Last health check" value={a.healthCheckedAt ? formatTime(a.healthCheckedAt) : live ? "Not yet" : "Not monitored"} />
+          </dl>
+
+          <div className="flex flex-wrap gap-2">
+            <Link href={`/apis/${a.id}`} className={buttonVariants({ variant: "outline", size: "xs" })}>Open</Link>
+            {live && (
+              <Link href={`/p/${a.id}/try`} className={buttonVariants({ variant: "outline", size: "xs" })}>Try it live</Link>
+            )}
+            {live && (
+              <ConfirmDialog
+                triggerLabel="Retire"
+                title={`Retire ${a.name}?`}
+                description="New sales stop and the API leaves the agent market. This can't be undone."
+                confirmLabel="Retire API"
+                pendingLabel="Retiring…"
+                onConfirm={onRetire}
+              />
+            )}
+            {a.deleteBlocker === null && (
+              <ConfirmDialog
+                triggerLabel="Delete"
+                triggerVariant="destructive"
+                title={`Delete ${a.name}?`}
+                description="It never went live, so nothing on Masumi points at it. This can't be undone."
+                details={
+                  <ul className="list-disc space-y-1 pl-5 text-body text-graphite">
+                    <li>The API and its endpoints</li>
+                    <li>Promises, test inputs and test calls</li>
+                    <li>Prices, ownership checks and progress</li>
+                    <li>Chat messages about it</li>
+                  </ul>
+                }
+                confirmLabel="Delete API"
+                pendingLabel="Deleting…"
+                typeToConfirm={a.name}
+                onConfirm={onDelete}
+              />
+            )}
+          </div>
+        </div>
+      </div>
+    </li>
+  );
+}
+
+function Fact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-caption uppercase tracking-[0.04em] text-graphite">{label}</dt>
+      <dd className="mt-0.5 font-medium tabular-nums break-words">{value}</dd>
+    </div>
+  );
+}
