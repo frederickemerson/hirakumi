@@ -44,8 +44,8 @@ All on Cardano preprod. Explorer: https://preprod.cardanoscan.io
 - Job `job_jeabut75wv`, purchase `cmuwhphm300101op0gvur9kgw`, 2 tUSDM, input `{"symbol":"ADA"}`
 - Payment (lock) tx: `e88f05f6a46144e0f3f9a5c4eae8de3ae7076aa5ec07fc35c35373179177fed9` (09:44:03 UTC)
 - Result submitted by seller tx: `f60d247d30e075f69cd5b876c49df45a4aadf68fa7fc67d0a00c60edb2321fd2` (09:45:36 UTC); buyer verified the MIP-004 output hash
-- Seller collection tx: _pending (after unlock time)_
-- Net amount to seller: _fill from the collection tx_
+- Seller collection tx: `6fd28bb92094e8fd5e9332d644c8fd7fd6f2c4572847ded32bcb22df9a46ae4a` (10:29 UTC): spends the escrow lock and pays the seller's verified address (`sellerReturnAddress`, `addr_test1qq8ag9…`, the API owner's own wallet)
+- Net amount to seller: 2.00 tUSDM (unit `16a55b2a…0014df10745553444d`), no fee taken
 
 ### Escrow job that broke its promise → automatic refund
 - Job `job_zfj73wqatd`, purchase `cmuwhthj3001h1op0hwc92skw`, 2 tUSDM; demo API switched to stale data
