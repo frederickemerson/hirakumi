@@ -43,6 +43,22 @@ describe("safeFetch blocks", () => {
   ])("%s", async (_name, url) => {
     await expect(safeFetch(url, { method: "GET" })).rejects.toBeInstanceOf(UpstreamBlockedError);
   });
+  it("refusing redirects and oversize bodies leaves no unhandled stream error", async () => {
+    process.env.ALLOW_INSECURE_UPSTREAM = "1";
+    const errors: unknown[] = [];
+    const onErr = (e: unknown) => errors.push(e);
+    process.on("uncaughtException", onErr);
+    try {
+      for (let i = 0; i < 20; i++) {
+        await expect(safeFetch(`${base}/redirect`, { method: "GET" })).rejects.toBeInstanceOf(UpstreamBlockedError);
+        await expect(safeFetch(`${base}/big`, { method: "GET" }, { maxBytes: 1000 })).rejects.toBeInstanceOf(UpstreamTooLargeError);
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    } finally {
+      process.off("uncaughtException", onErr);
+    }
+    expect(errors).toEqual([]);
+  });
   it("redirects are refused, not followed", async () => {
     process.env.ALLOW_INSECURE_UPSTREAM = "1";
     await expect(safeFetch(`${base}/redirect`, { method: "GET" })).rejects.toBeInstanceOf(UpstreamBlockedError);

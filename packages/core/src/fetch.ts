@@ -54,6 +54,13 @@ function pinnedLookup(hostname: string, options: { all?: boolean; family?: numbe
 const strictAgent = new Agent({ connect: { lookup: pinnedLookup as unknown as LookupFunction }, keepAliveTimeout: 10_000 });
 const localAgent = new Agent({ keepAliveTimeout: 10_000 });
 
+/** Drop a response body we refuse. The listener matters: destroy() makes undici emit an
+ *  AbortError on the stream, and an unhandled stream error would crash the process. */
+function discard(body: NodeJS.ReadableStream & { destroy(): void }): void {
+  body.on("error", () => undefined);
+  body.destroy();
+}
+
 export async function safeFetch(
   url: string,
   init: { method: string; headers?: Record<string, string>; body?: string },
@@ -92,7 +99,7 @@ export async function safeFetch(
       signal,
     });
     if (res.statusCode >= 300 && res.statusCode < 400) {
-      res.body.destroy();
+      discard(res.body);
       throw new UpstreamBlockedError(`redirects are not followed (status ${res.statusCode})`);
     }
     const chunks: Buffer[] = [];
@@ -100,7 +107,7 @@ export async function safeFetch(
     for await (const chunk of res.body) {
       size += (chunk as Buffer).length;
       if (size > maxBytes) {
-        res.body.destroy();
+        discard(res.body);
         throw new UpstreamTooLargeError(`response is over ${maxBytes} bytes`);
       }
       chunks.push(chunk as Buffer);
