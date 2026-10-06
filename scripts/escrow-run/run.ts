@@ -262,7 +262,7 @@ async function settle(name: string) {
   if (lock.datum.stage.kind !== "closing") throw new Error("not closing");
   const from = settleFromMs(lock.datum.stage.contestEnd);
   await waitChainTime(from);
-  const b = await buildSettle(operator, { lock, script: SCRIPT, fromMs: from });
+  const b = await buildSettle(operator, { lock, script: SCRIPT, signerVkh: operatorW.vkh, fromMs: from });
   log(`${name} Settle payouts: ${b.payouts.map((p) => `${p.address.slice(0, 20)}… ${p.tokens} micros + ${p.lovelace} lovelace`).join("; ")}`);
   await evaluateFinal(b.signBuilder);
   log(`${name} Settle ex-units (fixed, +5%): mem ${b.exUnits.mem} steps ${b.exUnits.steps}; fee ${b.fee} ≤ budget ${FEE_BUDGET}`);
@@ -337,7 +337,7 @@ async function debugSettle(name: string) {
       return Effect.succeed([{ ex_units: new Redeemer.ExUnits({ mem: 3_000_000n, steps: 1_500_000_000n }), redeemer_index: idx, redeemer_tag: "spend" as const }]);
     },
   };
-  const b = await buildSettle(operator, { lock, script: SCRIPT, fromMs: settleFromMs(lock.datum.stage.contestEnd), build: { evaluator } as never });
+  const b = await buildSettle(operator, { lock, script: SCRIPT, signerVkh: operatorW.vkh, fromMs: settleFromMs(lock.datum.stage.contestEnd), build: { evaluator } as never });
   log(`built with fee ${b.fee}; payouts ${JSON.stringify(b.payouts, (_, v) => (typeof v === "bigint" ? v.toString() : v))}`);
   const res = await fetch(`${BF.baseUrl}/utils/txs/evaluate?version=6`, { method: "POST", headers: { project_id: BF.projectId, "content-type": "application/cbor" }, body: captured });
   log(`evaluate: ${res.status} ${(await res.text()).slice(0, 3000)}`);

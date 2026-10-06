@@ -2,8 +2,8 @@ use aiken/interval.{after, between}
 use cardano/transaction.{OutputReference, Transaction}
 use hirakumi/escrow
 use hirakumi/fixtures.{
-  buyer, buyer_vkh, close_hi, close_lo, contest_end, continuing, datum,
-  fee_address, lock_input, operator_input, own_ref, seller, tagged, tx,
+  buyer, buyer_vkh, close_hi, close_lo, closer_vkh, contest_end, continuing,
+  datum, fee_address, lock_input, operator_input, own_ref, seller, tagged, tx,
 }
 use hirakumi/types.{Close, Closing, Open, PackDatum, PackRedeemer, Settle}
 
@@ -52,7 +52,7 @@ test spend_close_then_settle_through_the_handler() {
         [lock_input(closing)],
         [tagged(buyer(), 2_000_000, 1_600_000)],
         after(contest_end + 1),
-        [],
+        [closer_vkh],
         400_000,
       ),
     ),
@@ -73,7 +73,7 @@ test spend_settle_split_through_the_handler() {
         tagged(buyer(), 760_000, 1_600_000),
       ],
       after(contest_end + 1),
-      [],
+      [closer_vkh],
       400_000,
     ),
   )
@@ -89,7 +89,7 @@ test spend_rejects_missing_datum() fail {
       [lock_input(d)],
       [tagged(buyer(), 2_000_000, 1_600_000)],
       after(contest_end + 1),
-      [],
+      [closer_vkh],
       400_000,
     ),
   )

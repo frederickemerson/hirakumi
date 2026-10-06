@@ -1,7 +1,9 @@
 // Close / Raise / Settle (and reference-script deploy) transactions for the
 // pack_escrow validator, built with the Evolution SDK that ships with
 // @x402/cardano. The submitter's wallet funds fees, collateral and any min-ADA
-// top-up; Settle's network fee comes out of the locked lovelace (validator rule).
+// top-up. Settle's network fee comes out of the locked lovelace, which the
+// validator allows only for a Settle signed by the closer or the buyer; so
+// buildSettle always adds such a required signer.
 import {
   Address,
   Assets,
@@ -22,7 +24,8 @@ import type { BuildOptions, Evaluator } from "@evolution-sdk/evolution/sdk/build
 import { Effect } from "effect";
 import { addressFromSeed } from "@evolution-sdk/evolution/sdk/wallet/Derivation";
 import { PACK_ESCROW } from "./blueprint.js";
-import { decodePackDatum, packDatumToData, type PackDatum } from "./datum.js";
+import { parseAddress } from "./address.js";
+import { MAX_CLOSE_WINDOW_MS, MIN_CONTEST_PERIOD_MS, decodePackDatum, packDatumToData, type PackDatum } from "./datum.js";
 import { hexOf } from "./hex.js";
 import { verifyReceipt } from "./iou.js";
 import { settleObligations } from "./payouts.js";
@@ -54,7 +57,11 @@ const COINS_PER_UTXO_BYTE = 4310n;
 // suffices. Asking for more makes lean wallets fail with a collateral return below min-UTxO.
 const COLLATERAL = 1_050_000n;
 
-export type LockState = { utxo: UTxO.UTxO; datum: PackDatum; lovelace: bigint; tokens: bigint };
+/**
+ * `other`: every asset in the lock besides lovelace and the pack token, by unit
+ * (policy id hex ‖ asset name hex). Settle must return them to the buyer.
+ */
+export type LockState = { utxo: UTxO.UTxO; datum: PackDatum; lovelace: bigint; tokens: bigint; other: Record<string, bigint> };
 
 /** Decodes a pack UTxO read from the chain. Throws when it isn't one. */
 export function lockState(utxo: UTxO.UTxO): LockState {
@@ -62,19 +69,43 @@ export function lockState(utxo: UTxO.UTxO): LockState {
   const d = utxo.datumOption;
   if (!d || !InlineDatum.isInlineDatum(d)) throw new Error("lock has no inline datum");
   const datum = decodePackDatum(Data.toCBORHex(d.data));
-  return { utxo, datum, lovelace: Assets.lovelaceOf(utxo.assets), tokens: Assets.getByUnit(utxo.assets, datum.policyId + datum.assetName) };
+  const pack = datum.policyId + datum.assetName;
+  const other: Record<string, bigint> = {};
+  for (const unit of Assets.getUnits(utxo.assets)) {
+    if (unit === "lovelace" || unit === pack) continue;
+    const q = Assets.getByUnit(utxo.assets, unit);
+    if (q > 0n) other[unit] = q;
+  }
+  return { utxo, datum, lovelace: Assets.lovelaceOf(utxo.assets), tokens: Assets.getByUnit(utxo.assets, pack), other };
 }
 
-const packAssets = (d: PackDatum, tokens: bigint, lovelace: bigint) =>
-  tokens > 0n ? Assets.fromHexStrings(d.policyId, d.assetName, tokens, lovelace) : Assets.fromLovelace(lovelace);
+const packAssets = (d: PackDatum, tokens: bigint, lovelace: bigint, other?: Record<string, bigint>) => {
+  const base = tokens > 0n ? Assets.fromHexStrings(d.policyId, d.assetName, tokens, lovelace) : Assets.fromLovelace(lovelace);
+  return other && Object.keys(other).length > 0 ? Assets.merge(base, Assets.fromRecord({ ...other, lovelace: 0n })) : base;
+};
+
+/**
+ * Validity range and contest end of a Close, exactly as the validator sees them:
+ * both bounds slot-aligned, `to − from ≤ MAX_CLOSE_WINDOW_MS` (on-chain
+ * `max_close_window`), and contest_end = to + max(contestPeriod, MIN_CONTEST_PERIOD_MS)
+ * (on-chain `min_contest_period`). Throws on an empty or over-long window.
+ */
+export function closeValidity(validFromMs: bigint, validToMs: bigint, contestPeriod: bigint): { from: bigint; to: bigint; contestEnd: bigint } {
+  const from = alignMs(validFromMs);
+  const to = alignMs(validToMs);
+  if (from >= to) throw new Error("Close validity range is empty (validFrom must be before validTo)");
+  if (to - from > MAX_CLOSE_WINDOW_MS) throw new Error(`Close validity range exceeds ${MAX_CLOSE_WINDOW_MS} ms`);
+  const period = contestPeriod > MIN_CONTEST_PERIOD_MS ? contestPeriod : MIN_CONTEST_PERIOD_MS;
+  return { from, to, contestEnd: to + period };
+}
 
 const inline = (data: Data.Data) => new InlineDatum.InlineDatum({ data });
 
 /** Lovelace the continuing output needs: at least what it had, and at least min-UTxO for the (bigger) next datum. */
-export function continuingLovelace(next: PackDatum, tokens: bigint, lovelaceIn: bigint): bigint {
+export function continuingLovelace(next: PackDatum, tokens: bigint, lovelaceIn: bigint, other?: Record<string, bigint>): bigint {
   const out = new TxOut.TransactionOutput({
     address: Address.fromBech32(PACK_ESCROW.address),
-    assets: packAssets(next, tokens, lovelaceIn > 5_000_000n ? lovelaceIn : 5_000_000n),
+    assets: packAssets(next, tokens, lovelaceIn > 5_000_000n ? lovelaceIn : 5_000_000n, other),
     datumOption: inline(packDatumToData(next)),
   });
   const min = BigInt(160 + TxOut.toCBORBytes(out).length) * COINS_PER_UTXO_BYTE;
@@ -101,27 +132,38 @@ async function feeOf(sb: Built["signBuilder"]): Promise<bigint> {
 }
 
 /**
- * Open → Closing{accepted, contest_end = validTo + contest_period}.
+ * Open → Closing{accepted, contest_end = validTo + max(contest_period, 60 s)}.
  * `signerVkh` must be the closer or the buyer's payment key hash, and the wallet must hold that key.
  * accepted = 0 needs no IOU (signature ignored).
+ * The validity range [validFromMs, validToMs] may span at most MAX_CLOSE_WINDOW_MS (1 h);
+ * validFromMs defaults to one minute ago.
  */
 export async function buildClose(
   w: Wallet,
-  p: { lock: LockState; accepted: bigint; signature?: string; signerVkh: string; validToMs: bigint; script: ScriptSource; build?: BuildOptions },
+  p: {
+    lock: LockState;
+    accepted: bigint;
+    signature?: string;
+    signerVkh: string;
+    validToMs: bigint;
+    validFromMs?: bigint;
+    script: ScriptSource;
+    build?: BuildOptions;
+  },
 ): Promise<Built> {
   const { datum, tokens, lovelace } = p.lock;
   if (datum.stage.kind !== "open") throw new Error("pack is not Open");
   if (p.accepted < 0n || p.accepted > datum.maxCalls) throw new Error("accepted out of range");
   const sig = p.accepted === 0n ? "" : (p.signature ?? "");
   if (p.accepted > 0n && !verifyReceipt(datum.receiptKey, datum.channelId, p.accepted, sig)) throw new Error("IOU does not verify");
-  const to = alignMs(p.validToMs);
-  const next: PackDatum = { ...datum, stage: { kind: "closing", accepted: p.accepted, contestEnd: to + datum.contestPeriod } };
-  const lov = continuingLovelace(next, tokens, lovelace);
+  const { from, to, contestEnd } = closeValidity(p.validFromMs ?? BigInt(Date.now()) - 60_000n, p.validToMs, datum.contestPeriod);
+  const next: PackDatum = { ...datum, stage: { kind: "closing", accepted: p.accepted, contestEnd } };
+  const lov = continuingLovelace(next, tokens, lovelace, p.lock.other);
   const sb = await withScript(w.newTx(), p.script)
     .collectFrom({ inputs: [p.lock.utxo], redeemer: Redeemer.close(p.accepted, sig) })
-    .payToAddress({ address: Address.fromBech32(PACK_ESCROW.address), assets: packAssets(datum, tokens, lov), datum: inline(packDatumToData(next)) })
+    .payToAddress({ address: Address.fromBech32(PACK_ESCROW.address), assets: packAssets(datum, tokens, lov, p.lock.other), datum: inline(packDatumToData(next)) })
     .addSigner({ keyHash: KeyHash.fromHex(p.signerVkh) })
-    .setValidity({ to })
+    .setValidity({ from, to })
     .build({ changeAddress: await w.address(), availableUtxos: await walletUtxos(w, p.script), setCollateral: COLLATERAL, ...p.build });
   return { signBuilder: sb, fee: await feeOf(sb), next };
 }
@@ -140,10 +182,10 @@ export async function buildRaise(
   let to = alignMs(p.validToMs);
   if (to > end - 1000n) to = alignMs(end - 1000n);
   const next: PackDatum = { ...datum, stage: { kind: "closing", accepted: p.accepted, contestEnd: end } };
-  const lov = continuingLovelace(next, tokens, lovelace);
+  const lov = continuingLovelace(next, tokens, lovelace, p.lock.other);
   const sb = await withScript(w.newTx(), p.script)
     .collectFrom({ inputs: [p.lock.utxo], redeemer: Redeemer.raise(p.accepted, p.signature) })
-    .payToAddress({ address: Address.fromBech32(PACK_ESCROW.address), assets: packAssets(datum, tokens, lov), datum: inline(packDatumToData(next)) })
+    .payToAddress({ address: Address.fromBech32(PACK_ESCROW.address), assets: packAssets(datum, tokens, lov, p.lock.other), datum: inline(packDatumToData(next)) })
     .setValidity({ to })
     .build({ changeAddress: await w.address(), availableUtxos: await walletUtxos(w, p.script), setCollateral: COLLATERAL, ...p.build });
   return { signBuilder: sb, fee: await feeOf(sb), next };
@@ -157,7 +199,12 @@ export function settleFromMs(contestEnd: bigint): bigint {
 
 /**
  * Closing → paid out. Outputs follow `settleObligations` (per-address, tagged with
- * channel_id). The buyer's lovelace is `locked − tx.fee`, which is circular:
+ * channel_id); any foreign assets in the lock go to the buyer.
+ *
+ * The tx is signed by `signerVkh`, which must be the datum's closer or the buyer's
+ * payment key hash (the wallet must hold that key). Only such a Settle may charge
+ * the buyer the network fee; an unsigned one must give the buyer all the locked
+ * lovelace. Here the buyer's lovelace is `locked − tx.fee`, which is circular:
  *  1. Build once with the buyer getting ALL the locked lovelace. That passes the
  *     validator whatever the draft fee is, so normal evaluation yields the real ex-units.
  *  2. Rebuild with those ex-units fixed (+5%) and buyer = locked − fee until the fee
@@ -167,10 +214,15 @@ export function settleFromMs(contestEnd: bigint): bigint {
  */
 export async function buildSettle(
   w: Wallet,
-  p: { lock: LockState; script: ScriptSource; fromMs?: bigint; build?: BuildOptions },
+  p: { lock: LockState; script: ScriptSource; signerVkh: string; fromMs?: bigint; build?: BuildOptions },
 ): Promise<Built & { payouts: ReturnType<typeof settleObligations>; exUnits: { mem: bigint; steps: bigint } }> {
-  const { datum, tokens, lovelace } = p.lock;
+  const { datum, tokens, lovelace, other } = p.lock;
   if (datum.stage.kind !== "closing") throw new Error("pack is not Closing");
+  const signer = hexOf("signerVkh", p.signerVkh, 28);
+  const buyerPay = parseAddress("buyerRefund", datum.buyerRefund).payment;
+  if (signer !== datum.closer && !(buyerPay.kind === "key" && buyerPay.hash === signer)) {
+    throw new Error("signerVkh must be the datum's closer or the buyer's payment key hash");
+  }
   const from = p.fromMs ?? settleFromMs(datum.stage.contestEnd);
   const tag = inline(Data.bytearray(datum.channelId));
   const avail = await walletUtxos(w, p.script);
@@ -178,12 +230,12 @@ export async function buildSettle(
   const lockRef = `${TransactionHash.toHex(p.lock.utxo.transactionId)}#${p.lock.utxo.index}`;
 
   const once = (assumedFee: bigint, extra?: Partial<BuildOptions>) => {
-    const payouts = settleObligations(datum, { tokens, lovelace }, assumedFee);
+    const payouts = settleObligations(datum, { tokens, lovelace }, assumedFee, { chargeFee: true, other });
     let tx = withScript(w.newTx(), p.script).collectFrom({ inputs: [p.lock.utxo], redeemer: Redeemer.settle() });
     for (const o of payouts) {
-      tx = tx.payToAddress({ address: Address.fromBech32(o.address), assets: packAssets(datum, o.tokens, o.lovelace), datum: tag, autoMinUtxo: true });
+      tx = tx.payToAddress({ address: Address.fromBech32(o.address), assets: packAssets(datum, o.tokens, o.lovelace, o.other), datum: tag, autoMinUtxo: true });
     }
-    return { payouts, sb: tx.setValidity({ from }).build({ changeAddress: change, availableUtxos: avail, setCollateral: COLLATERAL, ...p.build, ...extra }) };
+    return { payouts, sb: tx.addSigner({ keyHash: KeyHash.fromHex(signer) }).setValidity({ from }).build({ changeAddress: change, availableUtxos: avail, setCollateral: COLLATERAL, ...p.build, ...extra }) };
   };
 
   const first = await once(0n).sb;

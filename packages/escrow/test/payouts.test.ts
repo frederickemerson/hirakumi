@@ -81,6 +81,35 @@ describe("settleObligations — what Settle checks, aggregated per address", () 
     ]);
   });
 
+  it("chargeFee: false (unsigned Settle) gives the buyer all the locked lovelace", () => {
+    expect(
+      settleObligations(closing, { tokens: 2_000_000n, lovelace: 2_000_000n }, 400_000n, { chargeFee: false }),
+    ).toEqual([
+      { address: SELLER, tokens: 1_202_800n, lovelace: 0n },
+      { address: FEE, tokens: 37_200n, lovelace: 0n },
+      { address: BUYER, tokens: 760_000n, lovelace: 2_000_000n },
+    ]);
+    // Default (3-argument form) still charges the buyer.
+    expect(settleObligations(closing, { tokens: 2_000_000n, lovelace: 2_000_000n }, 400_000n, { chargeFee: true })).toEqual(
+      settleObligations(closing, { tokens: 2_000_000n, lovelace: 2_000_000n }, 400_000n),
+    );
+  });
+
+  it("other: foreign assets go to the buyer, merged when the buyer shares an address, zero quantities dropped", () => {
+    const unit = "0a".repeat(28) + "6e6674";
+    expect(
+      settleObligations({ ...closing, seller: BUYER }, { tokens: 2_000_000n, lovelace: 2_000_000n }, 400_000n, {
+        other: { [unit]: 3n, ["0b".repeat(28)]: 0n },
+      }),
+    ).toEqual([
+      { address: BUYER, tokens: 1_962_800n, lovelace: 1_600_000n, other: { [unit]: 3n } },
+      { address: FEE, tokens: 37_200n, lovelace: 0n },
+    ]);
+    expect(settleObligations(closing, { tokens: 2_000_000n, lovelace: 2_000_000n }, 400_000n, { other: {} })[2]).not.toHaveProperty(
+      "other",
+    );
+  });
+
   it("refuses a datum that isn't Closing", () => {
     expect(() => settleObligations(goldenDatum(), { tokens: 1n, lovelace: 1n }, 0n)).toThrow(/Closing/);
   });
