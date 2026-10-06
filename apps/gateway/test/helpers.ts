@@ -12,7 +12,9 @@ export type StubMode = "ok" | "empty" | "stale" | "error500" | "slow" | "html";
 export type StubUpstream = {
   origin: string;
   setMode(m: StubMode): void;
-  setChallenge(path: string, body: string): void;
+  /** Serve `body` at `path` (any path but /price), e.g. the seller's OpenAPI file. */
+  setFile(path: string, body: string, opts?: { status?: number; contentType?: string; headers?: Record<string, string> }): void;
+  fileHits(path: string): number;
   hits(): number;
   lastHeaders(): http.IncomingHttpHeaders | null;
   close(): Promise<void>;
@@ -23,13 +25,14 @@ export async function startStubUpstream(): Promise<StubUpstream> {
   let mode: StubMode = "ok";
   let hits = 0;
   let last: http.IncomingHttpHeaders | null = null;
-  const files = new Map<string, string>();
+  const files = new Map<string, { body: string; status: number; headers: Record<string, string> }>();
+  const fileHits = new Map<string, number>();
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://stub");
-    if (url.pathname.startsWith("/.well-known/hirakumi/")) {
-      const body = files.get(url.pathname);
-      if (body === undefined) { res.writeHead(404); res.end(); return; }
-      res.writeHead(200, { "content-type": "text/plain" }); res.end(body); return;
+    const file = files.get(url.pathname);
+    if (file) {
+      fileHits.set(url.pathname, (fileHits.get(url.pathname) ?? 0) + 1);
+      res.writeHead(file.status, file.headers); res.end(file.body); return;
     }
     if (url.pathname !== "/price") { res.writeHead(404); res.end(); return; }
     hits += 1;
@@ -52,7 +55,10 @@ export async function startStubUpstream(): Promise<StubUpstream> {
   return {
     origin: `http://127.0.0.1:${port}`,
     setMode: (m) => { mode = m; },
-    setChallenge: (path, body) => { files.set(path, body); },
+    setFile: (path, body, o = {}) => {
+      files.set(path, { body, status: o.status ?? 200, headers: { "content-type": o.contentType ?? "application/json", ...o.headers } });
+    },
+    fileHits: (path) => fileHits.get(path) ?? 0,
     hits: () => hits,
     lastHeaders: () => last,
     close: () => new Promise((r) => { server.closeAllConnections(); server.close(() => r()); }),

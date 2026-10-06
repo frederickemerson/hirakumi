@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildWalletChallenge, httpChallengePath, type WalletChallengeFields } from "../src/challenge";
+import { buildWalletChallenge, type WalletChallengeFields } from "../src/challenge";
 
 const fields: WalletChallengeFields = {
   domain: "hirakumi.vercel.app", sellerId: "sel_abcdefghij", apiId: "api_abcdefghij",
@@ -26,9 +26,5 @@ describe("challenge", () => {
   });
   it("refuses mainnet addresses", () => {
     expect(() => buildWalletChallenge({ ...fields, payTo: "addr1qxyz" })).toThrow(/addr_test1/);
-  });
-  it("httpChallengePath", () => {
-    expect(httpChallengePath("api_abcdefghij")).toBe("/.well-known/hirakumi/api_abcdefghij.txt");
-    expect(() => httpChallengePath("../etc/passwd")).toThrow(/api id/);
   });
 });

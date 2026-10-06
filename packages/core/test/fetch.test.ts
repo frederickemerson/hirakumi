@@ -68,6 +68,9 @@ describe("safeFetch blocks", () => {
   it("redirects are refused, not followed", async () => {
     process.env.ALLOW_INSECURE_UPSTREAM = "1";
     await expect(safeFetch(`${base}/redirect`, { method: "GET" })).rejects.toBeInstanceOf(UpstreamBlockedError);
+    await expect(safeFetch(`${base}/redirect`, { method: "GET" })).rejects.toMatchObject({
+      name: "UpstreamRedirectError", status: 302, location: "http://169.254.169.254/",
+    });
   });
 });
 
