@@ -21,14 +21,14 @@ describe("processHealthEvents", () => {
     await probe(apiId, `c3_${apiId}`, "fail", "2026-10-07T10:00:20Z");
     await db.pool.query(
       `insert into health_events (api_id, from_health, to_health, reasons, at) values ($1, 'healthy', 'down', $2::jsonb, '2026-10-07T10:00:20Z')`,
-      [apiId, JSON.stringify(["/price: must be number"])],
+      [apiId, JSON.stringify([{ op: "getPrice", reason: "/price must be number", since: "2026-10-07T10:00:10Z" }])], // contract D5 shape
     );
     expect(await processHealthEvents(db.pool, "https://web.test")).toBe(1);
     expect(await processHealthEvents(db.pool, "https://web.test")).toBe(0);
     const msgs = await messagesFor(db.pool, apiId);
     expect(msgs).toHaveLength(1);
     expect(msgs[0].task_id).toBe("tsk_h");
-    expect(msgs[0].body).toContain("Failing check: /price: must be number. First failed test: 2026-10-07 10:00:10 UTC.");
+    expect(msgs[0].body).toContain("Failing check: getPrice: /price must be number. First failed test: 2026-10-07 10:00:10 UTC.");
   });
 
   it("announces recovery", async () => {

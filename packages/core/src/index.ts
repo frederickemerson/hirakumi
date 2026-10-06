@@ -4,3 +4,4 @@ export * from "./hashing";
 export * from "./challenge";
 export * from "./rules";
 export * from "./fetch";
+export * from "./health";

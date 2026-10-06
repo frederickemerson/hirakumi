@@ -1,3 +1,4 @@
+import { formatHealthReasons } from "@hirakumi/core";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AutoRefresh } from "@/components/auto-refresh";
@@ -30,9 +31,6 @@ function Stat({ label, value, note }: { label: string; value: string; note?: str
   );
 }
 
-function stringReasons(r: unknown): string[] {
-  return Array.isArray(r) ? r.filter((x): x is string => typeof x === "string") : [];
-}
 
 export default async function OverviewPage({ params }: { params: Promise<{ apiId: string }> }) {
   const { apiId } = await params;
@@ -113,7 +111,7 @@ export default async function OverviewPage({ params }: { params: Promise<{ apiId
               <li key={new Date(i.downAt).toISOString()} className="rounded-lg border p-4 text-sm">
                 <p className="font-medium">{`Down from ${formatTime(i.downAt)} ${i.upAt ? `to ${formatTime(i.upAt)}` : "until now"}`}</p>
                 <p>{`${i.creditsUsed} credits used while Down. ${i.callsNotPassed} paid calls didn't pass and used no credits.`}</p>
-                <ul className="list-disc pl-5 text-muted-foreground">{stringReasons(i.reasons).map((r) => <li key={r}>{r}</li>)}</ul>
+                <ul className="list-disc pl-5 text-muted-foreground">{formatHealthReasons(i.reasons).map((r) => <li key={r}>{r}</li>)}</ul>
               </li>
             ))}
           </ul>

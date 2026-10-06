@@ -1,3 +1,4 @@
+import { formatHealthReasons } from "@hirakumi/core";
 import type pg from "pg";
 import { withTx } from "./db.js";
 import { apiLink } from "./links.js";
@@ -28,7 +29,7 @@ export async function processHealthEvents(pool: pg.Pool, webBaseUrl: string): Pr
      where he.notified_at is null order by he.id limit 50`,
   );
   for (const e of rows) {
-    const reasons = Array.isArray(e.reasons) ? e.reasons.map(String) : [];
+    const reasons = formatHealthReasons(e.reasons);
     let body: string;
     if (e.to_health === "down") {
       const first = (await firstFailureAt(pool, e.api_id, e.at)) ?? e.at;
