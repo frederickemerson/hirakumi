@@ -3,6 +3,7 @@ import { getRuleByHash } from "@hirakumi/db";
 import { creditsRouter } from "./credits";
 import type { AppDeps } from "./deps";
 import { errorHandler } from "./http";
+import { internalRouter } from "./internal";
 import { mip003Router } from "./mip003";
 import { packRouter } from "./packs";
 
@@ -12,6 +13,7 @@ export function createApp(d: AppDeps): Express {
   app.disable("x-powered-by");
   app.use(express.json({ limit: "256kb" }));
   app.get("/healthz", (_req, res) => { res.json({ ok: true }); });
+  app.use(internalRouter(d));
   app.use(packRouter(d));
   app.use(creditsRouter(d));
   app.use(mip003Router(d));
