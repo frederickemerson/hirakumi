@@ -66,7 +66,7 @@ describe(`migration ${MIGRATION}`, () => {
     ]);
     // From now on the index holds: a new listing of that base can't become active.
     await expect(sql`update apis set state = 'ownership_verified' where id = 'api_trying'`).rejects.toThrow(/apis_active_base_uniq/);
-  });
+  }, 30_000); // replays every migration twice; slow under a parallel workspace run
 
   it("applies cleanly on a database without duplicates", async () => {
     const { sql } = await schemaBefore(MIGRATION);
