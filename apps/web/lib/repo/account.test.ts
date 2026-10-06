@@ -79,7 +79,7 @@ describe("getAccount", () => {
     expect(byId.get(retired.id)).toMatchObject({ tone: "retired", label: "Retired" });
   });
 
-  it("says which APIs can be deleted, by the same rule as the delete route", async () => {
+  it("says which APIs keep their records when deleted, by the same rule as the delete route", async () => {
     const seller = await seedSeller();
     const fresh = await seedApi(seller.id, "priced");
     const started = await seedApi(seller.id, "priced");
@@ -88,10 +88,18 @@ describe("getAccount", () => {
     const pack = await seedPack(sold.id);
     await seedCreditToken(sold.id, pack.id);
     const live = await seedApi(seller.id, "live");
-    const byId = new Map((await getAccount(getSql(), seller.id))!.apis.map((a) => [a.id, a.deleteBlocker]));
+    const byId = new Map((await getAccount(getSql(), seller.id))!.apis.map((a) => [a.id, a.recordsKept]));
     expect(byId.get(fresh.id)).toBeNull();
-    expect(byId.get(started.id)).toBe("This API reached the Masumi registry, so its records stay.");
-    expect(byId.get(sold.id)).toBe("Buyers paid for this API, so its records stay.");
-    expect(byId.get(live.id)).toBe("This API is on the Masumi registry. Retire it instead.");
+    expect(byId.get(started.id)).toBe("It reached the Masumi registry, so we keep its records.");
+    expect(byId.get(sold.id)).toBe("Buyers paid for it, so we keep their receipts.");
+    expect(byId.get(live.id)).toBe("It reached the Masumi registry, so we keep its records.");
+  });
+
+  it("leaves out deleted APIs", async () => {
+    const seller = await seedSeller();
+    const kept = await seedApi(seller.id, "priced");
+    const gone = await seedApi(seller.id, "retired");
+    await getSql()`update apis set deleted_at = now() where id = ${gone.id}`;
+    expect((await getAccount(getSql(), seller.id))!.apis.map((a) => a.id)).toEqual([kept.id]);
   });
 });

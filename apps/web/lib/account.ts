@@ -26,7 +26,8 @@ export type AccountApi = {
   receivedMicros: string;
   badge: ApiBadge;
   /** Null when the seller may delete this API; otherwise why not. */
-  deleteBlocker: string | null;
+  /** Why deleting it keeps its records (it is hidden instead of erased), or null when it is erased. */
+  recordsKept: string | null;
 };
 
 export type Account = {

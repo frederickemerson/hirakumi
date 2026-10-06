@@ -1,5 +1,5 @@
 import { apiBadge, type Account, type AccountApi } from "../account";
-import { deleteBlocker } from "../api-delete";
+import { recordsKeptReason } from "../api-delete";
 import type { Sql } from "../db";
 import { buildTimeline } from "../timeline";
 import type { ApiState, Health, OnboardStep } from "../types";
@@ -31,7 +31,7 @@ type Row = {
 
 /**
  * The account page in one query: the seller, and every API with its 24 hour paid calls, what it received, its
- * onboarding steps and the delete facts. The numbers use the same definitions as getOverviewStats.
+ * onboarding steps and whether deleting it keeps its records. The numbers use the same definitions as getOverviewStats.
  * A seller without APIs still yields one row (the left join), with a null API id.
  */
 export async function getAccount(sql: Sql, sellerId: string): Promise<Account | null> {
@@ -45,7 +45,7 @@ export async function getAccount(sql: Sql, sellerId: string): Promise<Account | 
            coalesce(${registerStartedSql(sql, a)}, false) as register_started,
            coalesce(${soldSql(sql, a)}, false) as sold
     from sellers s
-    left join apis a on a.seller_id = s.id
+    left join apis a on a.seller_id = s.id and a.deleted_at is null
     left join lateral (
       select count(*)::int as paid_calls_day,
              count(*) filter (where verdict = 'pass')::int as pass_day,
@@ -84,7 +84,7 @@ export async function getAccount(sql: Sql, sellerId: string): Promise<Account | 
     failDay: r.failDay,
     receivedMicros: (BigInt(r.packMicros) + escrowTake(r.completedJobs, r.escrowPriceMicros).net).toString(),
     badge: apiBadge(r.state, r.health, buildTimeline(r.state, r.steps ?? [])),
-    deleteBlocker: deleteBlocker({ state: r.state, agentIdentifier: r.agentIdentifier, registerStarted: r.registerStarted, sold: r.sold }),
+    recordsKept: recordsKeptReason({ state: r.state, agentIdentifier: r.agentIdentifier, registerStarted: r.registerStarted, sold: r.sold }),
   }));
   return {
     address: seller.cardanoAddr,

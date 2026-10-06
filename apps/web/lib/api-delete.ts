@@ -2,7 +2,7 @@ import type { ApiState } from "./types";
 
 /* Client-safe: the account page and the DELETE route share this one rule. */
 
-/** What decides whether an API may be deleted. All of it comes from the database, read under a row lock. */
+/** What decides how an API is deleted. All of it comes from the database, read under a row lock. */
 export type DeleteFacts = {
   state: ApiState;
   agentIdentifier: string | null;
@@ -15,15 +15,14 @@ export type DeleteFacts = {
 const REACHED_REGISTRY: ReadonlySet<ApiState> = new Set(["registering", "live", "retired"]);
 
 /**
- * Null when the API never reached the Masumi registry and nobody paid for it. Otherwise the reason,
- * in words the seller can act on. A live API is retired instead; one that reached the registry keeps
- * its records because the registry entry and any receipts point at them.
+ * Every API can be deleted. Null when it never reached the Masumi registry and nobody paid for it: its rows
+ * are erased. Otherwise the reason its rows stay (the registry entry, receipts and escrow channels point at
+ * them), in words the seller can read: it is taken off the market and hidden from the account instead.
  */
-export function deleteBlocker(f: DeleteFacts): string | null {
-  if (f.state === "live") return "This API is on the Masumi registry. Retire it instead.";
+export function recordsKeptReason(f: DeleteFacts): string | null {
   if (REACHED_REGISTRY.has(f.state) || f.agentIdentifier || f.registerStarted) {
-    return "This API reached the Masumi registry, so its records stay.";
+    return "It reached the Masumi registry, so we keep its records.";
   }
-  if (f.sold) return "Buyers paid for this API, so its records stay.";
+  if (f.sold) return "Buyers paid for it, so we keep their receipts.";
   return null;
 }

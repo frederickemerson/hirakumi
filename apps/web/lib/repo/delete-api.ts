@@ -1,5 +1,5 @@
 import type postgres from "postgres";
-import { deleteBlocker } from "../api-delete";
+import { recordsKeptReason } from "../api-delete";
 import type { Sql } from "../db";
 import type { ApiState } from "../types";
 
@@ -19,7 +19,7 @@ export const soldSql = (sql: Sql | Tx, apiId: ApiRef) =>
  * Every table holding rows of one API, children before parents so no foreign key is ever violated.
  * The delete test walks pg_constraint and fails if a table referencing apis (directly or through these) is missing.
  * Tables that can only hold rows once something sold (credit_tokens, pack_channels, channel_leases) are listed
- * too: the rule refuses those APIs, and listing them keeps the order correct if that rule ever changes.
+ * too: those APIs are hidden instead (recordsKeptReason), and listing them keeps the order correct if that rule ever changes.
  */
 export const API_DELETE_ORDER: { table: string; run: (tx: Tx, apiId: string) => postgres.PendingQuery<postgres.Row[]> }[] = [
   { table: "channel_leases", run: (tx, id) => tx`delete from channel_leases where channel_id in (select channel_id from pack_channels where api_id = ${id})` },
@@ -42,31 +42,46 @@ export const API_DELETE_ORDER: { table: string; run: (tx: Tx, apiId: string) => 
 /** The last word on a Sokosumi task whose API the seller deleted before publishing. */
 export const DELETED_TASK_MESSAGE = "You deleted this API. Nothing was published.";
 
-export type DeleteApiResult = { ok: true; name: string } | { ok: false; status: 404 | 409; error: string };
+/** The last word on a Sokosumi task whose API the seller deleted while it was being published. */
+export const DELETED_REGISTERING_TASK_MESSAGE = "You deleted this API. It won't go on the market.";
+
+export type DeleteApiResult =
+  | { ok: true; name: string; recordsKept: boolean; wasServing: boolean }
+  | { ok: false; status: 404; error: string };
 
 /**
- * Delete an API that never reached the registry, with all its rows, in one transaction. The API row is locked
- * first, so a publish or a sale racing this request either finishes before (and the rule refuses) or finds no API.
+ * Delete an API at any stage, in one transaction. The API row is locked first, so a publish or a sale racing
+ * this request either finishes before (and the API is hidden, not erased) or finds no API.
+ * - Never reached the registry and nobody paid: the API and every row of it are erased.
+ * - Otherwise: it is retired (off the market, every guarded state change stops) and hidden from the seller,
+ *   and its rows stay for the registry entry, buyers' receipts and escrow channels the gateway still settles.
+ * `wasServing`: the gateway may hold it (registering or live), so the caller asks the gateway to reload it.
  */
-export async function deleteUnfinishedApi(sql: Sql, a: { apiId: string; sellerId: string }): Promise<DeleteApiResult> {
+export async function deleteApi(sql: Sql, a: { apiId: string; sellerId: string }): Promise<DeleteApiResult> {
   return sql.begin(async (tx): Promise<DeleteApiResult> => {
     const [api] = await tx<{ name: string; state: ApiState; agentIdentifier: string | null; sokosumiTaskId: string | null }[]>`
-      select name, state, agent_identifier, sokosumi_task_id from apis where id = ${a.apiId} and seller_id = ${a.sellerId} for update`;
+      select name, state, agent_identifier, sokosumi_task_id from apis
+      where id = ${a.apiId} and seller_id = ${a.sellerId} and deleted_at is null for update`;
     if (!api) return { ok: false, status: 404, error: "We couldn't find that API in your account." };
     const [facts] = await tx<{ registerStarted: boolean; sold: boolean }[]>`
       select ${registerStartedSql(tx, a.apiId)} as register_started, ${soldSql(tx, a.apiId)} as sold`;
-    const blocker = deleteBlocker({ state: api.state, agentIdentifier: api.agentIdentifier, ...facts });
-    if (blocker) return { ok: false, status: 409, error: blocker };
-    for (const step of API_DELETE_ORDER) await step.run(tx, a.apiId);
-    await tx`delete from apis where id = ${a.apiId}`;
-    if (api.sokosumiTaskId) {
+    const recordsKept = recordsKeptReason({ state: api.state, agentIdentifier: api.agentIdentifier, ...facts }) !== null;
+    if (recordsKept) {
+      await tx`update apis set state = 'retired', deleted_at = now() where id = ${a.apiId}`;
+    } else {
+      for (const step of API_DELETE_ORDER) await step.run(tx, a.apiId);
+      await tx`delete from apis where id = ${a.apiId}`;
+    }
+    // A live or retired API's task already ended; one still being listed would otherwise wait on the coworker.
+    if (api.sokosumiTaskId && api.state !== "live" && api.state !== "retired") {
       // The coworker's outbox posts this to the task and closes it, so the seller isn't left waiting on it.
-      // api_id is null: the API is gone, and the outbox needs only the task id.
+      // api_id is null: the outbox needs only the task id, and an erased API has no row to point at.
+      const body = recordsKept ? DELETED_REGISTERING_TASK_MESSAGE : DELETED_TASK_MESSAGE;
       await tx`
         insert into messages (api_id, seller_id, task_id, author, body, task_status, dedupe_key)
-        values (null, ${a.sellerId}, ${api.sokosumiTaskId}, 'coworker', ${DELETED_TASK_MESSAGE}, 'FAILED', ${`deleted:${a.apiId}`})
+        values (null, ${a.sellerId}, ${api.sokosumiTaskId}, 'coworker', ${body}, 'FAILED', ${`deleted:${a.apiId}`})
         on conflict (dedupe_key) do nothing`;
     }
-    return { ok: true, name: api.name };
+    return { ok: true, name: api.name, recordsKept, wasServing: api.state === "live" || api.state === "registering" };
   });
 }
