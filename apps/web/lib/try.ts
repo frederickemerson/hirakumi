@@ -64,7 +64,8 @@ export function createRateLimiter(windowMs: number): (key: string, now?: number)
   return (key, now = Date.now()) => {
     const prev = last.get(key);
     if (prev !== undefined && now - prev < windowMs) return false;
-    if (last.size > 5000) last.clear();
+    // Prune expired entries only; clearing everything would let a flood reset every visitor's limit.
+    if (last.size > 5000) for (const [k, t] of last) if (now - t >= windowMs) last.delete(k);
     last.set(key, now);
     return true;
   };

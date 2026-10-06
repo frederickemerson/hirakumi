@@ -36,6 +36,17 @@ describe("POST /api/apis (Setup)", () => {
     expect([a.status, b.status].sort()).toEqual([200, 201]);
   });
 
+  it("pasting the same link after onboarding failed starts over instead of returning the failed API (audit I1)", async () => {
+    const seller = await seedSeller();
+    const cookie = cookieFor(seller);
+    const body = { openapiUrl: "https://price.example.dev/openapi.json", name: "Price API" };
+    const first = (await (await POST(jsonRequest("/api/apis", { cookie, body }))).json()) as { apiId: string };
+    await getSql()`insert into onboard_steps (api_id, step, status, output) values (${first.apiId}, 'parse', 'failed', '{"error":"x"}'::jsonb)`;
+    const again = await POST(jsonRequest("/api/apis", { cookie, body }));
+    expect(again.status).toBe(201);
+    expect(((await again.json()) as { apiId: string }).apiId).not.toBe(first.apiId);
+  });
+
   it("explains a bad link in plain English", async () => {
     const seller = await seedSeller();
     const res = await POST(jsonRequest("/api/apis", { cookie: cookieFor(seller), body: { openapiUrl: "ftp://x" } }));

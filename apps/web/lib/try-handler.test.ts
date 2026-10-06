@@ -3,12 +3,13 @@ import { createTryHandler } from "./try-handler";
 
 type Call = { url: string; init: RequestInit };
 
-function setup(reply: () => Response, opts: { tokens?: Record<string, string>; allow?: () => boolean } = {}) {
+function setup(reply: () => Response, opts: { tokens?: Record<string, string>; allow?: () => boolean; budget?: () => Promise<string | null> } = {}) {
   const calls: Call[] = [];
   const handle = createTryHandler({
     gatewayBase: "https://gw.test",
     tokens: opts.tokens ?? { api_1: "demo-token" },
     allow: opts.allow ?? (() => true),
+    budget: opts.budget ?? (async () => null),
     fetchImpl: (async (url: string, init: RequestInit) => {
       calls.push({ url, init });
       return reply();
@@ -54,6 +55,14 @@ describe("try handler", () => {
     const { calls, handle } = setup(() => new Response("{}"), { allow: () => false });
     const res = await handle(req({ opId: "getPrice", method: "GET", input: {}, paid: true }), "api_1");
     expect(res.status).toBe(429);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("refuses paid tries once the shared demo budget is used up, without calling the gateway (audit: drain)", async () => {
+    const { calls, handle } = setup(() => new Response("{}"), { budget: async () => "The demo has used its paid tries for this hour." });
+    const res = await handle(req({ opId: "getPrice", method: "GET", input: {}, paid: true }), "api_1");
+    expect(res.status).toBe(429);
+    expect(((await res.json()) as { error: string }).error).toMatch(/this hour/);
     expect(calls).toHaveLength(0);
   });
 

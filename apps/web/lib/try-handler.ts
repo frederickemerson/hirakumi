@@ -11,6 +11,8 @@ export type TryDeps = {
   tokens: Record<string, string>;
   /** false = this visitor called too recently */
   allow: (key: string) => boolean;
+  /** Shared limit across instances: a message when the demo pack can't take another paid try, else null. */
+  budget: (apiId: string, token: string) => Promise<string | null>;
   fetchImpl?: typeof fetch;
   now?: () => number;
 };
@@ -45,6 +47,8 @@ export function createTryHandler(d: TryDeps) {
       token = d.tokens[apiId];
       if (!token) return errorJson(409, "This API has no demo credits yet, so it can only show the payment offer.");
       if (!d.allow(visitorKey(req))) return errorJson(429, "One paid try every few seconds, please. Wait a moment and try again.");
+      const problem = await d.budget(apiId, token);
+      if (problem) return errorJson(429, problem);
     }
 
     const call = buildGatewayCall(d.gatewayBase, apiId, { opId, method }, input as Record<string, unknown>, token);

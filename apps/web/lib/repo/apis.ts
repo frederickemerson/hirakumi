@@ -14,9 +14,12 @@ export async function createApi(
   return sql.begin(async (tx) => {
     // Serialise double submits of the same link by the same seller.
     await tx`select pg_advisory_xact_lock(hashtext(${`${input.sellerId}|${input.openapiUrl}`}))`;
+    // Audit I1: an API whose onboarding failed for good is not "the same API" any more: pasting the link
+    // again (after fixing the API) must start over, or the seller is stuck on the failure forever.
     const [existing] = await tx<Api[]>`
       select ${tx(API_COLUMNS)} from apis
       where seller_id = ${input.sellerId} and openapi_url = ${input.openapiUrl} and state <> 'retired'
+        and not exists (select 1 from onboard_steps s where s.api_id = apis.id and s.status = 'failed')
       order by created_at desc limit 1`;
     if (existing) return { api: existing, created: false };
     const [api] = await tx<Api[]>`
@@ -39,12 +42,16 @@ export async function createApiForTask(
   sql: Sql,
   input: { sellerId: string; name: string; origin: string; openapiUrl: string },
   task: { taskId: string; sokosumiUserId: string },
-): Promise<{ api: Api; created: boolean }> {
+): Promise<{ api: Api; created: boolean } | { claimedByOther: true }> {
   return sql.begin(async (tx) => {
     await tx`select pg_advisory_xact_lock(hashtext(${`task|${task.taskId}`}))`;
+    // Audit M4: the first wallet to use a setup link owns that task; progress and billing go to it.
+    const [other] = await tx`select 1 from apis where sokosumi_task_id = ${task.taskId} and seller_id <> ${input.sellerId} limit 1`;
+    if (other) return { claimedByOther: true as const };
     await tx`update sellers set sokosumi_user_id = ${task.sokosumiUserId} where id = ${input.sellerId} and sokosumi_user_id is null`;
     const [linked] = await tx<Api[]>`
       select ${tx(API_COLUMNS)} from apis where sokosumi_task_id = ${task.taskId} and seller_id = ${input.sellerId} and state <> 'retired'
+        and not exists (select 1 from onboard_steps s where s.api_id = apis.id and s.status = 'failed')
       order by created_at desc limit 1`;
     if (linked) return { api: linked, created: false };
     const [api] = await tx<Api[]>`

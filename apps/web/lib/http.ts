@@ -14,7 +14,9 @@ const MAX_BODY_BYTES = 64 * 1024;
 
 /** JSON bodies only. Requiring application/json also blocks cross-site form posts (CSRF). */
 export async function readJson(req: Request): Promise<Record<string, unknown> | null> {
-  if (!(req.headers.get("content-type") ?? "").includes("application/json")) return null;
+  // Compare the media type exactly: "text/plain; application/json" is a CORS-simple type a cross-site form can send.
+  const mediaType = (req.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+  if (mediaType !== "application/json") return null;
   const text = await req.text();
   if (text.length > MAX_BODY_BYTES) return null;
   try {

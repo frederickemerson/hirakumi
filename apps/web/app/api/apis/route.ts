@@ -17,7 +17,11 @@ export async function POST(req: Request): Promise<Response> {
     if (typeof body.setupToken === "string" && body.setupToken) {
       const task = await findCoworkerTask(getSql(), body.setupToken);
       if (!task) return errorJson(400, "This setup link isn't valid any more. Open the latest link from your Sokosumi task.");
-      result = await createApiForTask(getSql(), input, task);
+      const forTask = await createApiForTask(getSql(), input, task);
+      if ("claimedByOther" in forTask) {
+        return errorJson(403, "This setup link is already in use by another wallet. Sign in with that wallet, or start a new task in Sokosumi.");
+      }
+      result = forTask;
     } else {
       result = await createApi(getSql(), input);
     }

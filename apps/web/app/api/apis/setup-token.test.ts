@@ -38,6 +38,27 @@ describe("POST /api/apis with a Sokosumi setup token", () => {
     expect(((await again.json()) as { apiId: string }).apiId).toBe(first.apiId);
   });
 
+  it("a setup link belongs to the first wallet that uses it; another wallet is refused (audit M4)", async () => {
+    const owner = await seedSeller();
+    const other = await seedSeller();
+    await seedTask("tok_m4");
+    expect((await create(cookieFor(owner), { setupToken: "tok_m4" })).status).toBe(201);
+    const res = await create(cookieFor(other), { setupToken: "tok_m4" });
+    expect(res.status).toBe(403);
+    const [{ n }] = await getSql()<{ n: number }[]>`select count(*)::int as n from apis where sokosumi_task_id = 'tsk_tok_m4'`;
+    expect(n).toBe(1);
+  });
+
+  it("after onboarding failed, the setup link starts a fresh API for the same task (audit I1)", async () => {
+    const seller = await seedSeller();
+    await seedTask("tok_i1");
+    const first = (await (await create(cookieFor(seller), { setupToken: "tok_i1" })).json()) as { apiId: string };
+    await getSql()`insert into onboard_steps (api_id, step, status, output) values (${first.apiId}, 'qa', 'failed', '{"error":"x"}'::jsonb)`;
+    const again = await create(cookieFor(seller), { setupToken: "tok_i1" });
+    expect(again.status).toBe(201);
+    expect(((await again.json()) as { apiId: string }).apiId).not.toBe(first.apiId);
+  });
+
   it("rejects an unknown setup link with a plain message", async () => {
     const seller = await seedSeller();
     const res = await create(cookieFor(seller), { setupToken: "nope" });
