@@ -308,6 +308,9 @@ importers:
       '@noble/curves':
         specifier: 1.9.7
         version: 1.9.7
+      effect:
+        specifier: 3.22.2
+        version: 3.22.2
     devDependencies:
       '@types/node':
         specifier: 22.20.5
@@ -333,6 +336,34 @@ importers:
       vitest:
         specifier: 5.0.3
         version: 5.0.3(@types/node@22.20.5)(jsdom@30.1.2(@noble/hashes@2.4.0))(vite@7.3.7(@types/node@22.20.5)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.23.15)(yaml@2.9.1))
+
+  scripts/escrow-run:
+    dependencies:
+      '@evolution-sdk/evolution':
+        specifier: 0.5.17
+        version: 0.5.17
+      '@hirakumi/escrow':
+        specifier: workspace:*
+        version: link:../../packages/escrow
+      '@x402/cardano':
+        specifier: 2.26.0
+        version: 2.26.0
+      '@x402/core':
+        specifier: 2.26.0
+        version: 2.26.0
+      effect:
+        specifier: 3.22.2
+        version: 3.22.2
+    devDependencies:
+      '@types/node':
+        specifier: 22.20.5
+        version: 22.20.5
+      tsx:
+        specifier: 4.23.15
+        version: 4.23.15
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
 
   sellers/price-api:
     dependencies:

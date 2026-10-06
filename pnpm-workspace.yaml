@@ -1,1 +1,1 @@
-packages: ["apps/*", "packages/*", "sellers/*", "agents/*"]
+packages: ["apps/*", "packages/*", "sellers/*", "agents/*", "scripts/*"]
