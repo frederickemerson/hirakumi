@@ -100,3 +100,47 @@ export async function seedOnboardStep(
     insert into onboard_steps (api_id, step, status, attempts, output)
     values (${apiId}, ${step}, ${status}, 1, ${output === null ? null : getSql().json(output as postgres.JSONValue)})`;
 }
+export async function seedCreditToken(
+  apiId: string,
+  packId: string,
+  over: Partial<{ status: "pending" | "active" | "exhausted" | "revoked"; remaining: number; payer: string | null;
+    txHash: string | null; createdAt: Date }> = {},
+): Promise<{ id: string }> {
+  const [row] = await getSql()<{ id: string }[]>`
+    insert into credit_tokens (id, api_id, pack_id, token_hash, payer, status, remaining, payment_payload_hash, tx_hash, created_at)
+    values (${newId("ct")}, ${apiId}, ${packId}, ${randomBytes(32).toString("hex")}, ${over.payer ?? "addr_test1buyer"},
+            ${over.status ?? "active"}, ${over.remaining ?? 100}, ${randomBytes(32).toString("hex")},
+            ${over.txHash === undefined ? randomBytes(32).toString("hex") : over.txHash}, ${over.createdAt ?? new Date()})
+    returning id`;
+  return row;
+}
+
+export async function seedCall(
+  apiId: string,
+  over: Partial<{ kind: "credit" | "escrow" | "probe" | "preview"; verdict: "pass" | "fail" | "n/a";
+    execution: "upstream_ok" | "upstream_error" | "timeout" | "blocked"; createdAt: Date }> = {},
+): Promise<void> {
+  await getSql()`
+    insert into calls (id, kind, api_id, op_id, execution, verdict, created_at)
+    values (${newId("call")}, ${over.kind ?? "credit"}, ${apiId}, 'getPrice', ${over.execution ?? "upstream_ok"},
+            ${over.verdict ?? "pass"}, ${over.createdAt ?? new Date()})`;
+}
+
+export async function seedJob(
+  apiId: string,
+  over: Partial<{ status: "awaiting_payment" | "running" | "completed" | "failed" | "expired"; failureReasons: string[] | null;
+    createdAt: Date }> = {},
+): Promise<{ id: string }> {
+  const [row] = await getSql()<{ id: string }[]>`
+    insert into jobs (id, api_id, identifier_from_purchaser, input, input_hash, status, failure_reasons, created_at)
+    values (${newId("job")}, ${apiId}, 'buyer-ref-1', '{}'::jsonb, 'hash', ${over.status ?? "completed"},
+            ${over.failureReasons == null ? null : getSql().json(over.failureReasons as postgres.JSONValue)}, ${over.createdAt ?? new Date()})
+    returning id`;
+  return row;
+}
+
+export async function seedHealthEvent(apiId: string, from: Health, to: Health, at: Date, reasons: string[] = []): Promise<void> {
+  await getSql()`
+    insert into health_events (api_id, from_health, to_health, reasons, at)
+    values (${apiId}, ${from}, ${to}, ${getSql().json(reasons as postgres.JSONValue)}, ${at})`;
+}

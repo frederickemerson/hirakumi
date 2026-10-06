@@ -5,6 +5,7 @@ function required(name: string): string {
 }
 
 export const env = {
+  escrowSweepNotice: () => process.env.ESCROW_SWEEP_NOTICE === "1",
   databaseUrl: () => required("DATABASE_URL"),
   sessionSecret: () => {
     const secret = required("SESSION_SECRET");
