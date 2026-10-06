@@ -8,7 +8,7 @@ import { POST } from "./route";
 describe("POST /api/apis/:apiId/retire", () => {
   beforeEach(async () => {
     await resetDb();
-    setGatewayForTests({ checkChallenge: vi.fn(), reloadApi: vi.fn(async () => undefined), getHealth: vi.fn() } as Gateway);
+    setGatewayForTests({ checkChallenge: vi.fn(), reloadApi: vi.fn(async () => undefined), getHealth: vi.fn(), getSettlement: vi.fn(async () => []) } as Gateway);
   });
   afterEach(() => setGatewayForTests(null));
 

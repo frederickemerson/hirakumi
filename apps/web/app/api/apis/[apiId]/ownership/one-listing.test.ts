@@ -50,7 +50,7 @@ let other: Owner;
 describe("one API, one listing, one account (at proof of ownership)", () => {
   beforeEach(async () => {
     await resetDb();
-    setGatewayForTests({ checkChallenge: vi.fn(async () => PASS), reloadApi: vi.fn(async () => undefined), getHealth: vi.fn() } as Gateway);
+    setGatewayForTests({ checkChallenge: vi.fn(async () => PASS), reloadApi: vi.fn(async () => undefined), getHealth: vi.fn(), getSettlement: vi.fn(async () => []) } as Gateway);
     me = await owner();
     other = await owner();
   });

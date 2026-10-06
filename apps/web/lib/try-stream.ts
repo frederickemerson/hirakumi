@@ -3,7 +3,8 @@
 /** Phases the gateway streams while the demo wallet buys a pack (apps/gateway/src/demoBuy.ts BuyEvent). */
 export type BuyEvent =
   | { phase: "paying"; packId: string; calls: number; priceMicros: string; wallet: string }
-  | { phase: "settling" }
+  /** settlement: PACK_MODE=hybrid only, what the 402 chose and why. */
+  | { phase: "settling"; settlement?: { mode: "direct" | "escrow"; reasons: string[] } }
   | { phase: "settled"; txHash: string | null; credits: number; ms: number; recovered: boolean }
   | { phase: "ready"; txHash: string | null; credits: number; pending: boolean; boughtAt: string }
   | { phase: "failed"; message: string; spent: boolean };

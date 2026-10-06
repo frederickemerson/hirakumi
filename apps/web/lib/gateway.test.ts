@@ -45,6 +45,20 @@ describe("gateway client", () => {
     expect(health).toEqual({ health: "down", checkedAt: "2026-10-06T12:00:00Z", lastReasons: ["$.price missing"] });
   });
 
+  it("reads settlement per pack, drops malformed entries, and waits at most 3 s", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ packMode: "hybrid", packs: [
+      { packId: "pk_1", mode: "escrow", reasons: ["new seller", 4] },
+      { packId: "pk_2", mode: "direct", reasons: ["large pack"], recommended: "escrow" },
+      { packId: "pk_3", mode: "both", reasons: [] },
+    ] }));
+    expect(await gatewayWith(fetchImpl).getSettlement("api_1")).toEqual([
+      { packId: "pk_1", mode: "escrow", reasons: ["new seller"] },
+      { packId: "pk_2", mode: "direct", reasons: ["large pack"], recommended: "escrow" },
+    ]);
+    const [url] = fetchImpl.mock.calls[0] as unknown as [string];
+    expect(url).toBe("https://gw.test/internal/apis/api_1/settlement");
+  });
+
   it("works against the mock gateway over real HTTP", async () => {
     const server = await startMockGateway(0, "tok", { challengeOk: true });
     try {

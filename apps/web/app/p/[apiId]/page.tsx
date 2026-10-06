@@ -8,6 +8,8 @@ import { Badge } from "@/components/ui/badge";
 import { getSql } from "@/lib/db";
 import { loadLiveApi } from "@/lib/public-api";
 import { env } from "@/lib/env";
+import { getGateway } from "@/lib/gateway";
+import { settlementLine, type PackSettlement } from "@/lib/settlement";
 import { formatTusdm } from "@/lib/money";
 import { getPack } from "@/lib/repo/packs";
 import { listLatestRules } from "@/lib/repo/rules";
@@ -20,14 +22,25 @@ export async function generateMetadata({ params }: { params: Promise<{ apiId: st
   return { title: api ? `${api.name} status` : "Not found" };
 }
 
+/** The settlement line is extra: if the gateway can't answer, the page renders without it. */
+async function settlementsOf(apiId: string): Promise<PackSettlement[]> {
+  try {
+    return await getGateway().getSettlement(apiId);
+  } catch {
+    return [];
+  }
+}
+
 export default async function PublicApiPage({ params }: { params: Promise<{ apiId: string }> }) {
   const { apiId } = await params;
   const sql = getSql();
   const api = await loadLiveApi(apiId);
   if (!api) notFound();
-  const [pack, promises, status, incidents] = await Promise.all([
+  const [pack, promises, status, incidents, settlements] = await Promise.all([
     getPack(sql, apiId), listLatestRules(sql, apiId), getPublicStatus(sql, apiId), listIncidents(sql, apiId),
+    settlementsOf(apiId),
   ]);
+  const settlement = pack ? settlements.find((s) => s.packId === pack.id) : undefined;
   const op = promises.find((p) => p.opId === api.escrowOpId) ?? promises[0];
   const publicBase = env.publicBaseUrl();
   return (
@@ -48,6 +61,7 @@ export default async function PublicApiPage({ params }: { params: Promise<{ apiI
         <p className="rounded-[2px] border-2 border-ink bg-canary p-5 text-body-lg">
           <span className="font-semibold">{`${pack.calls} calls for ${formatTusdm(pack.priceMicros)} tUSDM`}</span>
           {", paid once on Cardano preprod. A credit is used only when the answer keeps the promise."}
+          {settlement && <span className="mt-2 block text-body" data-testid="settlement">{settlementLine(settlement)}</span>}
         </p>
       )}
       <div className="space-y-3">

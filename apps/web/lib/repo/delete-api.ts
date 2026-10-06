@@ -25,6 +25,7 @@ export const API_DELETE_ORDER: { table: string; run: (tx: Tx, apiId: string) => 
   { table: "channel_leases", run: (tx, id) => tx`delete from channel_leases where channel_id in (select channel_id from pack_channels where api_id = ${id})` },
   { table: "pack_channels", run: (tx, id) => tx`delete from pack_channels where api_id = ${id}` },
   { table: "pack_quotes", run: (tx, id) => tx`delete from pack_quotes where api_id = ${id}` },
+  { table: "settlement_decisions", run: (tx, id) => tx`delete from settlement_decisions where api_id = ${id}` },
   { table: "calls", run: (tx, id) => tx`delete from calls where api_id = ${id}` },
   { table: "credit_tokens", run: (tx, id) => tx`delete from credit_tokens where api_id = ${id}` },
   { table: "jobs", run: (tx, id) => tx`delete from jobs where api_id = ${id}` },
