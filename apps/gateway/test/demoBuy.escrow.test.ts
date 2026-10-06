@@ -47,7 +47,7 @@ class EscrowBuyer implements DemoBuyer {
     const header = encodePaymentSignatureHeader({ x402Version: required.x402Version, resource: required.resource, accepted, payload: { transaction, nonce: "n" } });
     const paid = await withKeys(request(this.h().app).post(path).set("PAYMENT-SIGNATURE", header));
     if (paid.status !== 200) throw new PackPurchaseError(paid.status, JSON.stringify(paid.body), "SIGNED_LOCK", "BUYER_SECRET");
-    return { token: paid.body.token, credits: paid.body.credits, apiId: paid.body.apiId, txHash: fakeTxHash(transaction), channelId: paid.body.channelId, channelUrl: paid.body.channelUrl };
+    return { token: paid.body.token, credits: paid.body.credits, apiId: paid.body.apiId, txHash: fakeTxHash(transaction), mode: "escrow" as const, channelId: paid.body.channelId, channelUrl: paid.body.channelUrl };
   }
 }
 

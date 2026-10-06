@@ -1,7 +1,7 @@
 import type { RequestHandler, Response } from "express";
 import {
-  checkEscrowOffer, choosePack, createPackPayer, fetchWalletBalance, formatMicros, NoAffordablePackError, PackPurchaseError,
-  parseCreditsRequired, PaymentNotSentError, recoverPack, type PackOffer,
+  checkDirectOffer, checkEscrowOffer, choosePack, createPackPayer, fetchWalletBalance, formatMicros, NoAffordablePackError, PackPurchaseError,
+  offerMode, offerReasons, parseCreditsRequired, PaymentNotSentError, recoverPack, type PackOffer,
 } from "@hirakumi/buyer";
 import { newReceiptKey } from "@hirakumi/escrow";
 import { newId } from "@hirakumi/core";
@@ -30,7 +30,7 @@ const RECOVER_TIMEOUT_MS = 20_000;
  */
 export type BuyEvent =
   | { phase: "paying"; packId: string; calls: number; priceMicros: string; wallet: string; escrow: boolean }
-  | { phase: "settling" }
+  | { phase: "settling"; settlement?: { mode: "direct" | "escrow"; reasons: string[] } }
   | { phase: "settled"; txHash: string | null; credits: number; ms: number; recovered: boolean }
   | { phase: "ready"; txHash: string | null; credits: number; pending: boolean; boughtAt: string }
   | { phase: "failed"; message: string; spent: boolean };
@@ -65,6 +65,8 @@ type Plan =
  * goes to the seller, so an open endpoint would let anyone list an API and drain the demo wallet.
  * PACK_MODE=escrow: the pack is locked at pack_escrow like any agent's, with a fresh IOU key kept on the row;
  * the web signs an IOU for each answer it checked against the promise, and the rest refunds to the wallet.
+ * PACK_MODE=hybrid: the wallet asks like any agent with escrow headers and follows the 402's settlement: escrow
+ * as above, or direct (the key is then unused). The `settling` event says which, and why.
  * Order, under one per-API lock: reuse a pack with credits, recover an unsettled payment, price cap, limits.
  * Then, outside the lock: wallet funds and the payment.
  */
@@ -186,10 +188,12 @@ async function pay(d: AppDeps, res: Response, buyer: DemoBuyer, apiId: string, i
   const started = Date.now();
   // What /recover needs, saved on the row before the payment is sent (see SignedHook).
   let saved: { paymentSignature: string; recoverySecret: string } | null = null;
-  send({ phase: "paying", packId: pack.packId, calls: pack.calls, priceMicros: pack.price, wallet: buyer.address, escrow: escrowPacks(d) });
+  send({ phase: "paying", packId: pack.packId, calls: pack.calls, priceMicros: pack.price, wallet: buyer.address, escrow: d.config.packMode === "escrow" });
+  // Hybrid: what the 402 said, once our check accepted it (set before onSigned).
+  let settlement: { mode: "direct" | "escrow"; reasons: string[] } | null = null;
   const onSigned = async (s: { paymentSignature: string; recoverySecret: string }) => {
     saved = s;
-    send({ phase: "settling" });
+    send(d.config.packMode === "hybrid" && settlement ? { phase: "settling", settlement } : { phase: "settling" });
     try {
       await saveTrySignature(d.sql, id, s);
     } catch (e) {
@@ -199,7 +203,7 @@ async function pay(d: AppDeps, res: Response, buyer: DemoBuyer, apiId: string, i
   let purchase: { token: string; credits: number; txHash: string | null };
   try {
     purchase = escrowPacks(d)
-      ? await buyEscrow(d, buyer, apiId, id, pack, ruleHash, onSigned)
+      ? await buyEscrow(d, buyer, apiId, id, pack, ruleHash, onSigned, (x) => { settlement = x; })
       : await buyer.buyPack(pack.buyUrl, { amount: BigInt(pack.price) }, { onSigned });
   } catch (e) {
     const detail = (e as Error)?.message ?? String(e);
@@ -235,34 +239,50 @@ async function pay(d: AppDeps, res: Response, buyer: DemoBuyer, apiId: string, i
   res.end();
 }
 
-const escrowPacks = (d: AppDeps) => d.config.packMode === "escrow";
+/** Escrow and hybrid buy with escrow headers; hybrid may still settle direct. */
+const escrowPacks = (d: AppDeps) => d.config.packMode !== "direct";
 
 /**
  * An escrow pack, bought the way the buyer agent buys one: a fresh IOU key, the 402's datum checked (our key,
  * our refund address, the chosen pack's calls, price and promise) before anything is signed, and the channel
  * and key saved on the row before the lock is sent, so a lock that lands can always be signed for and closed.
+ * A hybrid gateway may answer direct instead: then the plain pack check runs (exact price, under the cap) and
+ * nothing is saved but the payment.
  */
 async function buyEscrow(
   d: AppDeps, buyer: DemoBuyer, apiId: string, id: string, pack: PackOffer, ruleHash: string,
   onSigned: (s: { paymentSignature: string; recoverySecret: string }) => Promise<void>,
+  onSettlement: (s: { mode: "direct" | "escrow"; reasons: string[] }) => void,
 ): Promise<{ token: string; credits: number; txHash: string | null }> {
   const key = newReceiptKey();
   const keys = { receiptKey: key.publicKey, refundAddress: buyer.address };
   let checked: { channelId: string; ruleHash: string } | null = null;
+  let approved: "direct" | "escrow" | null = null;
   const p = await buyer.buyEscrowPack(pack.buyUrl, keys, (req) => {
+    checked = null;
+    approved = null;
+    if (offerMode(req) === "direct") {
+      checkDirectOffer(req, { priceMicros: BigInt(pack.price) }, MAX_PACK_MICROS);
+      approved = "direct";
+      onSettlement({ mode: "direct", reasons: offerReasons(req) });
+      return;
+    }
     const datum = checkEscrowOffer(req, { ...keys, maxPackMicros: MAX_PACK_MICROS }, {
       calls: pack.calls, priceMicros: BigInt(pack.price), ruleHash,
     });
     checked = { channelId: datum.channelId, ruleHash: `sha256:${datum.ruleHash}` };
+    approved = "escrow";
+    onSettlement({ mode: "escrow", reasons: offerReasons(req) });
   }, {
     onSigned: async (s) => {
-      if (checked) {
+      if (approved === "escrow" && checked) {
         await saveTryChannel(d.sql, id, { ...checked, iouSecret: key.secretKey }).catch((e: unknown) =>
           console.error(`[demo-buy] ${apiId}: saving the escrow channel failed: ${(e as Error).message}`));
       }
       await onSigned(s);
     },
   });
+  if ((approved as "direct" | "escrow" | null) === "direct") return { token: p.token, credits: p.credits, txHash: p.txHash };
   const c = checked as { channelId: string } | null;
   if (!c || p.channelId !== c.channelId) {
     // Our IOUs may only ever be bound to the datum's channel: a different answer is never used.

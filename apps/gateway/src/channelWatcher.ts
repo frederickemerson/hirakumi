@@ -6,7 +6,7 @@
 //  - after contest_end → Settle
 // Without an operator key it only verifies and observes.
 import {
-  allChannels, deleteStaleQuotes, expireUnseenLocks, getChannel, reopenChannel, revertChannelToPending, updateChannel,
+  allChannels, deleteStaleDecisions, deleteStaleQuotes, expireUnseenLocks, getChannel, reopenChannel, revertChannelToPending, updateChannel,
   type ChannelRow, type ChannelStatus, type Sql,
 } from "@hirakumi/db";
 import { decodePackDatum, type ChainOutput } from "@hirakumi/escrow";
@@ -63,6 +63,7 @@ export class ChannelWatcher {
         events.push({ channelId: id, action: "refused" });
       }
       await deleteStaleQuotes(this.d.sql).catch((e) => console.error("[watcher] quote cleanup:", (e as Error).message));
+      await deleteStaleDecisions(this.d.sql).catch((e) => console.error("[watcher] settlement decision cleanup:", (e as Error).message));
       for await (const ch of allChannels(this.d.sql, LIVE)) {
         await this.watch(ch, events).catch((e) => console.error(`[watcher] ${ch.channel_id}:`, (e as Error).message));
       }
