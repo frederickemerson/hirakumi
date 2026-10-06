@@ -10,3 +10,4 @@ vendor/
 coverage/
 *.log
 deploy/masumi.env
+.claude/
