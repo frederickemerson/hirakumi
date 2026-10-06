@@ -2,7 +2,7 @@
 
 import { ChevronDown, Wallet } from "lucide-react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { buttonVariants } from "@/components/ui/button";
 import { logOut, useAuth } from "@/lib/auth-client";
@@ -12,7 +12,8 @@ import { cn } from "@/lib/utils";
 const PLACEHOLDER_ADDRESS = "addr_test1qz…000000";
 
 const navLink = "py-2 text-caption font-medium uppercase tracking-[0.06em] underline-offset-4 hover:underline";
-const layer = "col-start-1 row-start-1 flex items-center justify-end gap-4 transition-opacity duration-150 ease-out motion-reduce:transition-none";
+const layer = "col-start-1 row-start-1 flex items-center justify-end gap-4 transition-[opacity,visibility] duration-150 ease-out motion-reduce:transition-none";
+const hidden = "invisible pointer-events-none opacity-0";
 
 /**
  * The right side of the header. Both states sit in the same grid cell, so the cell is always as wide
@@ -20,13 +21,12 @@ const layer = "col-start-1 row-start-1 flex items-center justify-end gap-4 trans
  */
 export function HeaderAuth() {
   const auth = useAuth();
-  const pathname = usePathname() ?? "";
-  // Seller pages only render for a signed-in seller and seed the session at hydration:
-  // show nothing there until then rather than flash "Log in".
-  const view = auth.status === "in" ? "in" : auth.status === "unknown" && /^\/(apis|account)(\/|$)/.test(pathname) ? "pending" : "out";
+  // Until the session is known both layers stay hidden (the cell keeps its width), so a signed-in seller
+  // never sees "Log in" flash. Seller pages seed the session at hydration; other pages probe /api/auth/me.
+  const view = auth.status === "unknown" ? "pending" : auth.status;
   return (
     <div className="grid items-center justify-items-end">
-      <div data-auth-layer="out" aria-hidden={view !== "out" || undefined} inert={view !== "out"} className={cn(layer, view !== "out" && "pointer-events-none opacity-0")}>
+      <div data-auth-layer="out" aria-hidden={view !== "out" || undefined} inert={view !== "out"} className={cn(layer, view !== "out" && hidden)}>
         <Link href="/login" className={cn(navLink, "hidden sm:inline")}>
           Log in
         </Link>
@@ -34,7 +34,7 @@ export function HeaderAuth() {
           List your API
         </Link>
       </div>
-      <div data-auth-layer="in" aria-hidden={view !== "in" || undefined} inert={view !== "in"} className={cn(layer, view !== "in" && "pointer-events-none opacity-0")}>
+      <div data-auth-layer="in" aria-hidden={view !== "in" || undefined} inert={view !== "in"} className={cn(layer, view !== "in" && hidden)}>
         <Link href="/apis" className={cn(buttonVariants({ variant: "nav", size: "sm" }), "hidden min-h-9 sm:inline-flex")}>
           My APIs
         </Link>

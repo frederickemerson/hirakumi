@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { EndpointsForm } from "@/components/endpoints-form";
 import { LiveProgress } from "@/components/live-progress";
@@ -7,6 +8,8 @@ import { stepForState } from "@/lib/flow";
 import { loadApiPage } from "@/lib/page-auth";
 import { listOperations } from "@/lib/repo/operations";
 import { loadProgress } from "@/lib/repo/progress";
+
+export const metadata: Metadata = { title: "Endpoints" };
 
 export default async function EndpointsPage({ params }: { params: Promise<{ apiId: string }> }) {
   const { apiId } = await params;

@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { formatHealthReasons } from "@hirakumi/core";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -24,6 +25,8 @@ import { progressFor } from "@/lib/progress";
 import { buildBuyerSnippet } from "@/lib/snippet";
 import { buildTimeline } from "@/lib/timeline";
 import { registryLinks } from "@/lib/try";
+
+export const metadata: Metadata = { title: "Overview" };
 
 export default async function OverviewPage({ params }: { params: Promise<{ apiId: string }> }) {
   const { apiId } = await params;

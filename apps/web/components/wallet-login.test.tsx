@@ -79,7 +79,7 @@ describe("WalletLogin", () => {
   it("lists each wallet with its icon", async () => {
     installWallet();
     render(<WalletLogin next="/apis" />);
-    const button = await screen.findByRole("button", { name: "Sign in with Test Wallet" });
+    const button = await screen.findByRole("button", { name: "Log in with Test Wallet" });
     expect(button.querySelector("img")).toHaveAttribute("src", "data:image/svg+xml;base64,AAAA");
   });
 
@@ -93,7 +93,7 @@ describe("WalletLogin", () => {
     });
 
     render(<WalletLogin next="/apis/api_1" />);
-    await userEvent.setup().click(await screen.findByRole("button", { name: "Sign in with Test Wallet" }));
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Log in with Test Wallet" }));
 
     await vi.waitFor(() => expect(nav.push).toHaveBeenCalledWith("/apis/api_1"));
     // The header learns about the new session without a reload.
@@ -113,12 +113,12 @@ describe("WalletLogin", () => {
     });
     const user = userEvent.setup();
     render(<WalletLogin next="/apis" />);
-    await user.click(await screen.findByRole("button", { name: "Sign in with Test Wallet" }));
+    await user.click(await screen.findByRole("button", { name: "Log in with Test Wallet" }));
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("This wallet has no preprod funds. Get test ADA from the Cardano faucet");
     expect(within(alert).getByRole("link", { name: "Cardano faucet" })).toHaveAttribute("href", "https://docs.cardano.org/cardano-testnets/tools/faucet");
     expect(nav.push).not.toHaveBeenCalled();
-    await user.click(within(alert).getByRole("button", { name: "Sign in anyway" }));
+    await user.click(within(alert).getByRole("button", { name: "Log in anyway" }));
     await vi.waitFor(() => expect(nav.push).toHaveBeenCalledWith("/apis"));
   });
 
@@ -129,7 +129,7 @@ describe("WalletLogin", () => {
       "/api/auth/nonce": () => jsonResponse({ address: "a", message: "m", nonceToken: "n" }),
     });
     render(<WalletLogin next="/apis" />);
-    await userEvent.setup().click(await screen.findByRole("button", { name: "Sign in with Test Wallet" }));
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Log in with Test Wallet" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("You cancelled signing in your wallet. Nothing was signed.");
     expect(nav.push).not.toHaveBeenCalled();
   });
@@ -139,7 +139,7 @@ describe("WalletLogin", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     render(<WalletLogin next="/apis" />);
-    await userEvent.setup().click(await screen.findByRole("button", { name: "Sign in with Test Wallet" }));
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Log in with Test Wallet" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Your wallet is on mainnet. Switch it to the preprod test network");
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -151,7 +151,7 @@ describe("WalletLogin", () => {
       "/api/auth/nonce": () => jsonResponse({ error: "Switch your wallet to the Cardano preprod test network, then try again." }, 400),
     });
     render(<WalletLogin next="/apis" />);
-    await userEvent.setup().click(await screen.findByRole("button", { name: "Sign in with Test Wallet" }));
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Log in with Test Wallet" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Switch your wallet to the Cardano preprod test network");
   });
 });

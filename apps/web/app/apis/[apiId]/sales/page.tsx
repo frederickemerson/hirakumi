@@ -1,17 +1,20 @@
+import type { Metadata } from "next";
 import { EscrowJobsTable, PackSalesTable } from "@/components/sales-tables";
 import { getSql } from "@/lib/db";
 import { env } from "@/lib/env";
 import { loadApiPage } from "@/lib/page-auth";
 import { listEscrowJobs, listPackSales } from "@/lib/repo/stats";
 
+export const metadata: Metadata = { title: "Sales" };
+
 export default async function SalesPage({ params }: { params: Promise<{ apiId: string }> }) {
   const { apiId } = await params;
-  await loadApiPage(apiId, `/apis/${apiId}/sales`);
+  const { api } = await loadApiPage(apiId, `/apis/${apiId}/sales`);
   const sql = getSql();
   const [sales, jobs] = await Promise.all([listPackSales(sql, apiId), listEscrowJobs(sql, apiId)]);
   return (
     <section className="space-y-8">
-      <h1 className="text-h font-medium uppercase">Sales</h1>
+      <h1 className="text-h font-medium uppercase">{api.name} sales</h1>
       <div className="space-y-3">
         <h2 className="text-sub font-semibold uppercase">Credit packs</h2>
         <p className="text-body">Pack payments go straight to your wallet in one transaction each.</p>

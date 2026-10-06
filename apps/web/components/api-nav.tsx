@@ -9,13 +9,15 @@ const STEP_PAGE = /\/(endpoints|ownership|review)$/;
 /**
  * Tab strip for one API's pages. The current tab is filled ink, like the product frame's tabs.
  * "Listing steps" links straight to the current step's page: the one being viewed, or the one the
- * layout worked out from the API's state.
+ * layout worked out from the API's state. stepHref is null once the API is live or retired: no tab then.
  */
-export function ApiNav({ apiId, stepHref }: { apiId: string; stepHref: string }) {
+export function ApiNav({ apiId, stepHref }: { apiId: string; stepHref: string | null }) {
   const pathname = usePathname();
   const onStep = STEP_PAGE.test(pathname);
   const links = [
-    { href: onStep ? pathname : stepHref, label: "Listing steps", active: onStep || pathname === `/apis/${apiId}` },
+    ...(stepHref === null
+      ? []
+      : [{ href: onStep ? pathname : stepHref, label: "Listing steps", active: onStep || pathname === `/apis/${apiId}` }]),
     { href: `/apis/${apiId}/overview`, label: "Overview", active: pathname.endsWith("/overview") },
     { href: `/apis/${apiId}/sales`, label: "Sales", active: pathname.endsWith("/sales") },
   ];
@@ -24,7 +26,7 @@ export function ApiNav({ apiId, stepHref }: { apiId: string; stepHref: string })
       <Link href="/apis" className="py-2 text-graphite hover:text-ink hover:underline hover:underline-offset-4">← All APIs</Link>
       <ol className="flex overflow-x-auto rounded-[2px] border-2 border-ink bg-frost">
         {links.map((l) => (
-          <li key={l.href} className="border-r-2 border-ink last:border-r-0">
+          <li key={l.label} className="border-r-2 border-ink last:border-r-0">
             <Link
               href={l.href}
               aria-current={l.active ? "page" : undefined}

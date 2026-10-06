@@ -20,7 +20,7 @@ export default async function AccountPage() {
         <h1 className="text-h font-medium uppercase">Account settings</h1>
         <p className="text-body text-graphite">
           Your wallet, your APIs and what they earned.{" "}
-          <Link href="/apis" className="underline underline-offset-4 hover:text-ink">Go to Your APIs</Link>
+          <Link href="/apis" className="underline underline-offset-4 hover:text-ink">Go to your APIs</Link>
         </p>
       </div>
 
@@ -42,7 +42,7 @@ export default async function AccountPage() {
               </>
             )}
           </dl>
-          <p className="text-caption text-graphite">Buyers pay this address. It is also how you sign in.</p>
+          <p className="text-caption text-graphite">Buyers pay this address. It is also how you log in.</p>
         </section>
       </AccountApis>
 

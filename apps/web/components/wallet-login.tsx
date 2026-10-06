@@ -105,7 +105,7 @@ export function WalletLogin({ next }: { next: string }) {
               onClick={() => signIn(w.id)}
             >
               {!(busy && phase.walletId === w.id) && <WalletIcon icon={w.icon} />}
-              <span>Sign in with {w.name}</span>
+              <span>Log in with {w.name}</span>
             </Button>
           </li>
         ))}
@@ -122,8 +122,8 @@ export function WalletLogin({ next }: { next: string }) {
             This wallet has no preprod funds. Get test ADA from the{" "}
             <a href={FAUCET_URL} target="_blank" rel="noreferrer" className="underline underline-offset-4">Cardano faucet</a>.
           </p>
-          <p className="text-graphite">If your wallet is on preview, switch it to preprod first. You can still sign in now; signing is free.</p>
-          <Button size="sm" variant="outline" onClick={() => void finishSignIn(phase.walletId)}>Sign in anyway</Button>
+          <p className="text-graphite">If your wallet is on preview, switch it to preprod first. You can still log in now; signing is free.</p>
+          <Button size="sm" variant="outline" onClick={() => void finishSignIn(phase.walletId)}>Log in anyway</Button>
         </div>
       )}
       {phase.kind === "error" && <InlineError>{phase.text}</InlineError>}

@@ -1,12 +1,13 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { HealthBadge } from "@/components/health-badge";
 import { RegistryCard } from "@/components/registry-card";
 import { TryConsole, type TryOp } from "@/components/try-console";
 import { TRY_DOWN_REASON } from "@/components/try-live-link";
 import { getSql } from "@/lib/db";
+import { loadLiveApi } from "@/lib/public-api";
 import { env } from "@/lib/env";
-import { getLiveApi } from "@/lib/repo/apis";
 import { getPack } from "@/lib/repo/packs";
 import { listLatestRules } from "@/lib/repo/rules";
 import { envTryToken, fieldsFromSchema } from "@/lib/try";
@@ -15,10 +16,15 @@ import { isLiveBuyApi } from "@/lib/try-live";
 
 export const dynamic = "force-dynamic";
 
+export async function generateMetadata({ params }: { params: Promise<{ apiId: string }> }): Promise<Metadata> {
+  const api = await loadLiveApi((await params).apiId);
+  return { title: api ? `Try ${api.name} live` : "Not found" };
+}
+
 export default async function TryApiPage({ params }: { params: Promise<{ apiId: string }> }) {
   const { apiId } = await params;
   const sql = getSql();
-  const api = await getLiveApi(sql, apiId);
+  const api = await loadLiveApi(apiId);
   if (!api) notFound();
   const [rows, rules, pack, offer] = await Promise.all([
     listTryOperations(sql, apiId), listLatestRules(sql, apiId), findTryPack(sql, apiId, envTryToken(apiId)), getPack(sql, apiId),

@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { ReviewPanel } from "@/components/review-panel";
 import { LiveProgress } from "@/components/live-progress";
@@ -8,6 +9,8 @@ import { loadApiPage } from "@/lib/page-auth";
 import { loadProgress } from "@/lib/repo/progress";
 import { getPack } from "@/lib/repo/packs";
 import { listLatestRules } from "@/lib/repo/rules";
+
+export const metadata: Metadata = { title: "Review and price" };
 
 export default async function ReviewPage({ params }: { params: Promise<{ apiId: string }> }) {
   const { apiId } = await params;

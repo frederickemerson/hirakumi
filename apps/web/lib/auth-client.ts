@@ -31,19 +31,26 @@ function subscribe(l: () => void): () => void {
   return () => listeners.delete(l);
 }
 
-/** Asks the server once; concurrent callers share the request. A failed probe leaves the state unknown. */
+/**
+ * Asks the server once; concurrent callers share the request. A failed probe settles on signed out: the header
+ * must show something, and a seller whose session can't be read can't use it on this page either.
+ */
 export function probeAuth(): Promise<void> {
   if (probing) return probing;
   const started = version;
   probing = (async () => {
     try {
       const res = await fetch("/api/auth/me", { cache: "no-store", credentials: "same-origin" });
-      if (!res.ok) return;
+      if (!res.ok) {
+        if (version === started) setAuth({ status: "out" });
+        return;
+      }
       const data = (await res.json()) as { signedIn?: boolean; address?: string };
       if (version !== started) return;
       setAuth(data.signedIn && typeof data.address === "string" ? { status: "in", address: data.address } : { status: "out" });
     } catch {
-      // Offline or blocked: keep showing the signed-out buttons, which is what an unknown state renders.
+      // Offline or blocked: show the signed-out buttons rather than an empty header.
+      if (version === started) setAuth({ status: "out" });
     } finally {
       probing = null;
     }
@@ -51,7 +58,7 @@ export function probeAuth(): Promise<void> {
   return probing;
 }
 
-/** The current state. The server render and first client render are always "unknown", so hydration matches. */
+/** The current state. The server render and first client render are always "unknown" (the header shows neither state), so hydration matches. */
 export function useAuth(): Auth {
   const auth = useSyncExternalStore(subscribe, getAuth, () => UNKNOWN);
   useEffect(() => {

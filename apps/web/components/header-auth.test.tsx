@@ -41,13 +41,12 @@ afterEach(() => {
 });
 
 describe("HeaderAuth", () => {
-  it("shows the signed-out buttons by default and after a signed-out probe", async () => {
+  it("shows the signed-out buttons once the probe confirms signed out", async () => {
     const f = stubFetch({ signedIn: false });
     render(<HeaderAuth />);
-    expect(screen.getByRole("link", { name: "Log in" })).toHaveAttribute("href", "/login");
+    expect(await screen.findByRole("link", { name: "Log in" })).toHaveAttribute("href", "/login");
     expect(screen.getByRole("link", { name: "List your API" })).toHaveAttribute("href", "/login");
-    await waitFor(() => expect(f).toHaveBeenCalledWith("/api/auth/me", expect.objectContaining({ cache: "no-store" })));
-    expect(screen.getByRole("link", { name: "List your API" })).toBeInTheDocument();
+    expect(f).toHaveBeenCalledWith("/api/auth/me", expect.objectContaining({ cache: "no-store" }));
     expect(screen.queryByRole("link", { name: "My APIs" })).toBeNull();
     expect(screen.queryByRole("button", { name: /Account/ })).toBeNull();
   });
@@ -82,6 +81,24 @@ describe("HeaderAuth", () => {
     expect(screen.getByRole("link", { name: "My APIs" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: CHIP })).toBeInTheDocument();
     expect(f).not.toHaveBeenCalled();
+  });
+
+  it("on any page, hides both states (width reserved) until the session is known, so a signed-in seller never sees Log in", () => {
+    for (const path of ["/", "/p/api_1", "/demo", "/login"]) {
+      nav.pathname = path;
+      stubFetch({ signedIn: true, address: SHORT });
+      const { container, unmount } = render(<HeaderAuth />);
+      expect(screen.queryByRole("link", { name: "Log in" })).toBeNull();
+      expect(screen.queryByRole("link", { name: "List your API" })).toBeNull();
+      for (const layer of container.querySelectorAll("[data-auth-layer]")) expect(layer.className).toMatch(/\binvisible\b/);
+      unmount();
+    }
+  });
+
+  it("falls back to the signed-out buttons when the probe fails", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("offline"); }));
+    render(<HeaderAuth />);
+    expect(await screen.findByRole("link", { name: "Log in" })).toBeInTheDocument();
   });
 
   it("never flashes Log in on a seller page while the session is still unknown", () => {

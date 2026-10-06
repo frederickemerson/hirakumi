@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { BuyerSnippet } from "@/components/buyer-snippet";
 import { HealthBadge } from "@/components/health-badge";
@@ -5,19 +6,24 @@ import { StatusPanel } from "@/components/status-panel";
 import { TryLiveLink } from "@/components/try-live-link";
 import { Badge } from "@/components/ui/badge";
 import { getSql } from "@/lib/db";
+import { loadLiveApi } from "@/lib/public-api";
 import { env } from "@/lib/env";
 import { formatTusdm } from "@/lib/money";
-import { getLiveApi } from "@/lib/repo/apis";
 import { getPack } from "@/lib/repo/packs";
 import { listLatestRules } from "@/lib/repo/rules";
 import { listIncidents } from "@/lib/repo/stats";
 import { getPublicStatus } from "@/lib/repo/status";
 import { buildBuyerSnippet } from "@/lib/snippet";
 
+export async function generateMetadata({ params }: { params: Promise<{ apiId: string }> }): Promise<Metadata> {
+  const api = await loadLiveApi((await params).apiId);
+  return { title: api ? `${api.name} status` : "Not found" };
+}
+
 export default async function PublicApiPage({ params }: { params: Promise<{ apiId: string }> }) {
   const { apiId } = await params;
   const sql = getSql();
-  const api = await getLiveApi(sql, apiId);
+  const api = await loadLiveApi(apiId);
   if (!api) notFound();
   const [pack, promises, status, incidents] = await Promise.all([
     getPack(sql, apiId), listLatestRules(sql, apiId), getPublicStatus(sql, apiId), listIncidents(sql, apiId),

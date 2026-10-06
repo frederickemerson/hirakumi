@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { HealthBadge } from "@/components/health-badge";
 import { EmptyState } from "@/components/states";
@@ -7,6 +8,8 @@ import { shortAddress } from "@/lib/copy";
 import { getSql } from "@/lib/db";
 import { requireSellerPage } from "@/lib/page-auth";
 import { listApisForSeller } from "@/lib/repo/apis";
+
+export const metadata: Metadata = { title: "Your APIs" };
 
 export default async function ApisPage() {
   const session = await requireSellerPage("/apis");
