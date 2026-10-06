@@ -24,7 +24,7 @@ export default async function SalesPage({ params }: { params: Promise<{ apiId: s
         </p>
         {env.escrowSweepNotice() && (
           <p role="note" className="border-l-4 border-bill pl-3 text-body">
-            During the demo, per-job earnings arrive in the Hirakumi collection wallet and we forward them to you by hand.
+            During the demo, per-job payments arrive in the Hirakumi collection wallet and we forward them to you by hand.
           </p>
         )}
         <EscrowJobsTable jobs={jobs} />

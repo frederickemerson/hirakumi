@@ -25,6 +25,17 @@ export const STEP_STATUS_LABEL: Record<OnboardStepStatus, string> = {
   waiting_seller: "Waiting for you",
 };
 
+/** The listing timeline, in order. The only names a seller ever sees for onboarding steps. */
+export const TIMELINE_LABEL = {
+  read: "Read your file",
+  describe: "Describe endpoints",
+  choose: "Choose endpoints",
+  ownership: "Prove ownership",
+  test: "Test calls",
+  promise: "Write the promise",
+  register: "Register on Masumi",
+} as const;
+
 export const PACK_STATUS_LABEL = {
   pending: "Waiting for the payment to settle",
   active: "Paid, credits available",
@@ -46,11 +57,6 @@ export function cardanoscanTxUrl(txHash: string): string {
 
 export function shortAddress(addr: string): string {
   return addr.length <= 20 ? addr : `${addr.slice(0, 12)}…${addr.slice(-6)}`;
-}
-
-export function humanizeStep(step: string): string {
-  const words = step.replace(/[_-]+/g, " ").trim();
-  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 export function formatTime(d: Date | string): string {

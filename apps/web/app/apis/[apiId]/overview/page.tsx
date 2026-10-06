@@ -1,35 +1,28 @@
 import { formatHealthReasons } from "@hirakumi/core";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { AutoRefresh } from "@/components/auto-refresh";
 import { BuyerSnippet } from "@/components/buyer-snippet";
 import { HealthBadge } from "@/components/health-badge";
+import { LiveMoment } from "@/components/live-moment";
+import { LiveProgress } from "@/components/live-progress";
 import { RetireButton } from "@/components/retire-button";
 import { PackSalesTable } from "@/components/sales-tables";
 import { EmptyState, WaitingState } from "@/components/states";
-import { StepList } from "@/components/step-list";
+import { OverviewStatGrid } from "@/components/stat";
 import { formatTime } from "@/lib/copy";
 import { getSql } from "@/lib/db";
 import { env } from "@/lib/env";
-import { stepForState } from "@/lib/flow";
+import { firstFailedStep, stepForState } from "@/lib/flow";
 import { getGateway } from "@/lib/gateway";
-import { formatTusdm } from "@/lib/money";
 import { loadApiPage } from "@/lib/page-auth";
 import { listOnboardSteps } from "@/lib/repo/apis";
 import { getPack } from "@/lib/repo/packs";
 import { listLatestRules } from "@/lib/repo/rules";
 import { getOverviewStats, listIncidents, listPackSales } from "@/lib/repo/stats";
+import { progressFor } from "@/lib/progress";
 import { buildBuyerSnippet } from "@/lib/snippet";
-
-function Stat({ label, value, note }: { label: string; value: string; note?: string }) {
-  return (
-    <div className="rounded-[2px] border-2 border-ink bg-frost p-4">
-      <p className="text-caption uppercase tracking-[0.04em] text-graphite">{label}</p>
-      <p className="mt-1 text-h-sm font-medium tabular-nums">{value}</p>
-      {note && <p className="mt-1 text-caption text-graphite">{note}</p>}
-    </div>
-  );
-}
+import { buildTimeline } from "@/lib/timeline";
+import { registryLinks } from "@/lib/try";
 
 export default async function OverviewPage({ params }: { params: Promise<{ apiId: string }> }) {
   const { apiId } = await params;
@@ -48,20 +41,25 @@ export default async function OverviewPage({ params }: { params: Promise<{ apiId
   const publicBase = env.publicBaseUrl();
   const buyerBase = `${publicBase}/a/${apiId}`;
   const snippetOp = promises.find((p) => p.opId === api.escrowOpId) ?? promises[0];
-  const running = steps.find((s) => s.status === "running");
+  const progress = progressFor(api, buildTimeline(api.state, steps), firstFailedStep(steps));
+  const registerStep = steps.find((s) => s.step === "register" && s.status === "done");
 
   return (
     <section className="space-y-8">
-      <AutoRefresh everyMs={5000} />
       <div className="flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-h font-medium uppercase">{api.name}</h1>
         <HealthBadge state={api.state} health={api.health} checkedAt={api.healthCheckedAt} />
       </div>
 
+      {api.state === "live" && (
+        <LiveMoment apiId={apiId} liveSince={registerStep ? new Date(registerStep.updatedAt).toISOString() : null}
+          registryUrl={registryLinks(api.agentIdentifier)?.explorerUrl ?? null} />
+      )}
       {api.state === "registering" && (
         <WaitingState title="Registering on the Masumi network. This takes about a minute."
-          detail="Your API goes Live as soon as the registry lists it." since={running?.updatedAt ?? null}>
-          <StepList steps={steps} />
+          detail="Your API goes Live as soon as the registry lists it." since={progress.timeline.current?.since ?? null}>
+          {/* Polls only while registering; once live the overview stays still (no gateway health on every tick). */}
+          <LiveProgress apiId={apiId} initial={progress} />
         </WaitingState>
       )}
       {downReasons.length > 0 && (
@@ -84,14 +82,7 @@ export default async function OverviewPage({ params }: { params: Promise<{ apiId
         {api.state === "live" && (<><dt className="text-graphite">Public page</dt><dd><Link href={`/p/${apiId}`} className="underline underline-offset-4">{`/p/${apiId}`}</Link></dd></>)}
       </dl>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat label="Paid calls, last 24 hours" value={String(stats.callsDay)} />
-        <Stat label="Kept the promise" value={stats.passRate === null ? "No paid calls yet" : `${Math.round(stats.passRate * 100)}%`}
-          note={`${stats.passDay} passed, ${stats.failDay} didn't (no credit used)`} />
-        <Stat label="Pack earnings" value={`${formatTusdm(stats.packEarningsMicros)} tUSDM`} note={`${stats.packSales} packs sold`} />
-        <Stat label="Per-job earnings" value={`${formatTusdm(stats.escrowNetMicros)} tUSDM`}
-          note={`${stats.escrowJobs} jobs, ${formatTusdm(stats.escrowGrossMicros)} paid, Masumi kept ${formatTusdm(stats.escrowFeeMicros)}`} />
-      </div>
+      <OverviewStatGrid stats={stats} />
 
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-4">

@@ -20,11 +20,63 @@ export type WalletInfo = { id: string; name: string; icon: string };
 
 export class WalletError extends Error {}
 
+/**
+ * Some wallets inject themselves under two keys (a legacy and a current one), which would show the
+ * same wallet twice. Same name and same icon means the same wallet: keep the first.
+ */
+export function dedupeWallets(wallets: WalletInfo[]): WalletInfo[] {
+  const seen = new Set<string>();
+  return wallets.filter((w) => {
+    const key = JSON.stringify([w.name.trim().toLowerCase(), w.icon]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export function listWallets(): WalletInfo[] {
   if (typeof window === "undefined" || !window.cardano) return [];
-  return Object.entries(window.cardano)
-    .filter(([, w]) => !!w && typeof w.enable === "function" && typeof w.name === "string")
-    .map(([id, w]) => ({ id, name: w!.name, icon: w!.icon ?? "" }));
+  return dedupeWallets(
+    Object.entries(window.cardano)
+      .filter(([, w]) => !!w && typeof w.enable === "function" && typeof w.name === "string")
+      .map(([id, w]) => ({ id, name: w!.name, icon: w!.icon ?? "" })),
+  );
+}
+
+export function sameWallets(a: WalletInfo[] | null, b: WalletInfo[]): boolean {
+  return !!a && a.length === b.length && a.every((w, i) => w.id === b[i].id);
+}
+
+/** Wallet extensions only exist in desktop browsers today. Prefers the browser's own answer (UA-CH). */
+export function isMobileBrowser(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const uaData = (navigator as Navigator & { userAgentData?: { mobile?: boolean } }).userAgentData;
+  if (typeof uaData?.mobile === "boolean") return uaData.mobile;
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+}
+
+/** Addresses to check for preprod history: the change address plus a few used ones, deduplicated. */
+export async function walletAddresses(api: Cip30Api, changeAddressHex: string, max = 5): Promise<string[]> {
+  const used = await api.getUsedAddresses().catch(() => [] as string[]);
+  return [...new Set([changeAddressHex, ...used])].slice(0, max);
+}
+
+export type PreprodFunds = "funded" | "empty" | "unknown";
+
+/** Asks the server (which holds the Blockfrost key) whether these addresses have any preprod ADA. */
+export async function checkPreprodFunds(addresses: string[]): Promise<PreprodFunds> {
+  try {
+    const res = await fetch("/api/wallet/preprod-funds", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ addresses }),
+    });
+    if (!res.ok) return "unknown";
+    const data = (await res.json()) as { status?: unknown };
+    return data.status === "funded" || data.status === "empty" ? data.status : "unknown";
+  } catch {
+    return "unknown";
+  }
 }
 
 export async function connectWallet(id: string): Promise<{ api: Cip30Api; addressHex: string }> {

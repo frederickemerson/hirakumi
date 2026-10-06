@@ -1,36 +1,64 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useRef, useState } from "react";
 import { Elapsed } from "@/components/elapsed";
 import { InlineError, InlineStatus } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { GetAWallet, MobileNote, useIsMobile, useWallets, WalletIcon } from "@/components/wallet-picker";
 import { postJson } from "@/lib/client-fetch";
 import { startRouteProgress } from "@/lib/route-progress";
-import { connectWallet, listWallets, signText, walletErrorMessage, type WalletInfo } from "@/lib/wallet-client";
+import {
+  checkPreprodFunds,
+  connectWallet,
+  signText,
+  walletAddresses,
+  walletErrorMessage,
+  type Cip30Api,
+} from "@/lib/wallet-client";
 
-type Phase = { kind: "idle" } | { kind: "working"; text: string; walletId: string } | { kind: "error"; text: string };
+export const FAUCET_URL = "https://docs.cardano.org/cardano-testnets/tools/faucet";
+
+type Phase =
+  | { kind: "idle" }
+  | { kind: "working"; text: string; walletId: string }
+  | { kind: "no_funds"; walletId: string }
+  | { kind: "error"; text: string };
 
 export function WalletLogin({ next }: { next: string }) {
   const router = useRouter();
-  const [wallets, setWallets] = useState<WalletInfo[] | null>(null);
+  const wallets = useWallets();
+  const mobile = useIsMobile();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
-
-  useEffect(() => {
-    // Extensions inject window.cardano asynchronously; look again shortly after load.
-    setWallets(listWallets());
-    const t = setTimeout(() => setWallets(listWallets()), 800);
-    return () => clearTimeout(t);
-  }, []);
+  // The connected wallet, kept while the seller decides what to do about a wallet with no preprod funds.
+  const connected = useRef<{ api: Cip30Api; addressHex: string } | null>(null);
 
   async function signIn(walletId: string) {
     try {
       setPhase({ kind: "working", walletId, text: "Connecting to your wallet…" });
-      const { api, addressHex } = await connectWallet(walletId);
-      const challenge = await postJson<{ message: string; nonceToken: string }>("/api/auth/nonce", { address: addressHex });
+      const conn = await connectWallet(walletId);
+      connected.current = conn;
+      setPhase({ kind: "working", walletId, text: "Checking this wallet on preprod…" });
+      // Preprod and preview both report network id 0; Blockfrost preprod tells them apart.
+      const funds = await checkPreprodFunds(await walletAddresses(conn.api, conn.addressHex));
+      if (funds === "empty") {
+        setPhase({ kind: "no_funds", walletId });
+        return;
+      }
+      await finishSignIn(walletId);
+    } catch (e) {
+      setPhase({ kind: "error", text: walletErrorMessage(e) });
+    }
+  }
+
+  async function finishSignIn(walletId: string) {
+    const conn = connected.current;
+    if (!conn) return;
+    try {
+      const challenge = await postJson<{ message: string; nonceToken: string }>("/api/auth/nonce", { address: conn.addressHex });
       setPhase({ kind: "working", walletId, text: "Approve the sign-in message in your wallet. It costs nothing and moves no funds." });
-      const sig = await signText(api, addressHex, challenge.message);
+      const sig = await signText(conn.api, conn.addressHex, challenge.message);
       setPhase({ kind: "working", walletId, text: "Signature received. Opening your dashboard…" });
       await postJson("/api/auth/verify", { nonceToken: challenge.nonceToken, ...sig });
       startRouteProgress();
@@ -42,37 +70,54 @@ export function WalletLogin({ next }: { next: string }) {
 
   if (wallets === null) {
     return (
-      <div role="status" aria-label="Looking for wallets" className="flex gap-2">
-        <Skeleton className="h-11 w-44" />
-        <Skeleton className="h-11 w-44" />
+      <div role="status" aria-label="Looking for wallets" className="space-y-3">
+        <Skeleton className="h-12 w-full" />
+        <Skeleton className="h-12 w-full" />
       </div>
     );
   }
   if (wallets.length === 0) {
     return (
-      <InlineError>
-        No Cardano wallet found in this browser. Install Lace or Eternl, switch it to the Preprod test network, then reload this page.
-      </InlineError>
+      <div className="space-y-4">
+        {mobile && <MobileNote />}
+        <GetAWallet />
+      </div>
     );
   }
+  const busy = phase.kind === "working";
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-4">
+      {mobile && <MobileNote />}
+      <ul className="grid gap-3" aria-label="Wallets in this browser">
         {wallets.map((w) => (
-          <Button
-            key={w.id}
-            pending={phase.kind === "working" && phase.walletId === w.id}
-            disabled={phase.kind === "working"}
-            onClick={() => signIn(w.id)}
-          >
-            Sign in with {w.name}
-          </Button>
+          <li key={w.id}>
+            <Button
+              variant="outline"
+              className="w-full justify-start gap-3"
+              pending={busy && phase.walletId === w.id}
+              disabled={busy}
+              onClick={() => signIn(w.id)}
+            >
+              {!(busy && phase.walletId === w.id) && <WalletIcon icon={w.icon} />}
+              <span>Sign in with {w.name}</span>
+            </Button>
+          </li>
         ))}
-      </div>
+      </ul>
       {phase.kind === "working" && (
         <InlineStatus busy>
           {phase.text} <Elapsed prefix=" " className="text-graphite" />
         </InlineStatus>
+      )}
+      {phase.kind === "no_funds" && (
+        <div role="alert" className="space-y-3 rounded-[2px] border-2 border-ink border-l-8 border-l-canary bg-frost p-4 text-body">
+          <p className="font-medium">
+            This wallet has no preprod funds. Get test ADA from the{" "}
+            <a href={FAUCET_URL} target="_blank" rel="noreferrer" className="underline underline-offset-4">Cardano faucet</a>.
+          </p>
+          <p className="text-graphite">If your wallet is on preview, switch it to preprod first. You can still sign in now; signing is free.</p>
+          <Button size="sm" variant="outline" onClick={() => void finishSignIn(phase.walletId)}>Sign in anyway</Button>
+        </div>
       )}
       {phase.kind === "error" && <InlineError>{phase.text}</InlineError>}
     </div>

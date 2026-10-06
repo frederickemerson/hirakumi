@@ -5,6 +5,7 @@ import { JetBrains_Mono } from "next/font/google";
 import { RouteProgress } from "@/components/route-progress";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
+import { Toaster } from "@/components/toast";
 import { cn } from "@/lib/utils";
 
 const mono = JetBrains_Mono({
@@ -16,18 +17,24 @@ const mono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: { default: "Hirakumi", template: "%s | Hirakumi" },
-  description: "Sell your API to AI agents. Paste an OpenAPI link; agents buy call packs in USDM on Cardano and pay only for answers that keep your promise.",
+  description: "Make your APIs monetizable. Paste your OpenAPI link, sign with your Cardano wallet, set a pack price. AI agents pay in USDM, and stale or empty answers cost them nothing.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className={cn("font-sans", mono.variable)}>
+    // suppressHydrationWarning: the inline script below adds the `js` class before React hydrates.
+    <html lang="en" className={cn("font-sans", mono.variable)} suppressHydrationWarning>
+      <head>
+        {/* Before first paint: lets CSS hide scroll-reveal content only when JavaScript will reveal it. */}
+        <script dangerouslySetInnerHTML={{ __html: "document.documentElement.classList.add('js')" }} />
+      </head>
       <body className="flex min-h-dvh flex-col bg-background text-foreground antialiased">
         <RouteProgress />
         <SiteHeader />
         {/* Pages sit in a centred 1200px column with a 16px gutter. Full-bleed bands use the `bleed` utility. */}
         <main className="mx-auto w-full max-w-[1200px] flex-1 px-4 py-10">{children}</main>
         <SiteFooter />
+        <Toaster />
       </body>
     </html>
   );
