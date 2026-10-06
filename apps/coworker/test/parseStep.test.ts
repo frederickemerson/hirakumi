@@ -50,3 +50,31 @@ describe("parseStep (intake → parsed)", () => {
     expect((await messagesFor(db.pool, apiId))[0].body).toMatch(/could not be read: .*line \d+/);
   });
 });
+
+describe("parseStep honours servers[0].url (review I7)", () => {
+  const withServers = (servers: unknown) => JSON.stringify({ ...JSON.parse(PRICE_SPEC), servers });
+  const prefixOf = async (apiId: string) => (await db.pool.query(`select path_prefix, state from apis where id = $1`, [apiId])).rows[0];
+  it("stores a same-host server path as the path prefix", async () => {
+    const apiId = await seedApi(db.pool, {});
+    const { rows: [a] } = await db.pool.query(`select origin from apis where id = $1`, [apiId]);
+    await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(withServers([{ url: `${a.origin}/v1/` }])) }, apiId);
+    expect(await prefixOf(apiId)).toEqual({ path_prefix: "/v1", state: "parsed" });
+  });
+  it("resolves a relative server URL against the OpenAPI file's location", async () => {
+    const apiId = await seedApi(db.pool, {});
+    await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(withServers([{ url: "/api/v2" }])) }, apiId);
+    expect((await prefixOf(apiId)).path_prefix).toBe("/api/v2");
+  });
+  it("keeps the root when there is no servers list", async () => {
+    const apiId = await seedApi(db.pool, {});
+    await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(PRICE_SPEC) }, apiId);
+    expect((await prefixOf(apiId)).path_prefix).toBe("/");
+  });
+  it("refuses an API that runs on a different host than its OpenAPI file (ownership covers the file's host only)", async () => {
+    const apiId = await seedApi(db.pool, {});
+    const r = await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(withServers([{ url: "https://other-host.example/v1" }])) }, apiId);
+    expect(r).toBe("failed");
+    expect((await getStep(db.pool, apiId, "parse"))?.output?.error).toMatch(/other-host\.example/);
+    expect((await prefixOf(apiId)).state).toBe("intake");
+  });
+});

@@ -55,7 +55,7 @@ export async function finishStep(db: Db, apiId: string, step: StepName, output: 
   await db.query(
     `insert into onboard_steps (api_id, step, status, attempts, output, updated_at) values ($1, $2, 'done', 0, $3::jsonb, now())
      on conflict (api_id, step) do update
-       set status = 'done', output = (coalesce(onboard_steps.output, '{}'::jsonb) - 'lastError') || $3::jsonb, updated_at = now()`,
+       set status = 'done', output = (coalesce(onboard_steps.output, '{}'::jsonb) - 'error') || $3::jsonb, updated_at = now()`,
     [apiId, step, JSON.stringify(output)],
   );
 }
@@ -88,7 +88,7 @@ export async function failStep(
   const { rows } = await db.query<{ status: StepStatus }>(
     `update onboard_steps
        set status = case when $4::boolean or attempts >= $5::int then 'failed' else 'pending' end,
-           output = coalesce(output, '{}'::jsonb) || jsonb_build_object('lastError', $3::text),
+           output = coalesce(output, '{}'::jsonb) || jsonb_build_object('error', $3::text),
            updated_at = now()
      where api_id = $1 and step = $2
      returning status`,

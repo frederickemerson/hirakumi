@@ -22,7 +22,8 @@ export type OpForLlm = {
 };
 export type ParsedOperation = { opId: string; method: HttpMethod; path: string; inputSchema: InputSchema; llm: OpForLlm };
 export type SkippedOperation = { method: HttpMethod; path: string; reason: string };
-export type ParseResult = { title: string; operations: ParsedOperation[]; skipped: SkippedOperation[] };
+/** serverUrl = servers[0].url with {variables} filled from their defaults, or null when the file has no servers. */
+export type ParseResult = { title: string; serverUrl: string | null; operations: ParsedOperation[]; skipped: SkippedOperation[] };
 
 type Json = Record<string, unknown>;
 type Param = { name: string; in: string; required?: boolean; description?: string; schema?: Json; example?: unknown; examples?: unknown };
@@ -114,6 +115,17 @@ function requiresAuth(op: Json, doc: Json): boolean {
 }
 
 /** Parses an OpenAPI 3.x document (JSON or YAML text). Never fetches anything: external $refs are not resolved. */
+/** servers[0].url with {variables} replaced by their defaults (OpenAPI 3 server object). */
+function firstServerUrl(servers: unknown): string | null {
+  const first = Array.isArray(servers) ? servers[0] : undefined;
+  if (!isRecord(first) || typeof first.url !== "string" || !first.url.trim()) return null;
+  const vars = isRecord(first.variables) ? first.variables : {};
+  return first.url.trim().replace(/\{([^}]+)\}/g, (whole, name: string) => {
+    const v = vars[name];
+    return isRecord(v) && typeof v.default === "string" ? v.default : whole;
+  });
+}
+
 export async function parseOpenApi(text: string): Promise<ParseResult> {
   let raw: unknown;
   try {
@@ -180,5 +192,5 @@ export async function parseOpenApi(text: string): Promise<ParseResult> {
     }
   }
   const info = isRecord(doc.info) ? doc.info : {};
-  return { title: clip(info.title) ?? "Untitled API", operations, skipped };
+  return { title: clip(info.title) ?? "Untitled API", serverUrl: firstServerUrl(doc.servers), operations, skipped };
 }

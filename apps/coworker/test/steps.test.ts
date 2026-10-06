@@ -39,7 +39,7 @@ describe("runStep", () => {
     expect(outcomes).toEqual(["retry", "retry", "failed", "skipped"]);
     expect(body).toHaveBeenCalledTimes(MAX_ATTEMPTS);
     const step = await getStep(db.pool, apiId, "parse");
-    expect(step).toMatchObject({ status: "failed", attempts: 3, output: { lastError: "upstream timeout" } });
+    expect(step).toMatchObject({ status: "failed", attempts: 3, output: { error: "upstream timeout" } });
     const msgs = await messagesFor(db.pool, apiId);
     expect(msgs).toHaveLength(1);
     expect(msgs[0]).toMatchObject({ task_status: "INPUT_REQUIRED" });
