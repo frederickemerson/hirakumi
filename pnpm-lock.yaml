@@ -52,6 +52,9 @@ importers:
 
   packages/db:
     dependencies:
+      '@hirakumi/core':
+        specifier: workspace:*
+        version: link:../core
       postgres:
         specifier: 3.4.9
         version: 3.4.9
