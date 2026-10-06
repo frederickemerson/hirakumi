@@ -1,3 +1,4 @@
 export * from "./client";
 export * from "./migrate";
 export * from "./gateway";
+export * from "./channels";

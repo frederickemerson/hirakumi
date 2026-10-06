@@ -6,7 +6,11 @@ import { ExactCardanoScheme } from "@x402/cardano/exact/server";
 import { USDM_PREPROD_ASSET, decodeCardanoTransaction } from "@x402/cardano";
 import { jcs, newBearerToken, newId, sha256Hex } from "@hirakumi/core";
 import { timingSafeEqual } from "node:crypto";
-import { activateTokenByPayment, findTokenByTx, insertPendingToken, rotateTokenById, type PackRow } from "@hirakumi/db";
+import {
+  activateTokenByPayment, findTokenByTx, getChannelByLockTx, insertPendingToken, openChannelFromQuote, rotateTokenById, type PackRow,
+} from "@hirakumi/db";
+import { PACK_ESCROW } from "@hirakumi/escrow";
+import { buyerKeys, escrowExtra, quoteFor, quoteKey, verifyChannelLock, type BuyerKeys } from "./escrowPacks";
 import type { AppDeps } from "./deps";
 import { downBody, ruleUrl } from "./http";
 import { primaryRule, type LoadedApi } from "./registry";
@@ -49,10 +53,35 @@ function packExtra(d: AppDeps, loaded: LoadedApi, pack: PackRow): Record<string,
   return { apiId: loaded.api.id, packId: pack.id, calls: pack.calls, ruleHash: rule.hash, ruleUrl: ruleUrl(d.config, rule.hash) };
 }
 
+const escrowMode = (d: AppDeps) => d.config.packMode === "escrow" && d.config.packEscrow !== null;
+
+function adapterKeys(ctx: HTTPRequestContext): BuyerKeys {
+  const keys = buyerKeys((n) => ctx.adapter.getHeader(n));
+  if (typeof keys === "string") throw new Error(keys); // the guard answers 400 before x402 runs
+  return keys;
+}
+
+async function escrowQuote(d: AppDeps, ctx: HTTPRequestContext) {
+  const { loaded, pack } = await resolvePack(d, ctx.path);
+  const rule = primaryRule(loaded);
+  if (!rule) throw new Error(`no published promise for ${loaded.api.id}`);
+  return { loaded, pack, quote: await quoteFor(d.sql, d.config.packEscrow!, loaded, pack, rule.hash, adapterKeys(ctx)) };
+}
+
 export function packRouter(d: AppDeps): Router {
   const server = new x402ResourceServer(d.facilitator).register(NETWORK, new ExactCardanoScheme());
   server.onAfterSettle(async (ctx) => {
     if (!ctx.result.success) return;
+    // Escrow packs go live only once the lock itself is verified on-chain (never on the facilitator's word).
+    const channel = ctx.result.transaction ? await getChannelByLockTx(d.sql, ctx.result.transaction) : null;
+    if (channel) {
+      const verdict = d.escrowChain ? await verifyChannelLock(d.sql, d.escrowChain, channel).catch((e) => {
+        console.warn(`[packs] lock check for ${channel.channel_id} failed, the watcher retries: ${(e as Error).message}`);
+        return "unseen";
+      }) : "unseen";
+      console.log(`[packs] settled escrow lock tx=${ctx.result.transaction} channel=${channel.channel_id} ${verdict}`);
+      return;
+    }
     const activated = await activateTokenByPayment(
       d.sql, paymentPayloadHash(ctx.paymentPayload.payload), ctx.result.transaction || null, ctx.result.payer ?? null,
     );
@@ -67,8 +96,12 @@ export function packRouter(d: AppDeps): Router {
       accepts: {
         scheme: "exact",
         network: NETWORK,
-        payTo: async (ctx: HTTPRequestContext) => (await resolvePack(d, ctx.path)).loaded.api.pay_to,
+        payTo: async (ctx: HTTPRequestContext) => escrowMode(d) ? PACK_ESCROW.address : (await resolvePack(d, ctx.path)).loaded.api.pay_to,
         price: async (ctx: HTTPRequestContext) => {
+          if (escrowMode(d)) {
+            const { loaded, pack, quote } = await escrowQuote(d, ctx);
+            return { amount: pack.price_micros, asset: USDM_PREPROD_ASSET, extra: { ...packExtra(d, loaded, pack), ...escrowExtra(quote) } };
+          }
           const { loaded, pack } = await resolvePack(d, ctx.path);
           return { amount: pack.price_micros, asset: USDM_PREPROD_ASSET, extra: packExtra(d, loaded, pack) };
         },
@@ -79,6 +112,18 @@ export function packRouter(d: AppDeps): Router {
       mimeType: "application/json",
       unpaidResponseBody: async (ctx: HTTPRequestContext) => {
         const { loaded, pack } = await resolvePack(d, ctx.path);
+        if (escrowMode(d)) {
+          const { quote } = await escrowQuote(d, ctx);
+          const { script: _script, ...offer } = escrowExtra(quote);
+          return {
+            contentType: "application/json",
+            body: {
+              error: "payment_required", mode: "escrow", ...packExtra(d, loaded, pack), price: pack.price_micros, asset: USDM_PREPROD_ASSET,
+              escrowAddress: PACK_ESCROW.address, ...offer,
+              message: `Pay once to lock ${pack.calls} calls in escrow. The seller is paid only for calls you sign IOUs for; the rest comes back to you on Settle.`,
+            },
+          };
+        }
         return {
           contentType: "application/json",
           body: {
@@ -106,6 +151,17 @@ export function packRouter(d: AppDeps): Router {
       const snap = d.health.get(loaded.api.id);
       if (snap?.health === "down") { res.status(503).json(downBody(d.config, snap)); return; }
       if (!primaryRule(loaded)) { res.status(503).json({ error: "promise_not_published" }); return; }
+      if (escrowMode(d)) {
+        const keys = buyerKeys((n) => req.header(n));
+        if (keys === "receipt_key_required") {
+          res.status(400).json({ error: keys, message: "Escrow packs need X-Hirakumi-Receipt-Key: the 32-byte ed25519 public key (hex) you will sign IOUs with." }); return;
+        }
+        if (keys === "bad_refund_address") {
+          res.status(400).json({ error: keys, message: "Escrow packs need X-Hirakumi-Refund-Address: a preprod address with a key payment credential." }); return;
+        }
+        if (BigInt(pack.price_micros) % BigInt(pack.calls) !== 0n) { res.status(503).json({ error: "pack_not_escrowable" }); return; }
+        res.locals.buyerKeys = keys;
+      }
       res.locals.loaded = loaded;
       res.locals.pack = pack;
       next();
@@ -136,6 +192,21 @@ export function packRouter(d: AppDeps): Router {
         res.status(409).json({
           error: "payment_already_used", tokenId: ins.id,
           message: "This payment already bought a credit token. If you never received it, POST the same PAYMENT-SIGNATURE with X-Hirakumi-Recovery-Secret to this URL + /recover.",
+        });
+        return;
+      }
+      if (escrowMode(d)) {
+        // The quote this payment answered: x402 already matched its datum byte for byte.
+        const keys = res.locals.buyerKeys as BuyerKeys;
+        const accepted = payload.accepted?.extra as { channelId?: unknown } | undefined;
+        const channelId = typeof accepted?.channelId === "string" ? accepted.channelId : "";
+        const opened = await openChannelFromQuote(d.sql, { quoteKey: quoteKey(loaded.api.id, pack.id, keys), channelId, creditTokenId: ins.id, lockTxHash: txHash });
+        if (!opened) {
+          res.status(409).json({ error: "quote_not_found", message: "This offer expired or was already paid. Ask for a new 402 and pay that." }); return;
+        }
+        res.status(200).json({
+          token, credits: pack.calls, apiId: loaded.api.id, tokenId: ins.id, mode: "escrow", channelId,
+          escrowAddress: PACK_ESCROW.address, channelUrl: `${d.config.publicBaseUrl}/a/${loaded.api.id}/channels/${channelId}`,
         });
         return;
       }

@@ -124,6 +124,7 @@ export function fakeTxHash(transaction: string): string | null {
 
 export class FakeFacilitator implements FacilitatorClient {
   settleMode: "success" | "fail" = "success";
+  methods: string[] = ["default"];
   verifyCalls = 0;
   settleCalls = 0;
   async verify(_p: PaymentPayload, _r: PaymentRequirements): Promise<VerifyResponse> {
@@ -140,7 +141,7 @@ export class FakeFacilitator implements FacilitatorClient {
   async getSupported(): Promise<SupportedResponse> {
     return {
       kinds: [{ x402Version: 2, scheme: "exact", network: "cardano:preprod",
-                extra: { assetTransferMethods: ["default"], areFeesSponsored: false, l1Confirmations: { minimum: 0, maximum: 20 } } }],
+                extra: { assetTransferMethods: this.methods, areFeesSponsored: false, l1Confirmations: { minimum: 0, maximum: 20 } } }],
       extensions: [],
       signers: {},
     };
@@ -174,6 +175,7 @@ export function testConfig(over: Partial<GatewayConfig> = {}): GatewayConfig {
     facilitatorUrl: "http://facilitator.invalid", databaseUrl: "unused", probeIntervalMs: 10_000,
     thresholds: { failsToDown: 2, passesToHeal: 2 }, l1Confirmations: 0, upstreamTimeoutMs: 500,
     escrow: { payByMs: 10 * 60_000, submitResultMs: 20 * 60_000, unit: "16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d" }, blockfrostProjectId: null, masumi: null,
+    packMode: "direct", packEscrow: null,
     ...over,
   };
 }
@@ -193,7 +195,7 @@ export type Harness = {
 };
 
 export async function makeHarness(
-  opts: { config?: Partial<GatewayConfig>; seed?: Parameters<typeof seedLiveApi>[2] } = {},
+  opts: { config?: Partial<GatewayConfig>; seed?: Parameters<typeof seedLiveApi>[2]; escrowChain?: AppDeps["escrowChain"]; facilitatorMethods?: string[] } = {},
 ): Promise<Harness> {
   const db = await createTestDb();
   const stub = await startStubUpstream();
@@ -202,10 +204,11 @@ export async function makeHarness(
   const health = new HealthTracker(config.thresholds);
   const registry = new ApiRegistry(db.sql, health);
   const facilitator = new FakeFacilitator();
+  if (opts.facilitatorMethods) facilitator.methods = opts.facilitatorMethods;
   const masumi = new FakeMasumi();
   const deps: AppDeps = {
     sql: db.sql, config, registry, health, facilitator, masumi,
-    paymentTxHash: (payload) => fakeTxHash(String(payload.transaction)),
+    paymentTxHash: (payload) => fakeTxHash(String(payload.transaction)), escrowChain: opts.escrowChain ?? null,
   };
   const app = createApp(deps);
   return {

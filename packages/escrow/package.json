@@ -3,11 +3,18 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
-  "scripts": { "test": "vitest run", "typecheck": "tsc --noEmit -p ." },
+  "exports": {
+    ".": "./src/index.ts",
+    "./txs": "./src/txs.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p ."
+  },
   "dependencies": {
     "@evolution-sdk/evolution": "0.5.17",
-    "@noble/curves": "1.9.7"
+    "@noble/curves": "1.9.7",
+    "effect": "3.22.2"
   },
   "devDependencies": {
     "@types/node": "22.20.5",

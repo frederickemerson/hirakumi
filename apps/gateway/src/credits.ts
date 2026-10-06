@@ -1,6 +1,11 @@
 import { Router } from "express";
-import { inputHash, outputHash, sha256Hex } from "@hirakumi/core";
-import { getReceipts, insertCall, markExhaustedIfEmpty, releaseCredit, reserveCredit } from "@hirakumi/db";
+import { inputHash, newId, outputHash, sha256Hex } from "@hirakumi/core";
+import {
+  finishChannelCall, gateChannelCall, getChannelByToken, getReceipts, insertCall, markExhaustedIfEmpty, releaseCredit, reserveCredit,
+  type Reservation,
+} from "@hirakumi/db";
+import { channelView } from "./channels";
+import { IOU_HEADER, SIGN_NEXT_HEADER, checkIou } from "./ious";
 import type { AppDeps } from "./deps";
 import { creditsRequiredBody, downBody, parseBearer } from "./http";
 import { runOperation, type OperationOutcome } from "./upstream";
@@ -17,8 +22,10 @@ export function creditsRouter(d: AppDeps): Router {
       if (!bearer) { res.status(401).json({ error: "token_required", message: "Send your pack token as Authorization: Bearer <token>." }); return; }
       const found = await getReceipts(d.sql, req.params.apiId, sha256Hex(bearer));
       if (!found) { res.status(401).json({ error: "invalid_token" }); return; }
+      const channel = await getChannelByToken(d.sql, req.params.apiId, sha256Hex(bearer));
       res.set("cache-control", "no-store").json({
         ...found,
+        ...(channel ? { channel: channelView(d.config, channel) } : {}),
         verify:
           "charged is true only when the API answered and the answer passed the rule (ruleHash, see /r/<ruleHash>). " +
           "To check a paid answer, compute outputHash = sha256(token.id + ';' + body) as in MIP-004 over the exact body you received.",
@@ -46,7 +53,33 @@ export function creditsRouter(d: AppDeps): Router {
       // A Bearer value that isn't a Hirakumi token is a client bug: say so instead of offering another pack.
       if (!bearer && /^\s*Bearer\s+\S/i.test(authorization ?? "")) { res.status(401).json({ error: "invalid_token" }); return; }
       if (!bearer) { res.status(402).json(creditsRequiredBody(d.config, loaded, op.ruleRow)); return; }
-      const reservation = await reserveCredit(d.sql, loaded.api.id, sha256Hex(bearer));
+      // Escrow packs: the IOU gate (one DB transaction: row lock, allowance, credit, lease) replaces the plain reserve.
+      const channel = await getChannelByToken(d.sql, loaded.api.id, sha256Hex(bearer));
+      const callId = newId("call");
+      let reservation: Reservation;
+      if (channel) {
+        const iou = checkIou(channel, req.header(IOU_HEADER));
+        if (!iou.ok) { res.status(iou.status).json({ ...iou.body, channelId: channel.channel_id }); return; }
+        const gate = await gateChannelCall(d.sql, {
+          channelId: channel.channel_id, callId, leaseSeconds: d.config.packEscrow?.leaseSeconds ?? 30, verifiedIou: iou.iou,
+        });
+        if (!gate.ok && gate.reason === "iou_required") {
+          res.status(402).set(SIGN_NEXT_HEADER, String(gate.channel!.passes_served)).json({
+            error: "iou_required", channelId: channel.channel_id, signNext: gate.channel!.passes_served,
+            iouAccepted: gate.channel!.iou_accepted, unsignedAllowance: gate.channel!.unsigned_allowance,
+            message: `Sign an IOU for ${gate.channel!.passes_served} calls and send it as X-Hirakumi-IOU: <n>.<signature>.`,
+          });
+          return;
+        }
+        if (!gate.ok && gate.reason === "closing") {
+          res.status(409).json({ error: "channel_closing", channelId: channel.channel_id, status: gate.channel!.status }); return;
+        }
+        reservation = gate.ok ? { ok: true, tokenId: gate.tokenId, remainingAfter: gate.remainingAfter } : { ok: false, reason: gate.reason as "not_found" | "pending" | "revoked" | "exhausted" };
+      } else {
+        reservation = await reserveCredit(d.sql, loaded.api.id, sha256Hex(bearer));
+      }
+      const finish = async (passed: boolean): Promise<number | null> =>
+        channel ? finishChannelCall(d.sql, { channelId: channel.channel_id, callId, passed }) : null;
       if (!reservation.ok) {
         if (reservation.reason === "not_found" || reservation.reason === "revoked") {
           res.status(401).json({ error: "invalid_token" }); return;
@@ -69,11 +102,14 @@ export function creditsRouter(d: AppDeps): Router {
         });
       } catch (e) {
         await releaseCredit(d.sql, tokenId);
+        await finish(false);
         throw e;
       }
 
       if (outcome.execution === "upstream_ok" && outcome.verdict === "pass" && outcome.result) {
         if (reservation.remainingAfter === 0) await markExhaustedIfEmpty(d.sql, tokenId);
+        const served = await finish(true);
+        if (served !== null) res.set(SIGN_NEXT_HEADER, String(served));
         res.status(200)
           .set("x-credits-remaining", String(reservation.remainingAfter))
           .type(outcome.result.contentType ?? "application/json")
@@ -82,6 +118,7 @@ export function creditsRouter(d: AppDeps): Router {
       }
 
       await releaseCredit(d.sql, tokenId);
+      await finish(false);
       res.set("x-credits-remaining", String(reservation.remainingAfter + 1));
       if (outcome.execution === "timeout") { res.status(504).json({ error: "upstream_timeout", reasons: outcome.reasons }); return; }
       if (outcome.execution === "upstream_ok") { res.status(422).json({ error: "promise_not_met", reasons: outcome.reasons }); return; }

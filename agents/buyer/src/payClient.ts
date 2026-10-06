@@ -23,6 +23,10 @@ export class SerialPayer {
 }
 
 export type PackPurchase = { token: string; credits: number; apiId: string; txHash: string | null };
+export type EscrowPurchase = PackPurchase & { channelId: string; channelUrl: string | null };
+
+/** Called with the offer x402 is about to pay; throw to refuse (the payment is never signed). */
+export type OfferCheck = (requirements: { scheme: string; network: string; asset: string; amount: string; payTo: string; extra?: Record<string, unknown> }) => void;
 
 export class PackPurchaseError extends Error {
   /**
@@ -47,6 +51,16 @@ export function createPackPayer(cfg: { mnemonic: string; blockfrostProjectId: st
   const address = signer.getAddress();
   if (!address.startsWith("addr_test1")) throw new Error(`Buyer wallet ${address} is not a preprod address`);
   client.register("cardano:*", new ExactCardanoScheme(signer));
+  // Escrow purchases install a check here: it sees the exact requirements before anything is signed.
+  let offerCheck: OfferCheck | null = null;
+  client.onBeforePaymentCreation(async ({ selectedRequirements }) => {
+    if (!offerCheck) return;
+    try {
+      offerCheck(selectedRequirements as Parameters<OfferCheck>[0]);
+    } catch (e) {
+      return { abort: true, reason: (e as Error).message };
+    }
+  });
   // Keep the signed payment: if settlement times out it may still land on-chain, and /recover needs it.
   let lastSignature: string | null = null;
   client.onAfterPaymentCreation(async ({ paymentPayload }) => {
@@ -58,6 +72,42 @@ export function createPackPayer(cfg: { mnemonic: string; blockfrostProjectId: st
 
   return {
     address,
+    /**
+     * Escrow pack: sends our IOU key and refund address on both the unpaid and the paid request, and pays only
+     * if `check` accepts the 402's datum.
+     */
+    buyEscrowPack(buyUrl: string, keys: { receiptKey: string; refundAddress: string }, check: OfferCheck): Promise<EscrowPurchase> {
+      return serial.run(async () => {
+        lastSignature = null;
+        offerCheck = check;
+        const recoverySecret = randomBytes(32).toString("base64url");
+        try {
+          const res = await payFetch(buyUrl, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json", accept: "application/json",
+              "x-hirakumi-receipt-key": keys.receiptKey, "x-hirakumi-refund-address": keys.refundAddress,
+              "x-hirakumi-recovery": createHash("sha256").update(recoverySecret).digest("hex"),
+            },
+            body: "{}",
+          });
+          const text = await res.text();
+          if (!res.ok) throw new PackPurchaseError(res.status, text, lastSignature, recoverySecret);
+          const body = JSON.parse(text) as { token?: unknown; credits?: unknown; apiId?: unknown; channelId?: unknown; channelUrl?: unknown };
+          if (typeof body.token !== "string" || typeof body.credits !== "number" || typeof body.apiId !== "string" || typeof body.channelId !== "string") {
+            throw new PackPurchaseError(res.status, text);
+          }
+          let txHash: string | null = null;
+          try { txHash = http.getPaymentSettleResponse((name) => res.headers.get(name))?.transaction ?? null; } catch { txHash = null; }
+          return {
+            token: body.token, credits: body.credits, apiId: body.apiId, txHash, channelId: body.channelId,
+            channelUrl: typeof body.channelUrl === "string" ? body.channelUrl : null,
+          };
+        } finally {
+          offerCheck = null;
+        }
+      });
+    },
     buyPack(buyUrl: string): Promise<PackPurchase> {
       return serial.run(async () => {
         lastSignature = null;

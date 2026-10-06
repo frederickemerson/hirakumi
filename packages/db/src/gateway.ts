@@ -18,7 +18,7 @@ export type OperationRow = {
   input_schema: Record<string, unknown>; description: string | null; enabled: boolean;
 };
 export type RuleRow = { id: string; operation_id: string; version: number; definition: RuleDefinition; hash: string; plain_english: string | null };
-export type PackRow = { id: string; api_id: string; calls: number; price_micros: string; escrow_price_micros: string };
+export type PackRow = { id: string; api_id: string; calls: number; price_micros: string; escrow_price_micros: string; unsigned_allowance: number };
 export type ApiBundle = { api: ApiRow; operations: OperationRow[]; rules: RuleRow[]; packs: PackRow[] };
 
 export async function loadApiBundle(sql: Sql, apiId: string): Promise<ApiBundle | null> {
@@ -37,7 +37,7 @@ export async function loadApiBundle(sql: Sql, apiId: string): Promise<ApiBundle 
     where o.api_id = ${apiId}
     order by r.operation_id, r.version desc`;
   const packs = await sql<PackRow[]>`
-    select id, api_id, calls, price_micros::text as price_micros, escrow_price_micros::text as escrow_price_micros
+    select id, api_id, calls, price_micros::text as price_micros, escrow_price_micros::text as escrow_price_micros, unsigned_allowance
     from packs where api_id = ${apiId} order by price_micros, id`;
   return { api, operations, rules, packs };
 }
@@ -149,6 +149,8 @@ export async function listPendingPayments(sql: Sql, minAgeSeconds: number): Prom
     join apis a on a.id = ct.api_id
     join sellers s on s.id = a.seller_id
     where ct.status = 'pending' and ct.tx_hash is not null
+      -- Escrow-pack tokens pay the script, not the seller: the ChannelWatcher verifies their locks.
+      and not exists (select 1 from pack_channels pc where pc.credit_token_id = ct.id)
       and ct.created_at < now() - (${minAgeSeconds} * interval '1 second')
     order by ct.created_at
     limit 50`;
