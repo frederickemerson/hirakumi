@@ -36,9 +36,12 @@ pub type PackDatum {
   fee_bps: Int,
   /// 28 bytes. Payment key hash of Hirakumi's operator wallet.
   closer: ByteArray,
-  /// ms between a Close and the earliest Settle.
+  /// ms between a Close's upper validity bound and the earliest Settle.
+  /// Values below `min_contest_period` (60 s) are treated as 60 s.
   contest_period: Int,
-  /// Max lovelace a Settle may take from the buyer for the network fee.
+  /// Max lovelace a Settle may take from the buyer for the network fee. Only
+  /// a Settle signed by `closer` or the buyer charges the buyer the fee (and
+  /// must stay within this budget); any other settler pays the fee itself.
   close_fee_budget: Int,
   stage: Stage,
 }
@@ -48,6 +51,7 @@ pub type PackRedeemer {
   Close { accepted: Int, signature: ByteArray }
   /// Constr 1. Closing -> Closing with a higher count. Anyone.
   Raise { accepted: Int, signature: ByteArray }
-  /// Constr 2. Closing -> paid out. Anyone.
+  /// Constr 2. Closing -> paid out. Anyone; the buyer pays the fee only if
+  /// the closer or the buyer signed.
   Settle
 }

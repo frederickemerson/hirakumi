@@ -98,6 +98,12 @@ describe("validateDatumForLock", () => {
     expect(bad({ assetName: "00".repeat(33) })).toThrow(/assetName/);
   });
 
+  it("rejects a receipt key no on-chain IOU can be valid for (small order, mixed order, non-canonical)", () => {
+    expect(bad({ receiptKey: "01" + "00".repeat(31) })).toThrow(/receiptKey is not a usable ed25519 key/);
+    expect(bad({ receiptKey: "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a" })).toThrow(/receiptKey/);
+    expect(bad({ receiptKey: "f0" + "ff".repeat(30) + "7f" })).toThrow(/receiptKey/);
+  });
+
   it("rejects a price that doesn't divide exactly or doesn't match pricePerCall", () => {
     expect(bad({}, { priceMicros: 2_000_001n })).toThrow(/divide/);
     expect(bad({ pricePerCall: 19_999n })).toThrow(/pricePerCall/);

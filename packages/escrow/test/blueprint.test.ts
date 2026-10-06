@@ -25,6 +25,6 @@ describe("PACK_ESCROW", () => {
 
   it("the preprod address is the enterprise script address (aiken blueprint address)", () => {
     expect(PACK_ESCROW.address).toMatch(/^addr_test1w/);
-    expect(PACK_ESCROW.address).toBe("addr_test1wqwqw68rgnnd7z99300njyhkez24yzwx660vxmu0wzpzsscrga9pa");
+    expect(PACK_ESCROW.address).toBe("addr_test1wq3a6jmeshhdn8wnzgrgtxzgsz26w8ggnupzty69sa2lwqs3jsjn3");
   });
 });

@@ -14,6 +14,14 @@ use hirakumi/types.{
 
 pub const max_fee_bps: Int = 1000
 
+/// Longest validity range (ms) a Close tx may have. `contest_end` is computed
+/// from the upper bound, so without a cap a Close could push it arbitrarily far.
+pub const max_close_window: Int = 3_600_000
+
+/// Shortest contest window (ms) a Close starts, whatever the datum says.
+/// Clamped, not rejected, so a nonsense datum can't block the buyer's exit.
+pub const min_contest_period: Int = 60_000
+
 /// Settlement arithmetic. Clamps, never rejects, so a nonsense datum can't
 /// block the buyer's exit. Returns (seller_net, fee, buyer_tokens).
 ///   seller_gross = clamp(accepted × price, 0, locked_tokens)
@@ -53,8 +61,10 @@ pub fn validate(
   when redeemer is {
     Close { accepted, signature } -> {
       expect Open = d.stage
+      expect Finite(lower) = tx.validity_range.lower_bound.bound_type
       expect Finite(upper) = tx.validity_range.upper_bound.bound_type
       and {
+        upper - lower <= max_close_window,
         signed_by_buyer(d.buyer_refund, tx.extra_signatories) || list.has(
           tx.extra_signatories,
           d.closer,
@@ -66,7 +76,13 @@ pub fn validate(
           own_value,
           PackDatum {
             ..d,
-            stage: Closing { accepted, contest_end: upper + d.contest_period },
+            stage: Closing {
+              accepted,
+              contest_end: upper + math.max(
+                d.contest_period,
+                min_contest_period,
+              ),
+            },
           },
         ),
       }
@@ -98,6 +114,18 @@ pub fn validate(
         locked_tokens,
       )
       let tag: Data = d.channel_id
+      // The buyer pays the network fee only for a Settle that Hirakumi's
+      // closer or the buyer signed. Anyone else settles at their own cost,
+      // so an unrelated tx can't spend the buyer's lovelace on its fee.
+      let charged = list.has(tx.extra_signatories, d.closer) || signed_by_buyer(
+        d.buyer_refund,
+        tx.extra_signatories,
+      )
+      let fee_charge = if charged {
+        tx.fee
+      } else {
+        0
+      }
       let owed = aggregate(
         [
           Obligation { to: d.seller, tokens: seller_net, lovelace: 0 },
@@ -105,19 +133,59 @@ pub fn validate(
           Obligation {
             to: d.buyer_refund,
             tokens: buyer_tokens,
-            lovelace: lovelace_of(own_value) - tx.fee,
+            lovelace: lovelace_of(own_value) - fee_charge,
           },
         ],
       )
       and {
         is_entirely_after(tx.validity_range, contest_end),
-        tx.fee <= d.close_fee_budget,
+        !charged || tx.fee <= d.close_fee_budget,
         list.all(
           owed,
           fn(o) { satisfied(tx.outputs, d.policy_id, d.asset_name, tag, o) },
         ),
+        foreign_paid_to_buyer(d, own_value, locked_tokens, tag, tx.outputs),
       }
     }
+  }
+}
+
+/// Any asset in the lock other than lovelace and the pack token (a donation,
+/// or dust sent to the script) goes back to the buyer, in tagged outputs to
+/// `buyer_refund`. It never includes the pack token or lovelace, so nothing
+/// here is counted twice with the obligations.
+fn foreign_paid_to_buyer(
+  d: PackDatum,
+  own_value: Value,
+  locked_tokens: Int,
+  tag: Data,
+  outputs: List<Output>,
+) -> Bool {
+  let foreign = own_value
+    |> without_lovelace
+    |> assets.add(d.policy_id, d.asset_name, 0 - locked_tokens)
+  if assets.is_zero(foreign) {
+    True
+  } else {
+    let tagged = InlineDatum(tag)
+    let paid = list.foldl(
+      outputs,
+      assets.zero,
+      fn(o, acc) {
+        if o.address == d.buyer_refund && o.datum == tagged {
+          assets.merge(acc, o.value)
+        } else {
+          acc
+        }
+      },
+    )
+    list.all(
+      assets.flatten(foreign),
+      fn(asset) {
+        let (p, n, q) = asset
+        quantity_of(paid, p, n) >= q
+      },
+    )
   }
 }
 

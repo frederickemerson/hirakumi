@@ -273,6 +273,63 @@ test close_uses_exclusive_upper_bound_value_as_is() {
   )
 }
 
+// L9 / L12: the Close window is capped and the contest window has a floor.
+
+fn close_in(d: PackDatum, lo: Int, hi: Int, next_contest_end: Int) -> Bool {
+  validate(
+    d,
+    Close { accepted: 0, signature: #"" },
+    own_ref,
+    tx(
+      [lock_input(d), operator_input()],
+      [
+        continuing(
+          PackDatum {
+            ..d,
+            stage: Closing { accepted: 0, contest_end: next_contest_end },
+          },
+        ),
+      ],
+      between(lo, hi),
+      [buyer_vkh],
+      300_000,
+    ),
+  )
+}
+
+test close_rejects_window_over_max() fail {
+  close_in(datum(Open), close_hi - 3_600_001, close_hi, contest_end)
+}
+
+test close_accepts_window_equal_max() {
+  close_in(datum(Open), close_hi - 3_600_000, close_hi, contest_end)
+}
+
+test close_rejects_far_future_upper_bound() fail {
+  let hi = close_hi + 10_000_000_000
+  close_in(datum(Open), close_lo, hi, hi + 3_600_000)
+}
+
+test close_clamps_negative_contest_period() {
+  let d = PackDatum { ..datum(Open), contest_period: -1_000_000_000 }
+  close_in(d, close_lo, close_hi, close_hi + 60_000)
+}
+
+test close_negative_contest_period_cannot_skip_contest() fail {
+  let d = PackDatum { ..datum(Open), contest_period: -1_000_000_000 }
+  close_in(d, close_lo, close_hi, close_hi - 1_000_000_000)
+}
+
+test close_clamps_contest_period_below_minimum() {
+  let d = PackDatum { ..datum(Open), contest_period: 59_999 }
+  close_in(d, close_lo, close_hi, close_hi + 60_000)
+}
+
+test close_keeps_contest_period_at_minimum() {
+  let d = PackDatum { ..datum(Open), contest_period: 60_000 }
+  close_in(d, close_lo, close_hi, close_hi + 60_000)
+}
+
 // ---------------------------------------------------------------------------
 // Raise  (Closing -> Closing, higher count, same contest_end)
 // ---------------------------------------------------------------------------
@@ -448,7 +505,7 @@ fn settle(d: PackDatum, outputs: List<Output>, fee: Int, lo: Int) -> Bool {
     d,
     Settle,
     own_ref,
-    tx([lock_input(d), operator_input()], outputs, after(lo), [], fee),
+    tx([lock_input(d), operator_input()], outputs, after(lo), [closer_vkh], fee),
   )
 }
 
@@ -464,7 +521,7 @@ test settle_pays_the_split() {
   settle(raised(62), split_outputs(), 400_000, contest_end + 1)
 }
 
-test settle_needs_no_signer_and_ignores_output_order() {
+test settle_by_closer_ignores_output_order() {
   settle(
     raised(62),
     [
@@ -495,7 +552,7 @@ test settle_rejects_open_lower_bound() fail {
       [lock_input(d)],
       split_outputs(),
       before(contest_end + 1_000_000),
-      [],
+      [closer_vkh],
       400_000,
     ),
   )
@@ -810,7 +867,7 @@ test settle_donated_extra_tokens_go_to_buyer() {
         tagged(buyer(), 1_260_000, 1_600_000),
       ],
       after(contest_end + 1),
-      [],
+      [closer_vkh],
       400_000,
     ),
   )
@@ -833,7 +890,7 @@ test settle_donated_extra_tokens_rejects_seller_taking_them() fail {
         tagged(buyer(), 760_000, 1_600_000),
       ],
       after(contest_end + 1),
-      [],
+      [closer_vkh],
       400_000,
     ),
   )
@@ -855,7 +912,7 @@ test settle_short_lock_caps_seller_at_locked_tokens() {
         tagged(buyer(), 0, 1_600_000),
       ],
       after(contest_end + 1),
-      [],
+      [closer_vkh],
       400_000,
     ),
   )
@@ -877,7 +934,202 @@ test settle_rejects_second_script_input() fail {
       [lock_input(d), other_lock_input(d)],
       split_outputs(),
       after(contest_end + 1),
-      [],
+      [closer_vkh],
+      400_000,
+    ),
+  )
+}
+
+// L8: the buyer pays the network fee only when the closer or the buyer signs.
+
+fn settle_signed(
+  d: PackDatum,
+  outputs: List<Output>,
+  fee: Int,
+  signers: List<ByteArray>,
+) -> Bool {
+  validate(
+    d,
+    Settle,
+    own_ref,
+    tx(
+      [lock_input(d), operator_input()],
+      outputs,
+      after(contest_end + 1),
+      signers,
+      fee,
+    ),
+  )
+}
+
+fn split_outputs_buyer_lovelace(lovelace: Int) -> List<Output> {
+  [
+    tagged(seller(), 1_202_800, 1_200_000),
+    tagged(fee_address(), 37_200, 1_200_000),
+    tagged(buyer(), 760_000, lovelace),
+  ]
+}
+
+test settle_unsigned_buyer_gets_all_lovelace() {
+  settle_signed(
+    raised(62),
+    split_outputs_buyer_lovelace(2_000_000),
+    400_000,
+    [],
+  )
+}
+
+test settle_unsigned_rejects_charging_buyer_fee() fail {
+  settle_signed(
+    raised(62),
+    split_outputs_buyer_lovelace(1_600_000),
+    400_000,
+    [],
+  )
+}
+
+test settle_third_party_signer_is_not_charged() fail {
+  settle_signed(
+    raised(62),
+    split_outputs_buyer_lovelace(1_600_000),
+    400_000,
+    [third_vkh],
+  )
+}
+
+test settle_signed_by_buyer_charges_fee() {
+  settle_signed(
+    raised(62),
+    split_outputs_buyer_lovelace(1_600_000),
+    400_000,
+    [buyer_vkh],
+  )
+}
+
+test settle_signed_by_buyer_rejects_fee_over_budget() fail {
+  settle_signed(
+    raised(62),
+    split_outputs_buyer_lovelace(1_299_999),
+    700_001,
+    [buyer_vkh],
+  )
+}
+
+test settle_unsigned_ignores_fee_budget() {
+  settle_signed(
+    raised(62),
+    split_outputs_buyer_lovelace(2_000_000),
+    5_000_000,
+    [],
+  )
+}
+
+// L10: assets other than the pack token and lovelace go back to the buyer.
+
+const foreign_policy: ByteArray =
+  #"f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0"
+
+fn with_foreign(v: assets.Value, qty: Int) -> assets.Value {
+  assets.add(v, foreign_policy, #"6e6674", qty)
+}
+
+fn settle_foreign(buyer_out: Output) -> Bool {
+  let d = raised(62)
+  validate(
+    d,
+    Settle,
+    own_ref,
+    tx(
+      [
+        lock_input_with(
+          d,
+          with_foreign(usdm(locked_tokens, locked_lovelace), 5),
+        ),
+        operator_input(),
+      ],
+      [
+        tagged(seller(), 1_202_800, 1_200_000),
+        tagged(fee_address(), 37_200, 1_200_000),
+        buyer_out,
+      ],
+      after(contest_end + 1),
+      [closer_vkh],
+      400_000,
+    ),
+  )
+}
+
+test settle_foreign_asset_paid_to_buyer() {
+  let o = tagged(buyer(), 760_000, 1_600_000)
+  settle_foreign(Output { ..o, value: with_foreign(o.value, 5) })
+}
+
+test settle_foreign_asset_withheld_rejected() fail {
+  settle_foreign(tagged(buyer(), 760_000, 1_600_000))
+}
+
+test settle_foreign_asset_short_rejected() fail {
+  let o = tagged(buyer(), 760_000, 1_600_000)
+  settle_foreign(Output { ..o, value: with_foreign(o.value, 4) })
+}
+
+test settle_foreign_asset_untagged_rejected() fail {
+  // The token and lovelace obligations are met by a tagged output; the
+  // foreign asset sits in a second, untagged output to the buyer.
+  let o = tagged(buyer(), 760_000, 1_600_000)
+  let d = raised(62)
+  validate(
+    d,
+    Settle,
+    own_ref,
+    tx(
+      [
+        lock_input_with(
+          d,
+          with_foreign(usdm(locked_tokens, locked_lovelace), 5),
+        ),
+        operator_input(),
+      ],
+      [
+        tagged(seller(), 1_202_800, 1_200_000),
+        tagged(fee_address(), 37_200, 1_200_000),
+        o,
+        Output {
+          ..o,
+          value: with_foreign(assets.from_lovelace(1_200_000), 5),
+          datum: NoDatum,
+        },
+      ],
+      after(contest_end + 1),
+      [closer_vkh],
+      400_000,
+    ),
+  )
+}
+
+test settle_foreign_asset_in_separate_tagged_output() {
+  let o = tagged(buyer(), 760_000, 1_600_000)
+  let d = raised(62)
+  validate(
+    d,
+    Settle,
+    own_ref,
+    tx(
+      [
+        lock_input_with(
+          d,
+          with_foreign(usdm(locked_tokens, locked_lovelace), 5),
+        ),
+        operator_input(),
+      ],
+      [
+        tagged(seller(), 1_202_800, 1_200_000),
+        tagged(fee_address(), 37_200, 1_200_000),
+        o,
+        Output { ..o, value: with_foreign(assets.from_lovelace(1_200_000), 5) },
+      ],
+      after(contest_end + 1),
+      [closer_vkh],
       400_000,
     ),
   )
