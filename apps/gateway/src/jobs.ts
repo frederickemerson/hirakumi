@@ -1,7 +1,7 @@
 import { outputHash } from "@hirakumi/core";
 import {
-  claimJob, expireJob, failJob, insertCall, listJobsAwaitingPayment, listUnsubmittedPasses, markJobCompleted,
-  resetInterruptedJobs, storeJobOutput, type JobRow, type Sql,
+  claimJob, claimSubmit, expireJob, failJob, insertCall, listJobsAwaitingPayment, listUnsubmittedPasses, markJobCompleted,
+  releaseSubmitClaim, resetInterruptedJobs, storeJobOutput, type JobRow, type Sql,
 } from "@hirakumi/db";
 import type { GatewayConfig } from "./config";
 import type { MasumiPort } from "./masumi-port";
@@ -87,6 +87,17 @@ export class JobRunner {
 
   private async submit(job: JobRow): Promise<void> {
     if (!job.blockchain_identifier || !job.output_hash) return;
+    // Finding G6: one submitter at a time, across gateway instances. Another runner holds a fresh claim → skip.
+    if (!(await claimSubmit(this.d.sql, job.id))) return;
+    try {
+      await this.submitClaimed(job as JobRow & { blockchain_identifier: string; output_hash: string });
+    } catch (e) {
+      await releaseSubmitClaim(this.d.sql, job.id).catch(() => {});
+      throw e;
+    }
+  }
+
+  private async submitClaimed(job: JobRow & { blockchain_identifier: string; output_hash: string }): Promise<void> {
     // Audit I2: an earlier submit may have reached the node even though we saw an error. Ask the chain state
     // before resubmitting or declaring a refund, so /status never says "refunded" when the seller was paid.
     const state = await this.d.masumi.getPaymentState(job.blockchain_identifier).catch(() => null);

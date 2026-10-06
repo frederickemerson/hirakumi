@@ -6,7 +6,7 @@ import {
   getOrCreateQuote, markChannelLocked, markChannelRefused, type ChannelRow, type PackRow, type QuoteRow, type Sql,
 } from "@hirakumi/db";
 import {
-  PACK_ESCROW, checkLockOutput, deriveChannelId, encodePackDatum, parseAddress, validateDatumForLock, type PackDatum,
+  PACK_ESCROW, checkLockOutput, deriveChannelId, encodePackDatum, isValidReceiptKey, parseAddress, validateDatumForLock, type PackDatum,
 } from "@hirakumi/escrow";
 import type { PackEscrowConfig } from "./config";
 import type { EscrowChain } from "./escrowChain";
@@ -19,9 +19,13 @@ export const QUOTE_TTL_SECONDS = 600;
 export type BuyerKeys = { receiptKey: string; refundAddress: string };
 
 /** Reads the buyer's IOU key and refund address. A string is an error code for a 400. */
-export function buyerKeys(header: (name: string) => string | undefined): BuyerKeys | "receipt_key_required" | "bad_refund_address" {
+export function buyerKeys(
+  header: (name: string) => string | undefined,
+): BuyerKeys | "receipt_key_required" | "bad_receipt_key" | "bad_refund_address" {
   const receiptKey = header("x-hirakumi-receipt-key")?.trim().toLowerCase() ?? "";
   if (!/^[0-9a-f]{64}$/.test(receiptKey)) return "receipt_key_required";
+  // Finding G1: a small-order or mixed-order key gives IOUs the chain would reject (or that anyone can forge).
+  if (!isValidReceiptKey(receiptKey)) return "bad_receipt_key";
   const refundAddress = header("x-hirakumi-refund-address")?.trim() ?? "";
   try {
     const a = parseAddress("refundAddress", refundAddress);

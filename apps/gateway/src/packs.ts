@@ -25,6 +25,35 @@ export function paymentPayloadHash(payload: unknown): string {
 
 const RECOVERY_HASH = /^[0-9a-f]{64}$/;
 
+/**
+ * Finding G3: a plain x402 buyer (no X-Hirakumi-Recovery) can't use /recover, so when settlement fails its
+ * pending token goes in the settlement-failed body instead. Keyed by sha256 of the PAYMENT-SIGNATURE header.
+ * In memory only: it bridges the handler and the settle hook of the same request, and a restart loses it.
+ */
+const pendingTokens = new Map<string, { token: string; at: number }>();
+const PENDING_TOKEN_TTL_MS = 15 * 60_000;
+
+/** Returns a function that forgets the token (once the response is sent, it is no longer needed). */
+function rememberPendingToken(header: string, token: string): () => void {
+  const now = Date.now();
+  for (const [k, v] of pendingTokens) if (now - v.at > PENDING_TOKEN_TTL_MS) pendingTokens.delete(k);
+  const key = sha256Hex(header);
+  const entry = { token, at: now };
+  pendingTokens.set(key, entry);
+  return () => { if (pendingTokens.get(key) === entry) pendingTokens.delete(key); };
+}
+
+function takePendingToken(header: string | undefined): string | null {
+  if (!header) return null;
+  const key = sha256Hex(header);
+  const hit = pendingTokens.get(key);
+  pendingTokens.delete(key);
+  return hit && Date.now() - hit.at <= PENDING_TOKEN_TTL_MS ? hit.token : null;
+}
+
+const paymentHeaderOf = (ctx: HTTPRequestContext) =>
+  ctx.paymentHeader ?? ctx.adapter.getHeader("payment-signature") ?? ctx.adapter.getHeader("x-payment");
+
 function sameHex(a: string, b: string): boolean {
   return a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 }
@@ -132,12 +161,23 @@ export function packRouter(d: AppDeps): Router {
           },
         };
       },
-      settlementFailedResponseBody: (_ctx, result) => ({
-        contentType: "application/json",
-        body: { error: "settlement_failed", reason: result.errorReason, message:
-          "The payment did not confirm in time, but it may still land on-chain. Do not pay again: POST the same " +
-          "PAYMENT-SIGNATURE and your X-Hirakumi-Recovery-Secret to this URL + /recover to get your credit token (it works once the payment settles)." },
-      }),
+      settlementFailedResponseBody: (ctx, result) => {
+        const token = takePendingToken(paymentHeaderOf(ctx));
+        if (token) {
+          return {
+            contentType: "application/json",
+            body: { error: "settlement_failed", reason: result.errorReason, token, tokenStatus: "pending", message:
+              "The payment did not confirm in time, but it may still land on-chain. Do not pay again. " +
+              "This token starts working as soon as the payment lands on-chain." },
+          };
+        }
+        return {
+          contentType: "application/json",
+          body: { error: "settlement_failed", reason: result.errorReason, message:
+            "The payment did not confirm in time, but it may still land on-chain. Do not pay again: POST the same " +
+            "PAYMENT-SIGNATURE and your X-Hirakumi-Recovery-Secret to this URL + /recover to get your credit token (it works once the payment settles)." },
+        };
+      },
     },
   };
 
@@ -155,6 +195,9 @@ export function packRouter(d: AppDeps): Router {
         const keys = buyerKeys((n) => req.header(n));
         if (keys === "receipt_key_required") {
           res.status(400).json({ error: keys, message: "Escrow packs need X-Hirakumi-Receipt-Key: the 32-byte ed25519 public key (hex) you will sign IOUs with." }); return;
+        }
+        if (keys === "bad_receipt_key") {
+          res.status(400).json({ error: keys, message: "X-Hirakumi-Receipt-Key must be a normal ed25519 public key (not small order)." }); return;
         }
         if (keys === "bad_refund_address") {
           res.status(400).json({ error: keys, message: "Escrow packs need X-Hirakumi-Refund-Address: a preprod address with a key payment credential." }); return;
@@ -195,6 +238,7 @@ export function packRouter(d: AppDeps): Router {
         });
         return;
       }
+      if (recoveryHash === null) res.once("finish", rememberPendingToken(header, token));
       if (escrowMode(d)) {
         // The quote this payment answered: x402 already matched its datum byte for byte.
         const keys = res.locals.buyerKeys as BuyerKeys;

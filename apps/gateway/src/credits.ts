@@ -107,8 +107,16 @@ export function creditsRouter(d: AppDeps): Router {
       }
 
       if (outcome.execution === "upstream_ok" && outcome.verdict === "pass" && outcome.result) {
-        if (reservation.remainingAfter === 0) await markExhaustedIfEmpty(d.sql, tokenId);
-        const served = await finish(true);
+        let served: number | null;
+        try {
+          if (reservation.remainingAfter === 0) await markExhaustedIfEmpty(d.sql, tokenId);
+          served = await finish(true);
+        } catch (e) {
+          // Finding G5: the body was never sent, so the credit was not used. Give it back; the error handler answers 500.
+          await releaseCredit(d.sql, tokenId).catch(() => {});
+          await finish(false).catch(() => {});
+          throw e;
+        }
         if (served !== null) res.set(SIGN_NEXT_HEADER, String(served));
         res.status(200)
           .set("x-credits-remaining", String(reservation.remainingAfter))

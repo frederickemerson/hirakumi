@@ -89,8 +89,79 @@ export async function getChannelByToken(sql: Sql, apiId: string, tokenHash: stri
   return row ?? null;
 }
 
-export async function listChannels(sql: Sql, statuses: ChannelStatus[]): Promise<ChannelRow[]> {
-  return sql<ChannelRow[]>`select * from pack_channels where status = any(${statuses}) order by created_at limit 200`;
+export type ChannelPage = { after?: { createdAt: Date; channelId: string }; limit?: number };
+export const CHANNEL_PAGE_LIMIT = 200;
+
+/**
+ * One page of channels in these statuses, oldest first. Finding G2: callers that must see every channel
+ * loop with `after` = the last row's (created_at, channel_id) until a page comes back shorter than `limit`.
+ * The key is truncated to milliseconds (what a JS Date holds), so the cursor round-trips exactly.
+ */
+export async function listChannels(sql: Sql, statuses: ChannelStatus[], page: ChannelPage = {}): Promise<ChannelRow[]> {
+  const limit = page.limit ?? CHANNEL_PAGE_LIMIT;
+  const after = page.after
+    ? sql`and (date_trunc('milliseconds', created_at), channel_id) > (${page.after.createdAt}::timestamptz, ${page.after.channelId})`
+    : sql``;
+  return sql<ChannelRow[]>`
+    select * from pack_channels where status = any(${statuses}) ${after}
+    order by date_trunc('milliseconds', created_at), channel_id limit ${limit}`;
+}
+
+/** Every channel in these statuses, page by page. */
+export async function* allChannels(sql: Sql, statuses: ChannelStatus[], limit = CHANNEL_PAGE_LIMIT): AsyncGenerator<ChannelRow> {
+  let after: ChannelPage["after"];
+  for (;;) {
+    const rows = await listChannels(sql, statuses, { after, limit });
+    yield* rows;
+    if (rows.length < limit) return;
+    const last = rows[rows.length - 1]!;
+    after = { createdAt: last.created_at, channelId: last.channel_id };
+  }
+}
+
+/**
+ * Finding G2: a paid channel whose lock never showed up on-chain (never verified) is refused after
+ * `olderThanSeconds`, so dead locks don't pile up in the pending pass. Verified-then-rolled-back channels
+ * (lock_output_index set) are not touched. Returns the channel ids it refused.
+ */
+export async function expireUnseenLocks(sql: Sql, olderThanSeconds = 3600): Promise<string[]> {
+  const rows = await sql<{ channel_id: string }[]>`
+    update pack_channels set status = 'refused', refused_reason = 'lock_never_seen', updated_at = now()
+    where status = 'pending' and lock_output_index is null and created_at < now() - (${olderThanSeconds} * interval '1 second')
+    returning channel_id`;
+  return rows.map((r) => r.channel_id);
+}
+
+/**
+ * Finding G4: the verified lock tx is gone from the chain (rollback). The channel stops serving calls and goes
+ * back to pending; the pending pass re-verifies it if the lock lands again. `lock_output_index` is kept, so
+ * `expireUnseenLocks` leaves it alone.
+ */
+export async function revertChannelToPending(sql: Sql, channelId: string): Promise<boolean> {
+  const rows = await sql`
+    update pack_channels set status = 'pending', utxo_tx_hash = null, utxo_output_index = null, close_tx_hash = null,
+      raise_tx_hashes = '{}', onchain_accepted = null, contest_end_ms = null, updated_at = now()
+    where channel_id = ${channelId} and status in ('locked', 'close_requested', 'closing')
+    returning channel_id`;
+  return rows.length === 1;
+}
+
+/** Finding G4: a Close was rolled back and the pack sits Open at `at` again: the channel is usable again. */
+export async function reopenChannel(sql: Sql, channelId: string, at: { txHash: string; index: number }): Promise<boolean> {
+  const rows = await sql`
+    update pack_channels set status = 'locked', utxo_tx_hash = ${at.txHash}, utxo_output_index = ${at.index}, close_tx_hash = null,
+      raise_tx_hashes = '{}', onchain_accepted = null, contest_end_ms = null, updated_at = now()
+    where channel_id = ${channelId} and status = 'closing'
+    returning channel_id`;
+  return rows.length === 1;
+}
+
+/** Optional cleanup: unpaid quotes a day past their expiry. */
+export async function deleteStaleQuotes(sql: Sql, olderThanSeconds = 86_400): Promise<number> {
+  const rows = await sql`
+    delete from pack_quotes where consumed_at is null and expires_at < now() - (${olderThanSeconds} * interval '1 second')
+    returning quote_key`;
+  return rows.length;
 }
 
 /** The lock passed verification: the channel is usable and its credit token goes live. */

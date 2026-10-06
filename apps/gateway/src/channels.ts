@@ -3,13 +3,15 @@
 import { Router } from "express";
 import { sha256Hex } from "@hirakumi/core";
 import { getChannel, getChannelByToken, recordIou, requestClose, type ChannelRow } from "@hirakumi/db";
-import { PACK_ESCROW } from "@hirakumi/escrow";
+import { PACK_ESCROW, verifyCloseRequest } from "@hirakumi/escrow";
 import type { GatewayConfig } from "./config";
 import type { AppDeps } from "./deps";
 import { parseBearer } from "./http";
 import { IOU_HEADER, checkIou, latestIou } from "./ious";
 
-const txUrl = (h: string | null) => (h ? `https://preprod.cardanoscan.io/transaction/${h}` : null);
+export const CLOSE_AUTH_HEADER = "x-hirakumi-close-auth";
+
+const txUrl =(h: string | null) => (h ? `https://preprod.cardanoscan.io/transaction/${h}` : null);
 
 export function channelView(cfg: Pick<GatewayConfig, "publicBaseUrl">, ch: ChannelRow) {
   return {
@@ -56,13 +58,32 @@ export function channelsRouter(d: AppDeps): Router {
     } catch (e) { next(e); }
   });
 
-  /** The buyer is done: the ChannelWatcher closes with the latest IOU. An IOU sent along is recorded first. */
+  /**
+   * The buyer is done: the ChannelWatcher closes with the latest IOU. An IOU sent along is recorded first.
+   * Auth: the credit token as a bearer, or (finding M2: a buyer that never received its token) the header
+   * X-Hirakumi-Close-Auth, an ed25519 signature by the channel's receipt key over "HKC1" ‖ channel_id.
+   */
   r.post("/a/:apiId/channels/:channelId/close", async (req, res, next) => {
     try {
+      const channelId = req.params.channelId.toLowerCase();
       const bearer = parseBearer(req.header("authorization"));
-      if (!bearer) { res.status(401).json({ error: "token_required" }); return; }
-      const ch = await getChannelByToken(d.sql, req.params.apiId, sha256Hex(bearer));
-      if (!ch || ch.channel_id !== req.params.channelId.toLowerCase()) { res.status(403).json({ error: "not_your_channel" }); return; }
+      let ch: ChannelRow | null;
+      if (bearer) {
+        ch = await getChannelByToken(d.sql, req.params.apiId, sha256Hex(bearer));
+        if (!ch || ch.channel_id !== channelId) { res.status(403).json({ error: "not_your_channel" }); return; }
+      } else {
+        const closeAuth = req.header(CLOSE_AUTH_HEADER)?.trim().toLowerCase();
+        if (!closeAuth) {
+          res.status(401).json({
+            error: "token_required",
+            message: "Send your credit token as a bearer, or X-Hirakumi-Close-Auth: the receipt key's ed25519 signature (hex) over \"HKC1\" ‖ channel id.",
+          });
+          return;
+        }
+        ch = await getChannel(d.sql, channelId);
+        if (!ch || ch.api_id !== req.params.apiId) { res.status(404).json({ error: "channel_not_found" }); return; }
+        if (!verifyCloseRequest(ch.receipt_key, ch.channel_id, closeAuth)) { res.status(403).json({ error: "not_your_channel" }); return; }
+      }
       const iou = checkIou(ch, req.header(IOU_HEADER));
       if (!iou.ok) { res.status(iou.status).json(iou.body); return; }
       if (iou.iou) await recordIou(d.sql, ch.channel_id, iou.iou.accepted, iou.iou.signature);

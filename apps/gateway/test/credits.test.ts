@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import request from "supertest";
 import { USDM_PREPROD_ASSET } from "@x402/cardano";
-import { inputHash } from "@hirakumi/core";
+import { inputHash, ruleHash } from "@hirakumi/core";
 import { insertActiveToken, makeHarness, type Harness } from "./helpers";
 
 let h: Harness;
@@ -118,5 +118,13 @@ describe("/r/:ruleHash", () => {
     expect(r.body).toMatchObject({ ruleHash: h.seeded.ruleHash, version: 1, plain_english: expect.stringContaining("symbol") });
     expect(r.body.definition.schema.required).toEqual(["price", "symbol", "updatedAt"]);
     expect((await request(h.app).get("/r/sha256:nope")).status).toBe(404);
+  });
+
+  it("the served definition hashes back to its rule hash (no drift through the jsonb round trip)", async () => {
+    // Buyers check ruleHash(definition) === hash before paying, so the stored JSON must hash identically.
+    const r = await request(h.app).get(`/r/${h.seeded.ruleHash}`);
+    expect(r.status).toBe(200);
+    expect(r.body.ruleHash).toBe(h.seeded.ruleHash);
+    expect(ruleHash(r.body.definition)).toBe(h.seeded.ruleHash);
   });
 });

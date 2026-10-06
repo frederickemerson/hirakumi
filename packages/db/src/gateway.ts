@@ -186,7 +186,11 @@ export type JobRow = {
   id: string; api_id: string; identifier_from_purchaser: string; input: unknown; input_hash: string;
   blockchain_identifier: string | null; status: JobStatus; output: string | null; output_hash: string | null;
   failure_reasons: string[] | null; pay_by_time: Date | null; submit_result_time: Date | null; created_at: Date;
+  submit_claimed_at: Date | null;
 };
+
+/** How long a submit claim holds before another runner may take it over (the first one died mid-submit). */
+export const SUBMIT_CLAIM_STALE_SECONDS = 120;
 export type JobInsert = {
   id: string; apiId: string; identifierFromPurchaser: string; input: unknown; inputHash: string;
   blockchainIdentifier: string; payByTime: Date; submitResultTime: Date;
@@ -208,8 +212,31 @@ export async function listJobsAwaitingPayment(sql: Sql): Promise<JobRow[]> {
   return sql<JobRow[]>`select * from jobs where status = 'awaiting_payment' order by created_at limit 100`;
 }
 
-export async function listUnsubmittedPasses(sql: Sql): Promise<JobRow[]> {
-  return sql<JobRow[]>`select * from jobs where status = 'running' and output_hash is not null order by created_at limit 100`;
+/** Passing results still to submit, skipping those another runner is submitting right now (fresh claim). */
+export async function listUnsubmittedPasses(sql: Sql, staleSeconds = SUBMIT_CLAIM_STALE_SECONDS): Promise<JobRow[]> {
+  return sql<JobRow[]>`
+    select * from jobs
+    where status = 'running' and output_hash is not null
+      and (submit_claimed_at is null or submit_claimed_at < now() - (${staleSeconds} * interval '1 second'))
+    order by created_at limit 100`;
+}
+
+/**
+ * Finding G6: take the right to submit this job's result. Exactly one runner wins while the claim is fresh;
+ * a claim older than `staleSeconds` is taken over. The claim is not cleared on success: the job leaves 'running'.
+ */
+export async function claimSubmit(sql: Sql, id: string, staleSeconds = SUBMIT_CLAIM_STALE_SECONDS): Promise<boolean> {
+  const rows = await sql`
+    update jobs set submit_claimed_at = now()
+    where id = ${id} and status = 'running'
+      and (submit_claimed_at is null or submit_claimed_at < now() - (${staleSeconds} * interval '1 second'))
+    returning id`;
+  return rows.length === 1;
+}
+
+/** The submit failed: let the next tick (any runner) retry it. */
+export async function releaseSubmitClaim(sql: Sql, id: string): Promise<void> {
+  await sql`update jobs set submit_claimed_at = null where id = ${id} and status = 'running'`;
 }
 
 export async function claimJob(sql: Sql, id: string): Promise<boolean> {
