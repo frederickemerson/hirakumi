@@ -7,29 +7,19 @@ import { HealthBadge } from "@/components/health-badge";
 import { RetireButton } from "@/components/retire-button";
 import { PackSalesTable } from "@/components/sales-tables";
 import { EmptyState, WaitingState } from "@/components/states";
+import { OverviewStatGrid } from "@/components/stat";
 import { StepList } from "@/components/step-list";
 import { formatTime } from "@/lib/copy";
 import { getSql } from "@/lib/db";
 import { env } from "@/lib/env";
 import { stepForState } from "@/lib/flow";
 import { getGateway } from "@/lib/gateway";
-import { formatTusdm } from "@/lib/money";
 import { loadApiPage } from "@/lib/page-auth";
 import { listOnboardSteps } from "@/lib/repo/apis";
 import { getPack } from "@/lib/repo/packs";
 import { listLatestRules } from "@/lib/repo/rules";
 import { getOverviewStats, listIncidents, listPackSales } from "@/lib/repo/stats";
 import { buildBuyerSnippet } from "@/lib/snippet";
-
-function Stat({ label, value, note }: { label: string; value: string; note?: string }) {
-  return (
-    <div className="rounded-[2px] border-2 border-ink bg-frost p-4">
-      <p className="text-caption uppercase tracking-[0.04em] text-graphite">{label}</p>
-      <p className="mt-1 text-h-sm font-medium tabular-nums">{value}</p>
-      {note && <p className="mt-1 text-caption text-graphite">{note}</p>}
-    </div>
-  );
-}
 
 export default async function OverviewPage({ params }: { params: Promise<{ apiId: string }> }) {
   const { apiId } = await params;
@@ -84,14 +74,7 @@ export default async function OverviewPage({ params }: { params: Promise<{ apiId
         {api.state === "live" && (<><dt className="text-graphite">Public page</dt><dd><Link href={`/p/${apiId}`} className="underline underline-offset-4">{`/p/${apiId}`}</Link></dd></>)}
       </dl>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat label="Paid calls, last 24 hours" value={String(stats.callsDay)} />
-        <Stat label="Kept the promise" value={stats.passRate === null ? "No paid calls yet" : `${Math.round(stats.passRate * 100)}%`}
-          note={`${stats.passDay} passed, ${stats.failDay} didn't (no credit used)`} />
-        <Stat label="Pack earnings" value={`${formatTusdm(stats.packEarningsMicros)} tUSDM`} note={`${stats.packSales} packs sold`} />
-        <Stat label="Per-job earnings" value={`${formatTusdm(stats.escrowNetMicros)} tUSDM`}
-          note={`${stats.escrowJobs} jobs, ${formatTusdm(stats.escrowGrossMicros)} paid, Masumi kept ${formatTusdm(stats.escrowFeeMicros)}`} />
-      </div>
+      <OverviewStatGrid stats={stats} />
 
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-4">
