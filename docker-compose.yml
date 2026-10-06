@@ -89,6 +89,8 @@ services:
     restart: unless-stopped
     environment:
       PORT: "4100"
+      # Advertised in /openapi.json servers[0].url; Hirakumi checks it matches the file's host.
+      PUBLIC_URL: https://price.${PUBLIC_DOMAIN:?set PUBLIC_DOMAIN in .env}
       ADMIN_TOKEN: ${PRICE_ADMIN_TOKEN:?set PRICE_ADMIN_TOKEN in .env}
       HIRAKUMI_CHALLENGE: ${HIRAKUMI_CHALLENGE:-{}}
     expose:
