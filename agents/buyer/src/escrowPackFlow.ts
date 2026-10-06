@@ -198,6 +198,14 @@ export async function closeEscrowPack(
     deps.log(`The gateway never opened channel ${c.channelId}; if a lock exists on-chain, Close(0) with your refund key.`);
     return r.body;
   }
+  // The gateway gave up on this channel because its lock never reached the chain: final, not retryable.
+  const status = (r.body as { status?: unknown } | undefined)?.status;
+  if (r.status === 409 && error === "channel_not_locked" && status === "refused") {
+    c.abandoned = true;
+    deps.store.put(c);
+    deps.log(`Channel ${c.channelId} was refused (its lock never landed). If a lock exists on-chain, Close(0) with your refund key.`);
+    return r.body;
+  }
   if (r.status < 200 || r.status >= 300) throw new Error(`close refused: HTTP ${r.status}${typeof error === "string" ? ` ${error}` : ""}`);
   c.closeRequested = true;
   deps.store.put(c);

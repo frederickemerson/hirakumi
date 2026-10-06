@@ -320,7 +320,7 @@ describe("channel routes and the ChannelWatcher", () => {
     expect(await getChannel(h.sql, channelId)).toMatchObject({ status: "close_requested", iou_accepted: 1 });
   });
 
-  it("close-auth: another key, an HKR1 IOU signature, or a malformed value → 403; an unknown channel → 404", async () => {
+  it("close-auth: another key or an HKR1 IOU signature → 403; a malformed value → 400; an unknown channel → 404", async () => {
     await setup();
     const { res, channelId } = await buy();
     await call(res.body.token);
@@ -328,7 +328,7 @@ describe("channel routes and the ChannelWatcher", () => {
     const post = (auth: string, url = closeUrl) => request(h.app).post(url).set("x-hirakumi-close-auth", auth);
     expect((await post(signCloseRequest(newReceiptKey().secretKey, channelId))).status).toBe(403);
     expect((await post(signReceipt(key.secretKey, channelId, 0))).status).toBe(403); // a valid IOU is not a close request
-    expect((await post("zz")).status).toBe(403);
+    expect((await post("zz")).status).toBe(400); // rejected on shape, before any DB read
     const unknown = "ab".repeat(32);
     const r404 = await post(signCloseRequest(key.secretKey, unknown), `/a/${h.seeded.apiId}/channels/${unknown}/close`);
     expect(r404.status).toBe(404);

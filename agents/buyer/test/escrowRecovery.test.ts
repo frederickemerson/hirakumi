@@ -120,6 +120,19 @@ describe("--close", () => {
     await expect(close(async () => json(200, {}), store)).rejects.toThrow(/no escrow channel/);
   });
 
+  it("409 for a refused channel (its lock never landed) is final: marked abandoned, not a stuck error", async () => {
+    const store = tmpStore();
+    const g = maliciousEscrowGateway({ lock: (key) => offer(key) });
+    await runEscrowPack(deps(g, store), flowOpts(0));
+    await close(async () => json(409, { error: "channel_not_locked", status: "refused" }), store);
+    expect(store.get("api_demo", "pk_demo")!.abandoned).toBe(true);
+    // A 409 while the lock is merely pending is not final.
+    const store2 = tmpStore();
+    const g2 = maliciousEscrowGateway({ lock: (key) => offer(key) });
+    await runEscrowPack(deps(g2, store2), flowOpts(0));
+    await expect(close(async () => json(409, { error: "channel_not_locked", status: "pending" }), store2)).rejects.toThrow(/close refused: HTTP 409/);
+  });
+
   it("picks the newest channel, archived ones included", async () => {
     const store = tmpStore();
     const a = store.ensure("api_demo", "pk_demo", BUYER, new Date("2026-10-01T00:00:00Z"));

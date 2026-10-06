@@ -86,6 +86,17 @@ describe("verify: close-auth route", () => {
     expect((await getChannel(h.sql, a.channelId))!.status).toBe("close_requested");
   });
 
+  it("a malformed close-auth or channel id is a 400 answered before any database read", async () => {
+    await setup();
+    const a = await buy();
+    const good = signCloseRequest(keys.secretKey, a.channelId);
+    for (const [ch, auth] of [[a.channelId, good.slice(0, 126)], [a.channelId, "zz".repeat(64)], ["not-a-channel", good]] as const) {
+      const r = await request(h.app).post(closePath(ch)).set("x-hirakumi-close-auth", auth);
+      expect(r.status).toBe(400);
+      expect(r.body.error).toBe("bad_close_auth");
+    }
+  });
+
   it("close-auth can't record a forged or ahead-of-service IOU, nor re-open a settled channel", async () => {
     await setup();
     const a = await buy();

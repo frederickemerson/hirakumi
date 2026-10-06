@@ -11,7 +11,7 @@ import { IOU_HEADER, checkIou, latestIou } from "./ious";
 
 export const CLOSE_AUTH_HEADER = "x-hirakumi-close-auth";
 
-const txUrl =(h: string | null) => (h ? `https://preprod.cardanoscan.io/transaction/${h}` : null);
+const txUrl = (h: string | null) => (h ? `https://preprod.cardanoscan.io/transaction/${h}` : null);
 
 export function channelView(cfg: Pick<GatewayConfig, "publicBaseUrl">, ch: ChannelRow) {
   return {
@@ -78,6 +78,11 @@ export function channelsRouter(d: AppDeps): Router {
             error: "token_required",
             message: "Send your credit token as a bearer, or X-Hirakumi-Close-Auth: the receipt key's ed25519 signature (hex) over \"HKC1\" ‖ channel id.",
           });
+          return;
+        }
+        // Shape check first: a malformed request costs no DB read and no signature verify.
+        if (!/^[0-9a-f]{64}$/.test(channelId) || !/^[0-9a-f]{128}$/.test(closeAuth)) {
+          res.status(400).json({ error: "bad_close_auth", message: "Expected a 64-hex channel id and a 128-hex ed25519 signature." });
           return;
         }
         ch = await getChannel(d.sql, channelId);

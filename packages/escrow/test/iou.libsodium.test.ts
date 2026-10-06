@@ -4,8 +4,6 @@
 // it is loaded by path so this package needs no extra dependency.
 import { randomBytes, randomInt } from "node:crypto";
 import { createRequire } from "node:module";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import { isValidReceiptKey, newReceiptKey, receiptMessage, signReceipt, verifyReceipt } from "../src/index.js";
 import { L, TORSION, addTorsion, hex, le, leBytes, mixedKeySignature, mixedOrderSignature, torsionPoints, unhex } from "./ed25519.helpers.js";
@@ -14,10 +12,8 @@ type Sodium = {
   ready: Promise<void>;
   crypto_sign_verify_detached(sig: Uint8Array, msg: Uint8Array, pk: Uint8Array): boolean;
 };
-const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-const sodium = createRequire(
-  resolve(repo, "node_modules/.pnpm/libsodium-wrappers-sumo@0.7.10/node_modules/libsodium-wrappers-sumo/package.json"),
-)("libsodium-wrappers-sumo") as Sodium;
+// libsodium is what Cardano's verifyEd25519Signature builtin uses; a pinned devDependency of this package.
+const sodium = createRequire(import.meta.url)("libsodium-wrappers-sumo") as Sodium;
 
 const CH = "00".repeat(31) + "2a";
 
