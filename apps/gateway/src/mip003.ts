@@ -1,6 +1,54 @@
 import { Router } from "express";
+import { inputHash, newId } from "@hirakumi/core";
+import { getJob, insertJob, type JobRow } from "@hirakumi/db";
 import { estimatedDowntimeSeconds } from "./config";
 import type { AppDeps } from "./deps";
+import { downBody } from "./http";
+import { escrowOperation } from "./registry";
+import { normalizeMip003Input } from "./upstream";
+
+export type Mip003Field = {
+  id: string; type: "string" | "number" | "boolean" | "option"; name: string;
+  data?: { description?: string; options?: string[] };
+};
+
+/** JSON Schema object properties → Sokosumi/MIP-003 typed input fields. */
+export function toMip003Fields(schema: Record<string, unknown>): Mip003Field[] {
+  const props = (schema.properties ?? {}) as Record<string, Record<string, unknown>>;
+  return Object.entries(props).map(([id, p]) => {
+    const options = Array.isArray(p.enum) ? p.enum.map(String) : null;
+    const type: Mip003Field["type"] = options
+      ? "option"
+      : p.type === "number" || p.type === "integer" ? "number"
+      : p.type === "boolean" ? "boolean"
+      : "string";
+    const data: NonNullable<Mip003Field["data"]> = {};
+    if (typeof p.description === "string") data.description = p.description;
+    if (options) data.options = options;
+    return { id, type, name: typeof p.title === "string" ? p.title : id, data };
+  });
+}
+
+export const PURCHASER_ID = /^(?:[0-9a-f]{2}){7,32}$/;
+
+function statusBody(job: JobRow) {
+  const base = { job_id: job.id, id: job.id };
+  switch (job.status) {
+    case "awaiting_payment":
+      return { ...base, status: "awaiting_payment", blockchainIdentifier: job.blockchain_identifier, input_hash: job.input_hash };
+    case "running":
+      return { ...base, status: "running" };
+    case "completed":
+      return { ...base, status: "completed", output: job.output, result: job.output, input_hash: job.input_hash, output_hash: job.output_hash };
+    case "failed":
+      return {
+        ...base, status: "failed", error: "promise_not_met", reasons: job.failure_reasons ?? [],
+        message: "The answer did not keep the published promise. No result was submitted, so your payment is refunded automatically after the submit-result deadline.",
+      };
+    case "expired":
+      return { ...base, status: "failed", error: "payment_not_received", message: "No payment arrived before the pay-by time. Nothing was charged." };
+  }
+}
 
 export function mip003Router(d: AppDeps): Router {
   const r = Router();
@@ -23,6 +71,67 @@ export function mip003Router(d: AppDeps): Router {
         return;
       }
       res.json({ status: "available", type: "masumi-agent", message: `${loaded.api.name} is Live. Every answer is checked against a published promise.` });
+    } catch (e) { next(e); }
+  });
+
+  r.get("/a/:apiId/input_schema", async (req, res, next) => {
+    try {
+      const loaded = await d.registry.get(req.params.apiId);
+      const op = loaded ? escrowOperation(loaded) : undefined;
+      if (!loaded || !op) { res.status(404).json({ error: "escrow_operation_not_set" }); return; }
+      res.json({ input_data: toMip003Fields(op.row.input_schema) });
+    } catch (e) { next(e); }
+  });
+
+  r.post("/a/:apiId/start_job", async (req, res, next) => {
+    try {
+      const loaded = await d.registry.get(req.params.apiId);
+      if (!loaded || loaded.api.state !== "live") { res.status(404).json({ error: "api_not_found" }); return; }
+      const op = escrowOperation(loaded);
+      if (!op?.rule) { res.status(503).json({ error: "escrow_not_configured", message: "This API has no escrow operation with a published promise." }); return; }
+      const { input_data, identifier_from_purchaser: pid } = (req.body ?? {}) as { input_data?: unknown; identifier_from_purchaser?: unknown };
+      if (typeof pid !== "string" || !PURCHASER_ID.test(pid)) {
+        res.status(400).json({ error: "INVALID_INPUT", message: "identifier_from_purchaser must be 14-64 lowercase hex characters (even length)." });
+        return;
+      }
+      const normalized = normalizeMip003Input(input_data);
+      const checked = normalized ? op.validateInput(normalized) : { ok: false as const, reasons: ["input_data must be an object or a list of {key, value}"] };
+      if (!checked.ok) { res.status(400).json({ error: "INVALID_INPUT", reasons: checked.reasons }); return; }
+      const snap = d.health.get(loaded.api.id);
+      if (snap?.health === "down") { res.status(503).json(downBody(d.config, snap)); return; }
+      if (!d.masumi) { res.status(503).json({ error: "escrow_unavailable", message: "Escrow payments are not configured on this gateway." }); return; }
+      if (!loaded.api.agent_identifier) { res.status(503).json({ error: "agent_not_registered", message: "This API is not registered on Masumi yet." }); return; }
+
+      const hash = inputHash(pid, input_data);
+      const now = Date.now();
+      const pr = await d.masumi.createPaymentRequest({
+        agentIdentifier: loaded.api.agent_identifier, inputHash: hash, identifierFromPurchaser: pid,
+        payByTime: new Date(now + d.config.escrow.payByMs), submitResultTime: new Date(now + d.config.escrow.submitResultMs),
+      });
+      const jobId = newId("job");
+      await insertJob(d.sql, {
+        id: jobId, apiId: loaded.api.id, identifierFromPurchaser: pid, input: input_data, inputHash: hash,
+        blockchainIdentifier: pr.blockchainIdentifier, payByTime: pr.payByTime, submitResultTime: pr.submitResultTime,
+      });
+      res.json({
+        id: jobId, job_id: jobId, status: "awaiting_payment",
+        blockchainIdentifier: pr.blockchainIdentifier,
+        payByTime: pr.payByTime.getTime(), submitResultTime: pr.submitResultTime.getTime(),
+        unlockTime: pr.unlockTime.getTime(), externalDisputeUnlockTime: pr.externalDisputeUnlockTime.getTime(),
+        agentIdentifier: loaded.api.agent_identifier, sellerVKey: pr.sellerVKey,
+        identifierFromPurchaser: pid, input_hash: hash,
+        // Contract v1.1 G7: what the buyer must lock. Packs are ordered by price, so [0] is the cheapest.
+        amounts: loaded.packs[0] ? [{ amount: loaded.packs[0].escrow_price_micros, unit: d.config.escrow.unit }] : [],
+      });
+    } catch (e) { next(e); }
+  });
+
+  r.get("/a/:apiId/status", async (req, res, next) => {
+    try {
+      const jobId = typeof req.query.job_id === "string" ? req.query.job_id : "";
+      const job = jobId ? await getJob(d.sql, req.params.apiId, jobId) : null;
+      if (!job) { res.status(404).json({ error: "JOB_NOT_FOUND" }); return; }
+      res.json(statusBody(job));
     } catch (e) { next(e); }
   });
 

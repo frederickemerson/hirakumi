@@ -12,10 +12,13 @@ export type GatewayConfig = {
   thresholds: HealthThresholds;
   l1Confirmations: number;
   upstreamTimeoutMs: number;
-  escrow: { payByMs: number; submitResultMs: number };
+  escrow: { payByMs: number; submitResultMs: number; unit: string };
   blockfrostProjectId: string | null;
   masumi: { baseUrl: string; token: string } | null;
 };
+
+export const MASUMI_ESCROW_UNIT_PREPROD =
+  "16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d";
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig {
   const required = (k: string): string => {
@@ -42,7 +45,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     upstreamTimeoutMs: 15_000,
     // Masumi payment-service rules (x402-cardano-demo/masumi/src/masumi.ts): pay-by ≥ 5 min before
     // submit-result; submit-result ≥ 15 min ahead. Demo uses the shortest safe values.
-    escrow: demoMode ? { payByMs: 10 * 60_000, submitResultMs: 20 * 60_000 } : { payByMs: 30 * 60_000, submitResultMs: 60 * 60_000 },
+    escrow: {
+      ...(demoMode ? { payByMs: 10 * 60_000, submitResultMs: 20 * 60_000 } : { payByMs: 30 * 60_000, submitResultMs: 60 * 60_000 }),
+      // Contract: the Masumi escrow tUSDM (not the x402 one). Reported in start_job `amounts` (v1.1 G7).
+      unit: env.MASUMI_ESCROW_UNIT?.trim() || MASUMI_ESCROW_UNIT_PREPROD,
+    },
     blockfrostProjectId: env.BLOCKFROST_PROJECT_ID?.trim() || null,
     masumi: psUrl && psToken ? { baseUrl: psUrl, token: psToken } : null,
   };
