@@ -38,6 +38,16 @@ describe("chooseSettlement (PACK_MODE=hybrid)", () => {
     expect(chooseSettlement({ ...proven, sellerUptime7d: 0.94 }, policy)).toEqual({ mode: "escrow", reasons: ["uptime below 95%"] });
   });
 
+  it("escrow whenever the buyer asks for it, that reason first", () => {
+    expect(chooseSettlement({ ...proven, buyerWantsEscrow: true })).toEqual({ mode: "escrow", reasons: ["buyer asked for escrow"] });
+    const all = { priceMicros: 3_000_000n, sellerUptime7d: 0.5, listingAgeDays: 1, buyerCanEscrow: true, buyerWantsEscrow: true };
+    expect(chooseSettlement(all).reasons).toEqual(["buyer asked for escrow", "large pack", "uptime below 99%", "new seller"]);
+  });
+
+  it("a buyer who asks for escrow without keys still can't escrow (the gateway refuses that request first)", () => {
+    expect(chooseSettlement({ ...proven, buyerCanEscrow: false, buyerWantsEscrow: true }).mode).toBe("direct");
+  });
+
   it("defaults to 2 tUSDM, 99% and 7 days", () => {
     expect(DEFAULT_SETTLEMENT_POLICY).toEqual({ escrowFromMicros: 2_000_000n, minUptimePct: 99, minListingDays: 7 });
   });

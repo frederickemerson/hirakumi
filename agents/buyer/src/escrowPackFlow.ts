@@ -9,7 +9,9 @@ import {
 
 export type EscrowFlowDeps = {
   fetch: FetchLike;
-  buyEscrowPack: (buyUrl: string, keys: { receiptKey: string; refundAddress: string }, check: OfferCheck) => Promise<EscrowPurchase>;
+  buyEscrowPack: (
+    buyUrl: string, keys: { receiptKey: string; refundAddress: string; settlement?: "escrow" }, check: OfferCheck,
+  ) => Promise<EscrowPurchase>;
   store: IouKeyStore;
   refundAddress: string;
   log: (line: string) => void;
@@ -21,6 +23,8 @@ export type EscrowFlowOptions = {
   maxPackMicros: bigint; pendingTimeoutMs: number; pendingPollMs: number;
   /** A hybrid gateway may settle direct; we pay that only up to this (default 5 tUSDM). */
   maxDirectMicros?: bigint;
+  /** Send X-Hirakumi-Settlement: escrow and refuse any direct offer: unused credits always come back. */
+  requireEscrow?: boolean;
 };
 export type EscrowFlowSummary = { channelId: string | null; passed: number; signed: number; notMet: number; disputed: boolean; stoppedFor: string | null };
 
@@ -113,6 +117,7 @@ export async function runEscrowPack(deps: EscrowFlowDeps, o: EscrowFlowOptions):
       approved = null;
       const reasons = offerReasons(req);
       if (offerMode(req) === "direct") {
+        if (o.requireEscrow) throw new EscrowOfferError("refusing to pay: we asked for escrow and the gateway offered direct");
         checkDirectOffer(req, expected, o.maxDirectMicros ?? DEFAULT_MAX_DIRECT_MICROS);
         deps.log(`Settlement: direct${reasons.length ? `, because: ${reasons.join(", ")}` : ""}. Paying the seller ${formatMicros(req.amount)} tUSDM.`);
         approved = "direct";
@@ -129,7 +134,9 @@ export async function runEscrowPack(deps: EscrowFlowDeps, o: EscrowFlowOptions):
     };
     let p: EscrowPurchase;
     try {
-      p = await deps.buyEscrowPack(pack.buyUrl, { receiptKey: ch.publicKey, refundAddress: deps.refundAddress }, check);
+      p = await deps.buyEscrowPack(
+        pack.buyUrl, { receiptKey: ch.publicKey, refundAddress: deps.refundAddress, ...(o.requireEscrow ? { settlement: "escrow" as const } : {}) }, check,
+      );
     } catch (e) {
       if (e instanceof PaymentNotSentError) {
         // Nothing was signed, so no lock can land: forget the channel (the key stays unused).

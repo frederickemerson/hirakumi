@@ -110,7 +110,7 @@ export function createPackPayer(cfg: { mnemonic: string; blockfrostProjectId: st
      * if `check` accepts the 402's offer. A hybrid gateway may offer direct instead; `check` decides whether to pay.
      */
     buyEscrowPack(
-      buyUrl: string, keys: { receiptKey: string; refundAddress: string }, check: OfferCheck, hooks: { onSigned?: SignedHook } = {},
+      buyUrl: string, keys: { receiptKey: string; refundAddress: string; settlement?: "escrow" }, check: OfferCheck, hooks: { onSigned?: SignedHook } = {},
     ): Promise<EscrowPurchase> {
       return serial.run(async () => {
         lastSignature = null;
@@ -125,6 +125,7 @@ export function createPackPayer(cfg: { mnemonic: string; blockfrostProjectId: st
             headers: {
               "content-type": "application/json", accept: "application/json",
               "x-hirakumi-receipt-key": keys.receiptKey, "x-hirakumi-refund-address": keys.refundAddress,
+              ...(keys.settlement ? { "x-hirakumi-settlement": keys.settlement } : {}),
               "x-hirakumi-recovery": createHash("sha256").update(recoverySecret).digest("hex"),
             },
             body: "{}",

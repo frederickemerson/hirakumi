@@ -33,6 +33,7 @@ const query = queryArgs(values.query, values.symbol);
 const maxPackMicros = BigInt(process.env.MAX_PACK_MICROS ?? "5000000");
 // A hybrid gateway may settle a pack direct (paid to the seller, no refund): we accept that only up to this.
 const maxDirectMicros = BigInt(process.env.MAX_DIRECT_MICROS ?? "5000000");
+// REQUIRE_ESCROW=1: always ask for escrow (unused credits come back) and refuse any direct offer.
 const payer = createPackPayer({
   mnemonic: need("BUYER_MNEMONIC"),
   blockfrostProjectId: need("BLOCKFROST_PROJECT_ID"),
@@ -59,7 +60,7 @@ if (values.escrow) {
   const summary = await runEscrowPack(
     { fetch, buyEscrowPack: payer.buyEscrowPack, store, refundAddress: payer.address, log: (l) => console.log(l), sleep: (ms) => sleep(ms), now: () => new Date() },
     { gatewayUrl, apiId: values.api, opId: values.op, query, calls: Number(values.calls), intervalMs: Number(values.interval),
-      maxPackMicros, maxDirectMicros, pendingTimeoutMs: 180_000, pendingPollMs: 5_000 },
+      maxPackMicros, maxDirectMicros, requireEscrow: process.env.REQUIRE_ESCROW === "1", pendingTimeoutMs: 180_000, pendingPollMs: 5_000 },
   );
   process.exit(summary.disputed ? 2 : 0);
 }

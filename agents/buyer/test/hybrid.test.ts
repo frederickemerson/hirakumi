@@ -111,3 +111,25 @@ describe("runEscrowPack against a hybrid gateway", () => {
     expect(store.list("api_demo").some((c) => c.direct && c.publicKey === first.publicKey)).toBe(true);
   });
 });
+
+describe("runEscrowPack with requireEscrow (X-Hirakumi-Settlement: escrow)", () => {
+  it("asks for escrow and pays the escrow offer after the full datum check", async () => {
+    const g = maliciousEscrowGateway({ lock: (k) => offer(k), calls: [() => json(200, { price: 1 })] });
+    const s = await runEscrowPack(deps(g), { ...flowOpts(1), requireEscrow: true });
+    expect(g.state.asked).toEqual(["escrow"]);
+    expect(g.state.paid).toBe(1);
+    expect(s.channelId).not.toBeNull();
+  });
+
+  it("refuses a direct offer, however small: nothing paid", async () => {
+    const g = maliciousEscrowGateway({ lock: () => direct("1000000") });
+    await expect(runEscrowPack(deps(g), { ...flowOpts(0), requireEscrow: true })).rejects.toThrow(/asked for escrow/);
+    expect(g.state.paid).toBe(0);
+  });
+
+  it("without it, the buyer states no preference", async () => {
+    const g = maliciousEscrowGateway({ lock: () => direct() });
+    await runEscrowPack(deps(g), flowOpts(0));
+    expect(g.state.asked).toEqual([null]);
+  });
+});

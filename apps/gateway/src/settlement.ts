@@ -39,11 +39,12 @@ export function canEscrow(d: AppDeps, pack: PackRow): boolean {
   return d.config.packEscrow !== null && !!d.escrowChain && BigInt(pack.price_micros) % BigInt(pack.calls) === 0n;
 }
 
-export const decisionKey = (apiId: string, packId: string, b: BuyerKeys, priceMicros: string) =>
-  sha256Hex(`${apiId}|${packId}|${b.receiptKey}|${b.refundAddress}|${priceMicros}`);
+/** A buyer who demands escrow gets its own decision, so asking and not asking never share an answer. */
+export const decisionKey = (apiId: string, packId: string, b: BuyerKeys, priceMicros: string, wantsEscrow = false) =>
+  sha256Hex(`${apiId}|${packId}|${b.receiptKey}|${b.refundAddress}|${priceMicros}${wantsEscrow ? "|escrow" : ""}`);
 
 /** The policy's answer for a buyer who can escrow, from live data. Persist it before offering it (see below). */
-export async function policyFor(d: AppDeps, loaded: LoadedApi, pack: PackRow, buyerCanEscrow: boolean) {
+export async function policyFor(d: AppDeps, loaded: LoadedApi, pack: PackRow, buyerCanEscrow: boolean, buyerWantsEscrow = false) {
   if (!buyerCanEscrow) return chooseSettlement({ priceMicros: 0n, sellerUptime7d: 1, listingAgeDays: 0, buyerCanEscrow }, d.config.settlement);
   const s = await signals(d.sql, loaded.api.id);
   if (!s) throw new Error(`no listing for ${loaded.api.id}`);
@@ -52,6 +53,7 @@ export async function policyFor(d: AppDeps, loaded: LoadedApi, pack: PackRow, bu
     sellerUptime7d: uptimeFraction({ from: s.windowStart, to: s.now, startHealth: s.startHealth, events: s.events }),
     listingAgeDays: (s.now.getTime() - s.listedAt.getTime()) / DAY_MS,
     buyerCanEscrow,
+    buyerWantsEscrow,
   }, d.config.settlement);
 }
 
@@ -62,11 +64,13 @@ export async function policyFor(d: AppDeps, loaded: LoadedApi, pack: PackRow, bu
  * - buyer keys: the first answer is stored in settlement_decisions for QUOTE_TTL_SECONDS under
  *   (api, pack, receipt key, refund address, price) and every 402 and paid retry for that key reads it back.
  */
-export async function settlementFor(d: AppDeps, loaded: LoadedApi, pack: PackRow, keys: BuyerKeys | null): Promise<PackSettlement> {
+export async function settlementFor(
+  d: AppDeps, loaded: LoadedApi, pack: PackRow, keys: BuyerKeys | null, wantsEscrow = false,
+): Promise<PackSettlement> {
   const decided = keys === null
     ? await policyFor(d, loaded, pack, false)
-    : await getOrCreateSettlementDecision(d.sql, decisionKey(loaded.api.id, pack.id, keys, pack.price_micros), async () => ({
-      apiId: loaded.api.id, packId: pack.id, ...(await policyFor(d, loaded, pack, true)), ttlSeconds: QUOTE_TTL_SECONDS,
+    : await getOrCreateSettlementDecision(d.sql, decisionKey(loaded.api.id, pack.id, keys, pack.price_micros, wantsEscrow), async () => ({
+      apiId: loaded.api.id, packId: pack.id, ...(await policyFor(d, loaded, pack, true, wantsEscrow)), ttlSeconds: QUOTE_TTL_SECONDS,
     }));
   if (decided.mode === "escrow" && !canEscrow(d, pack)) return { mode: "direct", reasons: decided.reasons, recommended: "escrow" };
   return { mode: decided.mode, reasons: decided.reasons };

@@ -61,7 +61,7 @@ export function maliciousEscrowGateway(o: {
   calls?: Array<() => Response>;
   rules?: (hash: string) => Response;
 }) {
-  const state = { paid: 0, checked: 0, iouHeaders: [] as (string | null)[], logs: [] as string[] };
+  const state = { paid: 0, checked: 0, iouHeaders: [] as (string | null)[], logs: [] as string[], asked: [] as (string | null)[] };
   const calls = [...(o.calls ?? [])];
   const fetch = async (url: string, init?: RequestInit) => {
     if (url.includes("/r/")) {
@@ -83,7 +83,10 @@ export function maliciousEscrowGateway(o: {
     const next = calls.shift();
     return next ? next() : json(402, { error: "credits_exhausted" });
   };
-  const buyEscrowPack = async (_url: string, keys: { receiptKey: string; refundAddress: string }, check: OfferCheck): Promise<EscrowPurchase> => {
+  const buyEscrowPack = async (
+    _url: string, keys: { receiptKey: string; refundAddress: string; settlement?: "escrow" }, check: OfferCheck,
+  ): Promise<EscrowPurchase> => {
+    state.asked.push(keys.settlement ?? null);
     const req = o.lock(keys.receiptKey);
     check(req); // throws when the buyer refuses: nothing is signed
     state.checked++;

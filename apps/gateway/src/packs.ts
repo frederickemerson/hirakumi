@@ -10,11 +10,11 @@ import {
   activateTokenByPayment, findTokenByTx, getChannelByLockTx, insertPendingToken, openChannelFromQuote, rotateTokenById, type PackRow,
 } from "@hirakumi/db";
 import { PACK_ESCROW } from "@hirakumi/escrow";
-import { buyerKeys, escrowExtra, hybridBuyerKeys, quoteFor, quoteKey, verifyChannelLock, type BuyerKeys } from "./escrowPacks";
+import { buyerKeys, escrowExtra, hybridBuyerKeys, quoteFor, quoteKey, settlementPreference, verifyChannelLock, type BuyerKeys } from "./escrowPacks";
 import type { AppDeps } from "./deps";
 import { downBody, ruleUrl } from "./http";
 import { primaryRule, type LoadedApi } from "./registry";
-import { settlementFor, type PackSettlement } from "./settlement";
+import { canEscrow, settlementFor, type PackSettlement } from "./settlement";
 
 export const PACK_ROUTE = "POST /a/:apiId/packs/:packId";
 const PACK_PATH = /^\/a\/([^/]+)\/packs\/([^/]+)$/;
@@ -111,6 +111,7 @@ const KEY_ERRORS: Record<string, string> = {
   receipt_key_required: "Escrow packs need X-Hirakumi-Receipt-Key: the 32-byte ed25519 public key (hex) you will sign IOUs with.",
   bad_receipt_key: "X-Hirakumi-Receipt-Key must be a normal ed25519 public key (not small order).",
   bad_refund_address: "Escrow packs need X-Hirakumi-Refund-Address: a preprod address with a key payment credential.",
+  bad_settlement: "X-Hirakumi-Settlement must be escrow, or left out to let Hirakumi choose.",
 };
 
 export function packRouter(d: AppDeps): Router {
@@ -147,7 +148,8 @@ export function packRouter(d: AppDeps): Router {
       hit = (async () => {
         const { loaded, pack } = await resolvePack(d, ctx.path);
         const keys = adapterHybridKeys(ctx);
-        return { loaded, pack, keys, settlement: await settlementFor(d, loaded, pack, keys) };
+        const wantsEscrow = settlementPreference((n) => ctx.adapter.getHeader(n)) === "escrow";
+        return { loaded, pack, keys, settlement: await settlementFor(d, loaded, pack, keys, wantsEscrow) };
       })();
       perRequest.set(ctx.adapter, hit);
     }
@@ -263,6 +265,13 @@ export function packRouter(d: AppDeps): Router {
       const snap = d.health.get(loaded.api.id);
       if (snap?.health === "down") { res.status(503).json(downBody(d.config, snap)); return; }
       if (!primaryRule(loaded)) { res.status(503).json({ error: "promise_not_published" }); return; }
+      // A buyer who demands escrow gets escrow or a refusal, never a quiet direct offer.
+      const preference = settlementPreference((n) => req.header(n));
+      if (preference === "bad_settlement") { res.status(400).json({ error: preference, message: KEY_ERRORS[preference] }); return; }
+      if (preference === "escrow" && !escrowMode(d) && !(hybridMode(d) && canEscrow(d, pack))) {
+        res.status(503).json({ error: "escrow_unavailable", message: "This pack can't be bought in escrow right now. Leave out X-Hirakumi-Settlement to buy it direct." });
+        return;
+      }
       if (escrowMode(d)) {
         const keys = buyerKeys((n) => req.header(n));
         if (typeof keys === "string") { res.status(400).json({ error: keys, message: KEY_ERRORS[keys] }); return; }
@@ -273,6 +282,7 @@ export function packRouter(d: AppDeps): Router {
         // No escrow headers: a plain x402 buyer, settled direct. Any escrow header: both must be valid.
         const keys = hybridBuyerKeys((n) => req.header(n));
         if (typeof keys === "string") { res.status(400).json({ error: keys, message: KEY_ERRORS[keys] }); return; }
+        if (preference === "escrow" && keys === null) { res.status(400).json({ error: "receipt_key_required", message: KEY_ERRORS.receipt_key_required }); return; }
         res.locals.buyerKeys = keys;
       }
       res.locals.loaded = loaded;

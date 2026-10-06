@@ -16,6 +16,8 @@ export type SettlementInput = {
   listingAgeDays: number;
   /** The buyer sent a receipt key and a refund address. Without both, escrow is impossible. */
   buyerCanEscrow: boolean;
+  /** The buyer sent `x-hirakumi-settlement: escrow`: escrow whatever else is true. */
+  buyerWantsEscrow?: boolean;
 };
 
 /**
@@ -25,6 +27,7 @@ export type SettlementInput = {
 export function chooseSettlement(i: SettlementInput, p: SettlementPolicy = DEFAULT_SETTLEMENT_POLICY): Settlement {
   if (!i.buyerCanEscrow) return { mode: "direct", reasons: ["buyer sent no receipt key"] };
   const reasons: string[] = [];
+  if (i.buyerWantsEscrow) reasons.push("buyer asked for escrow");
   if (i.priceMicros >= p.escrowFromMicros) reasons.push("large pack");
   if (i.sellerUptime7d * 100 < p.minUptimePct) reasons.push(`uptime below ${p.minUptimePct}%`);
   if (i.listingAgeDays < p.minListingDays) reasons.push("new seller");

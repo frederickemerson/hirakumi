@@ -46,6 +46,13 @@ export function hybridBuyerKeys(header: (name: string) => string | undefined): R
   return buyerKeys(header);
 }
 
+/** `x-hirakumi-settlement`: blank means no preference, "escrow" means the buyer demands escrow. */
+export function settlementPreference(header: (name: string) => string | undefined): "escrow" | null | "bad_settlement" {
+  const v = header("x-hirakumi-settlement")?.trim().toLowerCase() ?? "";
+  if (!v) return null;
+  return v === "escrow" ? "escrow" : "bad_settlement";
+}
+
 export const quoteKey = (apiId: string, packId: string, b: BuyerKeys) =>
   sha256Hex(`${apiId}|${packId}|${b.receiptKey}|${b.refundAddress}`);
 

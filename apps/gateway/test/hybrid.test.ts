@@ -438,3 +438,70 @@ describe("GET /internal/apis/:apiId/settlement (the public API page)", () => {
     expect((await request(app).get(`/internal/apis/${h.seeded.apiId}/settlement`)).status).toBe(401);
   });
 });
+
+describe("buyer asks for escrow (x-hirakumi-settlement: escrow)", () => {
+  const ask = (r: request.Test) => r.set("x-hirakumi-settlement", "escrow");
+
+  async function offerAsking(k: Keys = keysOf()) {
+    const unpaid = await ask(withKeys(request(app).post(packPath()), k));
+    expect(unpaid.status).toBe(402);
+    const required = decodePaymentRequiredHeader(String(unpaid.headers["payment-required"]));
+    return { unpaid, required, accepted: required.accepts[0]! };
+  }
+
+  it("a small pack from a proven seller still settles in escrow, that reason first", async () => {
+    await setup();
+    const o = await offerAsking();
+    expect(o.accepted.payTo).toBe(PACK_ESCROW.address);
+    expect(settlementOf(o.accepted)).toEqual({ mode: "escrow", reasons: ["buyer asked for escrow"] });
+    const datum = (o.accepted.extra as { datum: string }).datum;
+    const tx = `tx-${Math.random()}`;
+    chain.putLock(fakeTxHash(tx)!, datum, { tokens: BigInt(o.accepted.amount) });
+    const header = encodePaymentSignatureHeader({ x402Version: o.required.x402Version, resource: o.required.resource as never, accepted: o.accepted, payload: { transaction: tx, nonce: "n" } });
+    const res = await ask(withKeys(request(app).post(packPath()).set("PAYMENT-SIGNATURE", header).set("x-hirakumi-recovery", sha256Hex(SECRET)), keysOf()));
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ mode: "escrow", channelId: expect.any(String) });
+  });
+
+  it("the same buyer without the header gets the policy's own answer, stored separately", async () => {
+    await setup();
+    expect(settlementOf((await offer()).accepted)).toMatchObject({ mode: "direct" });
+    expect(settlementOf((await offerAsking()).accepted)).toMatchObject({ mode: "escrow" });
+    expect(settlementOf((await offer()).accepted)).toMatchObject({ mode: "direct" });
+  });
+
+  it("dropping the header between the escrow 402 and the payment: refused, nothing settled", async () => {
+    await setup();
+    const o = await offerAsking();
+    const { res } = await pay(o);
+    expect(res.status).toBe(402);
+    expect(h.facilitator.verifyCalls + h.facilitator.settleCalls).toBe(0);
+    expect(await tokenCount()).toBe(0);
+  });
+
+  it("asking without receipt key and refund address: 400, no decision", async () => {
+    await setup();
+    const res = await ask(request(app).post(packPath()));
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("receipt_key_required");
+    expect(await h.sql`select 1 from settlement_decisions`).toHaveLength(0);
+  });
+
+  it("an unknown settlement value: 400", async () => {
+    await setup();
+    const res = await withKeys(request(app).post(packPath()).set("x-hirakumi-settlement", "trust-me"), keysOf());
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("bad_settlement");
+  });
+
+  it("escrow asked where this gateway can't escrow: 503 escrow_unavailable, never a direct offer", async () => {
+    for (const o of [{ config: { packEscrow: null } }, { chain: false }, { price: 1_000_001 }, { config: { packMode: "direct" as const } }]) {
+      await setup(o);
+      const res = await ask(withKeys(request(app).post(packPath()), keysOf()));
+      expect(res.status).toBe(503);
+      expect(res.body.error).toBe("escrow_unavailable");
+      await h.close();
+    }
+    await setup();
+  });
+});
