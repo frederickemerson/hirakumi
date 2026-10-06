@@ -151,6 +151,31 @@ describe("DELETE /api/apis/:apiId", () => {
     expect(seller_msgs.n).toBe(1);
   });
 
+  it("leaves one final message for the API's Sokosumi task, so the task is closed instead of stranded (audit M2)", async () => {
+    const seller = await seedSeller();
+    const api = await seedApi(seller.id, "parsed");
+    const sql = getSql();
+    await sql`update apis set sokosumi_task_id = 'task_42' where id = ${api.id}`;
+    await sql`insert into messages (seller_id, api_id, task_id, author, body, task_status, dedupe_key)
+              values (${seller.id}, ${api.id}, 'task_42', 'coworker', 'Writing descriptions', 'RUNNING', ${`parsed:${api.id}`})`;
+
+    expect((await DELETE(del(api.id, { cookie: cookieFor(seller) }), ctx(api.id))).status).toBe(200);
+    const rows = await sql<{ apiId: string | null; sellerId: string; taskId: string; author: string; body: string; taskStatus: string; deliveredAt: Date | null }[]>`
+      select api_id, seller_id, task_id, author, body, task_status, delivered_at from messages where task_id = 'task_42'`;
+    expect(rows).toEqual([{
+      apiId: null, sellerId: seller.id, taskId: "task_42", author: "coworker",
+      body: "You deleted this API. Nothing was published.", taskStatus: "FAILED", deliveredAt: null,
+    }]);
+  });
+
+  it("adds no task message for an API that has no Sokosumi task", async () => {
+    const seller = await seedSeller();
+    const api = await seedApi(seller.id, "parsed");
+    expect((await DELETE(del(api.id, { cookie: cookieFor(seller) }), ctx(api.id))).status).toBe(200);
+    const [n] = await getSql()<{ n: number }[]>`select count(*)::int as n from messages`;
+    expect(n.n).toBe(0);
+  });
+
   it("answers 404 the second time", async () => {
     const seller = await seedSeller();
     const api = await seedApi(seller.id, "intake");

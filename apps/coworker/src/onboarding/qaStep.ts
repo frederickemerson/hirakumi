@@ -76,6 +76,7 @@ export async function qaStep(deps: QaDeps, apiId: string): Promise<StepOutcome> 
     );
     if (!ops.length) throw new PermanentError("No endpoints are switched on, so there is nothing to test. Turn on at least one endpoint.");
     const { rows: [api] } = await deps.pool.query<{ name: string; sokosumi_task_id: string | null }>(`select name, sokosumi_task_id from apis where id = $1`, [apiId]);
+    if (!api) throw new PermanentError(`API ${apiId} no longer exists.`); // runStep sees it is gone and stops quietly
     if (api.sokosumi_task_id) {
       await enqueueMessage(deps.pool, {
         apiId,

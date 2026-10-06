@@ -54,4 +54,26 @@ describe("runStep", () => {
     expect(outcome).toBe("failed");
     expect((await messagesFor(db.pool, apiId))[0].body).toBe('I had to stop at "reading your OpenAPI file": This is a Swagger 2.0 file.');
   });
+
+  it("bails out cleanly when the API was deleted before the step starts (audit M2)", async () => {
+    const body = vi.fn();
+    expect(await runStep(db.pool, "api_deleted", "qa", body)).toBe("gone");
+    expect(body).not.toHaveBeenCalled();
+    const { rows } = await db.pool.query(`select 1 from onboard_steps where api_id = 'api_deleted'`);
+    expect(rows).toEqual([]);
+  });
+
+  it("bails out cleanly when the API is deleted while the step runs: no error, no message (audit M2)", async () => {
+    const apiId = await seedApi(db.pool, { sokosumiTaskId: "task_m2" });
+    const outcome = await runStep(db.pool, apiId, "qa", async () => {
+      // The seller deletes the API mid-step (the web's delete removes these rows in one transaction).
+      await db.pool.query(`delete from onboard_steps where api_id = $1`, [apiId]);
+      await db.pool.query(`delete from apis where id = $1`, [apiId]);
+      const { rows: [api] } = await db.pool.query<{ name: string }>(`select name from apis where id = $1`, [apiId]);
+      api.name.trim(); // what qaStep did with the missing row: a TypeError
+    });
+    expect(outcome).toBe("gone");
+    const { rows } = await db.pool.query(`select 1 from messages where task_id = 'task_m2'`);
+    expect(rows).toEqual([]);
+  });
 });

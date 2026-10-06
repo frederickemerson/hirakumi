@@ -106,7 +106,13 @@ export async function failStep(
   return rows[0]?.status === "failed" ? "failed" : "retry";
 }
 
-export type StepOutcome = "skipped" | "ran" | "retry" | "failed";
+/** gone: the seller deleted the API, so there is nothing left to do (the web already told the task). */
+export type StepOutcome = "skipped" | "ran" | "retry" | "failed" | "gone";
+
+async function apiExists(db: Db, apiId: string): Promise<boolean> {
+  const { rows } = await db.query(`select 1 from apis where id = $1`, [apiId]);
+  return rows.length > 0;
+}
 
 /**
  * Runs one attempt of an onboarding step. The body must make its own writes idempotent and commit
@@ -120,13 +126,21 @@ export async function runStep(
   body: (previous: StepRow | null) => Promise<void>,
   now: Date = new Date(),
 ): Promise<StepOutcome> {
+  if (!(await apiExists(pool, apiId))) return "gone";
   const previous = await getStep(pool, apiId, step);
   if (!isDue(previous, now)) return "skipped";
-  await startStep(pool, apiId, step);
+  try {
+    await startStep(pool, apiId, step);
+  } catch (e) {
+    if (!(await apiExists(pool, apiId))) return "gone"; // deleted in between: the step row's foreign key refused
+    throw e;
+  }
   try {
     await body(previous);
     return "ran";
   } catch (e) {
+    // Deleted mid-step: whatever failed was a missing row, not the seller's problem. Stop quietly.
+    if (!(await apiExists(pool, apiId))) return "gone";
     const permanent = e instanceof PermanentError;
     const reason = (e instanceof Error ? e.message : String(e)).slice(0, 500);
     return withTx(pool, async (c) => {

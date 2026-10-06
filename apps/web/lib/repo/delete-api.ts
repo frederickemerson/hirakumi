@@ -39,6 +39,9 @@ export const API_DELETE_ORDER: { table: string; run: (tx: Tx, apiId: string) => 
   { table: "health_events", run: (tx, id) => tx`delete from health_events where api_id = ${id}` },
 ];
 
+/** The last word on a Sokosumi task whose API the seller deleted before publishing. */
+export const DELETED_TASK_MESSAGE = "You deleted this API. Nothing was published.";
+
 export type DeleteApiResult = { ok: true; name: string } | { ok: false; status: 404 | 409; error: string };
 
 /**
@@ -47,8 +50,8 @@ export type DeleteApiResult = { ok: true; name: string } | { ok: false; status: 
  */
 export async function deleteUnfinishedApi(sql: Sql, a: { apiId: string; sellerId: string }): Promise<DeleteApiResult> {
   return sql.begin(async (tx): Promise<DeleteApiResult> => {
-    const [api] = await tx<{ name: string; state: ApiState; agentIdentifier: string | null }[]>`
-      select name, state, agent_identifier from apis where id = ${a.apiId} and seller_id = ${a.sellerId} for update`;
+    const [api] = await tx<{ name: string; state: ApiState; agentIdentifier: string | null; sokosumiTaskId: string | null }[]>`
+      select name, state, agent_identifier, sokosumi_task_id from apis where id = ${a.apiId} and seller_id = ${a.sellerId} for update`;
     if (!api) return { ok: false, status: 404, error: "We couldn't find that API in your account." };
     const [facts] = await tx<{ registerStarted: boolean; sold: boolean }[]>`
       select ${registerStartedSql(tx, a.apiId)} as register_started, ${soldSql(tx, a.apiId)} as sold`;
@@ -56,6 +59,14 @@ export async function deleteUnfinishedApi(sql: Sql, a: { apiId: string; sellerId
     if (blocker) return { ok: false, status: 409, error: blocker };
     for (const step of API_DELETE_ORDER) await step.run(tx, a.apiId);
     await tx`delete from apis where id = ${a.apiId}`;
+    if (api.sokosumiTaskId) {
+      // The coworker's outbox posts this to the task and closes it, so the seller isn't left waiting on it.
+      // api_id is null: the API is gone, and the outbox needs only the task id.
+      await tx`
+        insert into messages (api_id, seller_id, task_id, author, body, task_status, dedupe_key)
+        values (null, ${a.sellerId}, ${api.sokosumiTaskId}, 'coworker', ${DELETED_TASK_MESSAGE}, 'FAILED', ${`deleted:${a.apiId}`})
+        on conflict (dedupe_key) do nothing`;
+    }
     return { ok: true, name: api.name };
   });
 }
