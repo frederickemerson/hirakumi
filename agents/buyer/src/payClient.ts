@@ -41,6 +41,23 @@ export class PackPurchaseError extends Error {
   }
 }
 
+/** The escrow purchase failed before any payment was signed: nothing can land on-chain. */
+export class PaymentNotSentError extends Error {
+  constructor(cause: unknown) {
+    super(`Pack purchase failed before any payment was signed: ${(cause as Error)?.message ?? String(cause)}`, { cause });
+  }
+}
+
+/** Direct packs: pay only the exact amount of the pack we chose, in tUSDM, as a plain transfer. */
+export function directPackCheck(expected: { amount: bigint }): OfferCheck {
+  return (req) => {
+    if (req.scheme !== "exact" || req.network !== "cardano:preprod") throw new Error(`refusing to pay: unexpected scheme/network ${req.scheme} ${req.network}`);
+    if (req.asset !== USDM_PREPROD_ASSET) throw new Error(`refusing to pay: asset ${req.asset} is not tUSDM`);
+    if (req.amount !== expected.amount.toString()) throw new Error(`refusing to pay: amount ${req.amount} is not the chosen pack's price ${expected.amount}`);
+    if (req.extra?.assetTransferMethod === "script") throw new Error("refusing to pay: a direct pack must not lock funds at a script");
+  };
+}
+
 export function createPackPayer(cfg: { mnemonic: string; blockfrostProjectId: string; blockfrostBaseUrl: string; maxPackMicros: bigint }) {
   const client = new x402Client().setSpendControls(spendControlsFor(cfg.maxPackMicros));
   const signer = toClientCardanoSigner({
@@ -51,7 +68,7 @@ export function createPackPayer(cfg: { mnemonic: string; blockfrostProjectId: st
   const address = signer.getAddress();
   if (!address.startsWith("addr_test1")) throw new Error(`Buyer wallet ${address} is not a preprod address`);
   client.register("cardano:*", new ExactCardanoScheme(signer));
-  // Escrow purchases install a check here: it sees the exact requirements before anything is signed.
+  // Every purchase installs a check here: it sees the exact requirements before anything is signed.
   let offerCheck: OfferCheck | null = null;
   client.onBeforePaymentCreation(async ({ selectedRequirements }) => {
     if (!offerCheck) return;
@@ -66,7 +83,8 @@ export function createPackPayer(cfg: { mnemonic: string; blockfrostProjectId: st
   client.onAfterPaymentCreation(async ({ paymentPayload }) => {
     lastSignature = encodePaymentSignatureHeader(paymentPayload);
   });
-  const payFetch = wrapFetchWithPayment(fetch, client);
+  // Look the global fetch up per request (not once at creation), so a replaced/instrumented fetch is honoured.
+  const payFetch = wrapFetchWithPayment((input, init) => globalThis.fetch(input, init), client);
   const http = new x402HTTPClient(client);
   const serial = new SerialPayer();
 
@@ -103,37 +121,47 @@ export function createPackPayer(cfg: { mnemonic: string; blockfrostProjectId: st
             token: body.token, credits: body.credits, apiId: body.apiId, txHash, channelId: body.channelId,
             channelUrl: typeof body.channelUrl === "string" ? body.channelUrl : null,
           };
+        } catch (e) {
+          // Nothing was signed, so nothing can land on-chain: the caller may forget the channel.
+          if (lastSignature === null) throw new PaymentNotSentError(e);
+          throw e;
         } finally {
           offerCheck = null;
         }
       });
     },
-    buyPack(buyUrl: string): Promise<PackPurchase> {
+    /** Direct pack: pays only `expected.amount` (the chosen pack's price), never just "anything under the cap". */
+    buyPack(buyUrl: string, expected: { amount: bigint }): Promise<PackPurchase> {
       return serial.run(async () => {
         lastSignature = null;
-        // Only its hash travels with the payment; the secret stays here until a recovery needs it.
-        const recoverySecret = randomBytes(32).toString("base64url");
-        const res = await payFetch(buyUrl, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json", accept: "application/json",
-            "x-hirakumi-recovery": createHash("sha256").update(recoverySecret).digest("hex"),
-          },
-          body: "{}",
-        });
-        const text = await res.text();
-        if (!res.ok) throw new PackPurchaseError(res.status, text, lastSignature, recoverySecret);
-        const body = JSON.parse(text) as { token?: unknown; credits?: unknown; apiId?: unknown };
-        if (typeof body.token !== "string" || typeof body.credits !== "number" || typeof body.apiId !== "string") {
-          throw new PackPurchaseError(res.status, text);
-        }
-        let txHash: string | null = null;
+        offerCheck = directPackCheck(expected);
         try {
-          txHash = http.getPaymentSettleResponse((name) => res.headers.get(name))?.transaction ?? null;
-        } catch {
-          txHash = null;
+          // Only its hash travels with the payment; the secret stays here until a recovery needs it.
+          const recoverySecret = randomBytes(32).toString("base64url");
+          const res = await payFetch(buyUrl, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json", accept: "application/json",
+              "x-hirakumi-recovery": createHash("sha256").update(recoverySecret).digest("hex"),
+            },
+            body: "{}",
+          });
+          const text = await res.text();
+          if (!res.ok) throw new PackPurchaseError(res.status, text, lastSignature, recoverySecret);
+          const body = JSON.parse(text) as { token?: unknown; credits?: unknown; apiId?: unknown };
+          if (typeof body.token !== "string" || typeof body.credits !== "number" || typeof body.apiId !== "string") {
+            throw new PackPurchaseError(res.status, text);
+          }
+          let txHash: string | null = null;
+          try {
+            txHash = http.getPaymentSettleResponse((name) => res.headers.get(name))?.transaction ?? null;
+          } catch {
+            txHash = null;
+          }
+          return { token: body.token, credits: body.credits, apiId: body.apiId, txHash };
+        } finally {
+          offerCheck = null;
         }
-        return { token: body.token, credits: body.credits, apiId: body.apiId, txHash };
       });
     },
   };

@@ -1,14 +1,14 @@
 // Escrow packs, buyer side: check the 402 datum before paying, keep the IOU key, re-check every passing
 // answer against the published promise locally, and sign an IOU only for passes we verified ourselves.
-import { readFileSync, writeFileSync, mkdirSync, renameSync, chmodSync } from "node:fs";
-import { dirname } from "node:path";
+import { readFileSync } from "node:fs";
 import { USDM_PREPROD_ASSET } from "@x402/cardano";
 import { compileRule, type RuleDefinition } from "@hirakumi/core";
 import {
-  MAX_CLOSE_FEE_BUDGET, MAX_CONTEST_PERIOD_MS, MIN_CONTEST_PERIOD_MS, PACK_ESCROW, decodePackDatum, newReceiptKey, signReceipt,
-  validateDatumForLock, type PackDatum,
+  MAX_CLOSE_FEE_BUDGET, MAX_CONTEST_PERIOD_MS, MIN_CONTEST_PERIOD_MS, PACK_ESCROW, decodePackDatum, encodePackDatum, newReceiptKey,
+  signCloseRequest, signReceipt, validateDatumForLock, type PackDatum,
 } from "@hirakumi/escrow";
 import { safeJson, type FetchLike } from "./gatewayClient.js";
+import { writePrivateJson } from "./tokenStore.js";
 
 export const MAX_FEE_BPS = 1000n;
 
@@ -19,12 +19,17 @@ export type Requirement = { scheme: string; network: string; asset: string; amou
 
 export type OfferLimits = { receiptKey: string; refundAddress: string; maxPackMicros: bigint; maxFeeBps?: bigint; maxContestMs?: bigint };
 
+/** The pack the buyer chose: calls and price from the listing, the promise ("sha256:…") from the 402 offer. */
+export type ExpectedPack = { calls: number; priceMicros: bigint; ruleHash: string };
+
 /**
  * Refuses to pay unless the lock would be exactly what we expect: the known escrow script and address, our
  * IOU key and refund address in the datum, price = per-call × calls = amount, a sane fee, contest period
  * and close-fee budget. A malicious gateway can't redirect the refund or change the terms.
+ * With `expect` (the pack the buyer chose from the listing), the lock must also be exactly that pack: same
+ * number of calls, same price, and the same promise (rule hash) the buyer will check answers against.
  */
-export function checkEscrowOffer(req: Requirement, lim: OfferLimits): PackDatum {
+export function checkEscrowOffer(req: Requirement, lim: OfferLimits, expect?: ExpectedPack): PackDatum {
   const fail = (m: string): never => { throw new EscrowOfferError(`refusing to pay: ${m}`); };
   if (req.scheme !== "exact" || req.network !== "cardano:preprod") fail(`unexpected scheme/network ${req.scheme} ${req.network}`);
   if (req.asset !== USDM_PREPROD_ASSET) fail(`asset ${req.asset} is not tUSDM`);
@@ -36,6 +41,8 @@ export function checkEscrowOffer(req: Requirement, lim: OfferLimits): PackDatum 
   if (typeof extra.datum !== "string") fail("no inline datum");
   let d: PackDatum;
   try { d = decodePackDatum(extra.datum as string); } catch (e) { return fail(`datum does not decode: ${(e as Error).message}`); }
+  // The bytes that go on-chain must be exactly the datum we validated (no alternative CBOR encodings).
+  if (encodePackDatum(d) !== extra.datum) fail("datum is not canonically encoded");
   if (d.receiptKey !== lim.receiptKey.toLowerCase()) fail("the datum's receipt key is not ours");
   if (d.buyerRefund !== lim.refundAddress) fail(`the datum refunds ${d.buyerRefund}, not our address`);
   if (`${d.policyId}.${d.assetName}` !== USDM_PREPROD_ASSET) fail("the datum's asset is not the paid asset");
@@ -43,6 +50,11 @@ export function checkEscrowOffer(req: Requirement, lim: OfferLimits): PackDatum 
   const amount = BigInt(req.amount);
   if (amount > lim.maxPackMicros) fail(`price ${amount} is above our cap ${lim.maxPackMicros}`);
   if (d.pricePerCall * d.maxCalls !== amount) fail(`price per call × calls (${d.pricePerCall} × ${d.maxCalls}) is not the amount ${amount}`);
+  if (expect) {
+    if (d.maxCalls !== BigInt(expect.calls)) fail(`the lock is for ${d.maxCalls} calls, not the ${expect.calls} calls of the chosen pack`);
+    if (amount !== expect.priceMicros) fail(`the lock asks ${amount}, not the chosen pack's price ${expect.priceMicros}`);
+    if (`sha256:${d.ruleHash}` !== expect.ruleHash) fail(`the datum's promise sha256:${d.ruleHash} is not the offered promise ${expect.ruleHash}`);
+  }
   if (d.feeBps > (lim.maxFeeBps ?? MAX_FEE_BPS)) fail(`fee ${d.feeBps} bps is above ${lim.maxFeeBps ?? MAX_FEE_BPS}`);
   if (d.contestPeriod < MIN_CONTEST_PERIOD_MS || d.contestPeriod > (lim.maxContestMs ?? MAX_CONTEST_PERIOD_MS)) fail(`contest period ${d.contestPeriod} ms is out of range`);
   if (d.closeFeeBudget > MAX_CLOSE_FEE_BUDGET) fail(`close fee budget ${d.closeFeeBudget} is above ${MAX_CLOSE_FEE_BUDGET}`);
@@ -62,9 +74,22 @@ export type EscrowChannel = {
   lastIou: string | null;
   disputed: boolean;
   createdAt: string;
+  /**
+   * A signed lock payment whose purchase answer we never got (e.g. HTTP 500 after settling). Presenting it to
+   * `${buyUrl}/recover` with the recovery secret re-issues the token.
+   */
+  pendingPayment?: { paymentSignature: string; recoverySecret: string; buyUrl: string; at: string } | null;
+  /** The gateway says it never opened this channel: nothing more to do through it. */
+  abandoned?: boolean;
+  /** The gateway accepted a close for this channel (it now settles on-chain): it no longer blocks a new purchase. */
+  closeRequested?: boolean;
 };
 
-/** IOU secret keys live here: one JSON file, mode 0600, keyed by `${apiId}/${packId}` (git-ignored). */
+/**
+ * IOU secret keys live here: one JSON file, mode 0600 (git-ignored). The current key for a pack is at
+ * `${apiId}/${packId}`; once that key is bound to a channel and a new pack is bought, the old record moves to
+ * `${apiId}/${packId}#${channelId}` and is kept (it may still need closing).
+ */
 export class IouKeyStore {
   constructor(private readonly path: string) {}
   private all(): Record<string, EscrowChannel> {
@@ -73,28 +98,37 @@ export class IouKeyStore {
       throw e;
     }
   }
-  private write(all: Record<string, EscrowChannel>) {
-    mkdirSync(dirname(this.path), { recursive: true });
-    const tmp = `${this.path}.tmp`;
-    writeFileSync(tmp, JSON.stringify(all, null, 2), { mode: 0o600 });
-    chmodSync(tmp, 0o600);
-    renameSync(tmp, this.path);
+  private write(all: Record<string, EscrowChannel>) { writePrivateJson(this.path, all); }
+  /** Where this record lives: the slot holding the same IOU key, else the pack's current slot. */
+  private keyOf(all: Record<string, EscrowChannel>, c: EscrowChannel): string {
+    const slot = `${c.apiId}/${c.packId}`;
+    if (all[slot]?.publicKey === c.publicKey) return slot;
+    return Object.keys(all).find((k) => all[k]!.apiId === c.apiId && all[k]!.publicKey === c.publicKey) ?? slot;
   }
   get(apiId: string, packId: string): EscrowChannel | undefined { return this.all()[`${apiId}/${packId}`]; }
+  /** Every record for this API, archived ones included. */
   list(apiId: string): EscrowChannel[] { return Object.values(this.all()).filter((c) => c.apiId === apiId); }
-  put(c: EscrowChannel): void { const a = this.all(); a[`${c.apiId}/${c.packId}`] = c; this.write(a); }
+  put(c: EscrowChannel): void { const a = this.all(); a[this.keyOf(a, c)] = c; this.write(a); }
   delete(apiId: string, packId: string): void { const a = this.all(); delete a[`${apiId}/${packId}`]; this.write(a); }
 
-  /** The channel for this pack, creating a fresh IOU key if we have none (or the old one was used up). */
+  /**
+   * An unused IOU key for buying this pack. The stored key is reused only while it was never bound to a
+   * channel; otherwise its record is archived (never overwritten: it may still need closing) and a fresh key
+   * takes the pack's slot.
+   */
   ensure(apiId: string, packId: string, refundAddress: string, now: Date): EscrowChannel {
-    const have = this.get(apiId, packId);
-    if (have && have.refundAddress === refundAddress) return have;
+    const a = this.all();
+    const slot = `${apiId}/${packId}`;
+    const have = a[slot];
+    if (have && have.refundAddress === refundAddress && !have.channelId && !have.token && !have.disputed) return have;
+    if (have?.channelId) a[`${slot}#${have.channelId}`] = have;
     const k = newReceiptKey();
     const c: EscrowChannel = {
       apiId, packId, channelId: null, secretKey: k.secretKey, publicKey: k.publicKey, refundAddress, token: null, ruleHash: null,
       verifiedPasses: 0, lastSigned: 0, lastIou: null, disputed: false, createdAt: now.toISOString(),
     };
-    this.put(c);
+    a[slot] = c;
+    this.write(a);
     return c;
   }
 }
@@ -168,11 +202,17 @@ export async function escrowCall(
   return { kind: "rejected", status: res.status, body };
 }
 
-/** Asks the gateway to close with our latest IOU. */
+/**
+ * Asks the gateway to close with our latest IOU. With a token it authenticates with the bearer; without one
+ * (e.g. the purchase answer was lost) it proves the channel is ours with a close-request signature by the
+ * channel's IOU key (`x-hirakumi-close-auth`, "HKC1" ‖ channel id: never valid as an on-chain IOU).
+ */
 export async function requestEscrowClose(fetchImpl: FetchLike, gatewayUrl: string, c: EscrowChannel): Promise<{ status: number; body: unknown }> {
-  if (!c.channelId || !c.token) throw new Error("this pack has no channel yet");
+  if (!c.channelId) throw new Error("this pack has no channel yet");
   const url = new URL(`/a/${encodeURIComponent(c.apiId)}/channels/${c.channelId}/close`, gatewayUrl).toString();
-  const headers: Record<string, string> = { authorization: `Bearer ${c.token}`, accept: "application/json" };
+  const headers: Record<string, string> = { accept: "application/json" };
+  if (c.token) headers.authorization = `Bearer ${c.token}`;
+  else headers["x-hirakumi-close-auth"] = signCloseRequest(c.secretKey, c.channelId);
   if (c.lastIou) headers["x-hirakumi-iou"] = c.lastIou;
   const res = await fetchImpl(url, { method: "POST", headers });
   return { status: res.status, body: safeJson(await res.text()) };
