@@ -32,7 +32,7 @@ async function seedUnfinished(sellerId: string) {
     insert into pack_quotes (quote_key, channel_id, api_id, pack_id, receipt_key, refund_address, seller_address, fee_address,
       fee_bps, price_micros, price_per_call_micros, max_calls, unsigned_allowance, contest_period_ms, close_fee_budget_lovelace,
       datum_cbor, expires_at)
-    values (${newId("q")}, ${randomBytes(32).toString("hex")}, ${api.id}, ${pack.id}, 'rk', 'addr_test1r', 'addr_test1s', 'addr_test1f',
+    values (${randomBytes(32).toString("hex")},${randomBytes(32).toString("hex")}, ${api.id}, ${pack.id}, 'rk', 'addr_test1r', 'addr_test1s', 'addr_test1f',
       500, 2000000, 20000, 100, 1, 60000, 2000000, 'd8', now() + interval '1 hour')`;
   await sql`
     insert into calls (id, kind, api_id, op_id, rule_id, execution, verdict)
