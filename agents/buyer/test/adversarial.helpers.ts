@@ -90,7 +90,8 @@ export function maliciousEscrowGateway(o: {
     const p = o.purchase?.(req);
     if (p instanceof Error) throw p;
     state.paid++;
-    return { token: "hk_tok", credits: 100, apiId: "api_demo", txHash: "aa".repeat(32), channelId: CHANNEL, channelUrl: null, ...p };
+    const escrow = req.payTo === PACK_ESCROW.address;
+    return { token: "hk_tok", credits: 100, apiId: "api_demo", txHash: "aa".repeat(32), mode: escrow ? "escrow" : "direct", channelId: escrow ? CHANNEL : null, channelUrl: null, ...p };
   };
   return { fetch, buyEscrowPack, state };
 }
