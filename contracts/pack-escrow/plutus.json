@@ -1,0 +1,350 @@
+{
+  "preamble": {
+    "title": "hirakumi/pack-escrow",
+    "description": "Hirakumi pack escrow: buyer-signed IOUs, Close / Raise / Settle",
+    "version": "0.1.0",
+    "plutusVersion": "v3",
+    "compiler": {
+      "name": "Aiken",
+      "version": "v1.1.24+bacbeb3"
+    },
+    "license": "MIT"
+  },
+  "validators": [
+    {
+      "title": "pack_escrow.pack_escrow.spend",
+      "datum": {
+        "title": "datum",
+        "schema": {
+          "$ref": "#/definitions/hirakumi~1types~1PackDatum"
+        }
+      },
+      "redeemer": {
+        "title": "redeemer",
+        "schema": {
+          "$ref": "#/definitions/hirakumi~1types~1PackRedeemer"
+        }
+      },
+      "compiledCode": "590c1f01010029800aba2aba1aba0aab9faab9eaab9dab9a488888896600264653001300800198041804800cdc3a400530080024888966002600460106ea800e2653001300d00198069807000cdc3a400091119912cc004c00c006264646644b300130170038034590141bae3014001375a60280046028002601e6ea802a2b300130080018991919912cc004c05c00e00d1640506eb8c050004dd6980a001180a00098079baa00a8acc004cdc3a400800315980098079baa00a80145901045900d201a40342b30013001300c3754005198009180898091809000c8c044c048006444b30013371000600510028acc004cdc4000801c40062006807100e4dd2a4001222329800800c01200680088896600200510018cc00400e602e005330043016002001400c80a244646600200200644b30010018a508acc004cdc79bae30140010038a51899801001180a800a01e4049222298008024cdc519b8a488104484b5231000039800a51a40210025e4a002b9548c8cc004004008896600200314bd6f7b63044ca60026eb8c0400066eacc044006602a0049112cc004cdc8a441000038acc004cdc7a441000038800c401501244cc058cdd81ba9003374c0046600c00c00280906026002808a46022602460246024602400323011301230123012301230120019180898091809180918091809180918091809180918091809180918091809000c8c044c048c048c048c048c048c048006460226024602460240032301130123012301230123012301230120019180898091809180918091809180918091809000cc040c034dd50012444444444444444464646644b3001301530203754003132332259800980e99198008009bac30283025375403a44b30010018a4001133225980099baf302b30283754605660506ea8c068c0a0dd5001181598141baa006899b804800800620028130c0a4004cc008008c0a800502744cc896600260340031323259800980e18139baa30113028375401913259800981118141baa0018acc0056600264b3001301e302937540031330183758601e60546ea8088dd7181698151baa0018a5040a0605860526ea8c070c0a4dd5006c528c4cc05cdd6180718149baa021375c6058605a605a605a605a605a605a605a605a605a605a605a60526ea80350274566002b3001301d0028a518acc004cdc42400000515980099b89002375a601e60526ea80362b30013371266e08008dd6980898149baa00d0058cc004dd7180d98149baa00d9bae302c3029375401b0029bae302c302d003405914a0813a29410274528204e409d198009bac301c302937540430078034c8c8c8c8c8c8c8c8c8c8c8c8c8c098cc0e0c0e4034cc0e0c0e4030cc0e0c0e402ccc0e0c0e4028cc0e0c0e4024cc0e0c0e4020cc0e0c0e401ccc0e0c0e4018cc0e0c0e4014cc0e0c0e4010cc0e0c0e400ccc0e0c0e4008cc0e0c0e4004cc0e0c0e4c0e8004cc0e0cdd2a4004660706ea003ccc0e0dd419b80375a6072606c6ea8038dd6981c981d181d181d181d181d181d181d181d181d181d181d181d181b1baa01a4bd7025eb80c0e4004c0e0004c0dc004c0d8004c0d4004c0d0004c0cc004c0c8004c0c4004c0c0004c0bc004c0b8004c0a4dd5006a0148a50409d14a0813a2c8138c0acc0a0dd5180d18141baa300e302837540411640986eb4c0a8004c098dd5010c566002603e003132332259800981118141baa001899192cc004cdc41bad302e0020048acc004cdc48021bad3011302b375401f15980099b89337040086eb4c04cc0acdd5007803c5660033001375c603a60566ea803e6eb8c0b8c0acdd5007c0126eb8c0b8c0bc01501845660026464b30013026302c375400313259800981398169baa3020302e37546040605c6ea800e266e20004012266e2400401102c1bad3030302d375400314a08158c0bcc0b0dd5180f18161baa0013011302b3754047198009bac301e302b37540470098044c8c8c8c8c8c8c8c8c8c8c8c8c8c0a0cc0e8c0ec034cc0e8c0ec030cc0e8c0ec02ccc0e8c0ec028cc0e8c0ec024cc0e8c0ec020cc0e8c0ec01ccc0e8c0ec018cc0e8c0ec014cc0e8c0ec010cc0e8c0ec00ccc0e8c0ec008cc0e8c0ec004cc0e8c0ecc0f0004cc0e8cdd2a4004660746ea0044cc0e8dd400725eb812f5c06076002607400260720026070002606e002606c002606a0026068002606600260640026062002606000260566ea803d00c452820528a5040a514a0814a294102945282052375a605a605c00260526ea80062c8138dd69815000980818139baa00b3026375404313259800981018131baa0018991919912cc004c8cc8966002604e605a6ea800a264b30013028302e37546042605e6ea8c0c8c0bcdd500244cdc4001000c4cdc4801000a05a375a6062605c6ea800a294102c181798161baa302f302c37540026eb4c0bcc0c0014c044c0acdd5011c56600266e24dd6980918159baa023375a605c605e605e605e605e605e605e605e605e605e605e605e605e605e60566ea803e2646600200330013302e301c3302e3013302c37540206605c605e0086605c9810100004bd7019817180e19817181798181818181818181818181818181818181818161baa0103302e302f0033302e4c10100004bd7019817180e19817180f98161baa0103302e302f30300033302e375066e04c038024dd6980998161baa0244bd7025eb8297ae0911919800800801112cc00400626606400897ae0899912cc004cdd7981a98191baa00230353032375400d133034302233034303530323754004660686ea0cdc01bad3024303237540046eb4c090c0c8dd50031981a1ba8337006eb4c094c0c8dd50011bad30253032375400c97ae000189981a00119802002000a0603033001303400140c480d8896600200314a3159800cc004c0c00066eb0c080c0b4dd5012cdd7180c18169baa0119bae3017302d375402291112cc0056600266e24dd6981198189baa00448002266e24dd6981218189baa00448002294102f4528c4c8c96600266e24dd6981298199baa006375a606c0031337126eb4c098c0ccdd50031bad303630370018a5040c53001004a5eb8410100008101000048966002b30013375e606e60686ea8008c0dcc0d0dd5003c4cdd79813981a1baa0020038a5040c9133036375066e00dd6981b800cc004dd59813181a1baa002802c0110171981b1ba8337006eb4c0dcc0e0004c058dd59813181a1baa0024bd704400503220423374a900219819803a5eb8102f2266004004606200314a0815902e452820528a5040a4605a002605860526ea8034c8c8cc0b0dd419b810020013302c3750002660586ea0cdc080300125eb80cdc199b8200198009bad302c302d302d302d302d302d302d302d302d302d302d3029375401b48002906807a034482827006600266e08dd698158009bad3010302837540194800200880c8c09cdd5000c59025180798131baa00a409081226002003375c601e60486ea80226eb8c038c090dd5004200e3023375403f164088604a60446ea8c050c088dd50009bab301430223754602860446ea8004c090c084dd5000c5901f1111192cc004c0a0006264b30013375e6050604a6ea80040162b30013375e6e98c044dd5980b98129baa001374c602200915980099b89300700430073756602e604a6ea80062b30013375e6030604a6ea8004cdd2a40086604e00697ae0899baf4c0103d87a8000300c3025375400314a0811a2941023452820468a50408c604e003164094646600200200a44b30010018a5eb8226644b30013375e6054604e6ea8c0a8c09cdd5001181518139baa00789981480119802002000c4cc01001000502518140009814800a04c32330010013758604660406ea8060896600200314c103d87a80008992cc004cdd7981298111baa0010188980919812000a5eb82266006006604c0048100c09000502214c00400691100a44100400844464b3001301a3020375400314800226eb4c090c084dd5000a03e3259800980d18101baa0018a6103d87a8000899198008009bab30253022375400444b30010018a6103d87a8000899192cc004cdc8803000c56600266e3c0180062602a6604e604a00497ae08a60103d87a8000408d1330040043029003408c6eb8c08c004c098005024203e32330010010042259800800c5300103d87a8000899192cc004cdc8803000c56600266e3c018006260286604c604800497ae08a60103d87a80004089133004004302800340886eb8c088004c09400502322c8058c030dd50040c024dd5001c590070c020004c00cdd5004452689b2b200201",
+      "hash": "1c0768e344e6df08a58bdf3912f6c8955209c6d69ec36f8f70822843"
+    },
+    {
+      "title": "pack_escrow.pack_escrow.else",
+      "redeemer": {
+        "schema": {}
+      },
+      "compiledCode": "590c1f01010029800aba2aba1aba0aab9faab9eaab9dab9a488888896600264653001300800198041804800cdc3a400530080024888966002600460106ea800e2653001300d00198069807000cdc3a400091119912cc004c00c006264646644b300130170038034590141bae3014001375a60280046028002601e6ea802a2b300130080018991919912cc004c05c00e00d1640506eb8c050004dd6980a001180a00098079baa00a8acc004cdc3a400800315980098079baa00a80145901045900d201a40342b30013001300c3754005198009180898091809000c8c044c048006444b30013371000600510028acc004cdc4000801c40062006807100e4dd2a4001222329800800c01200680088896600200510018cc00400e602e005330043016002001400c80a244646600200200644b30010018a508acc004cdc79bae30140010038a51899801001180a800a01e4049222298008024cdc519b8a488104484b5231000039800a51a40210025e4a002b9548c8cc004004008896600200314bd6f7b63044ca60026eb8c0400066eacc044006602a0049112cc004cdc8a441000038acc004cdc7a441000038800c401501244cc058cdd81ba9003374c0046600c00c00280906026002808a46022602460246024602400323011301230123012301230120019180898091809180918091809180918091809180918091809180918091809000c8c044c048c048c048c048c048c048006460226024602460240032301130123012301230123012301230120019180898091809180918091809180918091809000cc040c034dd50012444444444444444464646644b3001301530203754003132332259800980e99198008009bac30283025375403a44b30010018a4001133225980099baf302b30283754605660506ea8c068c0a0dd5001181598141baa006899b804800800620028130c0a4004cc008008c0a800502744cc896600260340031323259800980e18139baa30113028375401913259800981118141baa0018acc0056600264b3001301e302937540031330183758601e60546ea8088dd7181698151baa0018a5040a0605860526ea8c070c0a4dd5006c528c4cc05cdd6180718149baa021375c6058605a605a605a605a605a605a605a605a605a605a605a60526ea80350274566002b3001301d0028a518acc004cdc42400000515980099b89002375a601e60526ea80362b30013371266e08008dd6980898149baa00d0058cc004dd7180d98149baa00d9bae302c3029375401b0029bae302c302d003405914a0813a29410274528204e409d198009bac301c302937540430078034c8c8c8c8c8c8c8c8c8c8c8c8c8c098cc0e0c0e4034cc0e0c0e4030cc0e0c0e402ccc0e0c0e4028cc0e0c0e4024cc0e0c0e4020cc0e0c0e401ccc0e0c0e4018cc0e0c0e4014cc0e0c0e4010cc0e0c0e400ccc0e0c0e4008cc0e0c0e4004cc0e0c0e4c0e8004cc0e0cdd2a4004660706ea003ccc0e0dd419b80375a6072606c6ea8038dd6981c981d181d181d181d181d181d181d181d181d181d181d181d181b1baa01a4bd7025eb80c0e4004c0e0004c0dc004c0d8004c0d4004c0d0004c0cc004c0c8004c0c4004c0c0004c0bc004c0b8004c0a4dd5006a0148a50409d14a0813a2c8138c0acc0a0dd5180d18141baa300e302837540411640986eb4c0a8004c098dd5010c566002603e003132332259800981118141baa001899192cc004cdc41bad302e0020048acc004cdc48021bad3011302b375401f15980099b89337040086eb4c04cc0acdd5007803c5660033001375c603a60566ea803e6eb8c0b8c0acdd5007c0126eb8c0b8c0bc01501845660026464b30013026302c375400313259800981398169baa3020302e37546040605c6ea800e266e20004012266e2400401102c1bad3030302d375400314a08158c0bcc0b0dd5180f18161baa0013011302b3754047198009bac301e302b37540470098044c8c8c8c8c8c8c8c8c8c8c8c8c8c0a0cc0e8c0ec034cc0e8c0ec030cc0e8c0ec02ccc0e8c0ec028cc0e8c0ec024cc0e8c0ec020cc0e8c0ec01ccc0e8c0ec018cc0e8c0ec014cc0e8c0ec010cc0e8c0ec00ccc0e8c0ec008cc0e8c0ec004cc0e8c0ecc0f0004cc0e8cdd2a4004660746ea0044cc0e8dd400725eb812f5c06076002607400260720026070002606e002606c002606a0026068002606600260640026062002606000260566ea803d00c452820528a5040a514a0814a294102945282052375a605a605c00260526ea80062c8138dd69815000980818139baa00b3026375404313259800981018131baa0018991919912cc004c8cc8966002604e605a6ea800a264b30013028302e37546042605e6ea8c0c8c0bcdd500244cdc4001000c4cdc4801000a05a375a6062605c6ea800a294102c181798161baa302f302c37540026eb4c0bcc0c0014c044c0acdd5011c56600266e24dd6980918159baa023375a605c605e605e605e605e605e605e605e605e605e605e605e605e605e60566ea803e2646600200330013302e301c3302e3013302c37540206605c605e0086605c9810100004bd7019817180e19817181798181818181818181818181818181818181818161baa0103302e302f0033302e4c10100004bd7019817180e19817180f98161baa0103302e302f30300033302e375066e04c038024dd6980998161baa0244bd7025eb8297ae0911919800800801112cc00400626606400897ae0899912cc004cdd7981a98191baa00230353032375400d133034302233034303530323754004660686ea0cdc01bad3024303237540046eb4c090c0c8dd50031981a1ba8337006eb4c094c0c8dd50011bad30253032375400c97ae000189981a00119802002000a0603033001303400140c480d8896600200314a3159800cc004c0c00066eb0c080c0b4dd5012cdd7180c18169baa0119bae3017302d375402291112cc0056600266e24dd6981198189baa00448002266e24dd6981218189baa00448002294102f4528c4c8c96600266e24dd6981298199baa006375a606c0031337126eb4c098c0ccdd50031bad303630370018a5040c53001004a5eb8410100008101000048966002b30013375e606e60686ea8008c0dcc0d0dd5003c4cdd79813981a1baa0020038a5040c9133036375066e00dd6981b800cc004dd59813181a1baa002802c0110171981b1ba8337006eb4c0dcc0e0004c058dd59813181a1baa0024bd704400503220423374a900219819803a5eb8102f2266004004606200314a0815902e452820528a5040a4605a002605860526ea8034c8c8cc0b0dd419b810020013302c3750002660586ea0cdc080300125eb80cdc199b8200198009bad302c302d302d302d302d302d302d302d302d302d302d3029375401b48002906807a034482827006600266e08dd698158009bad3010302837540194800200880c8c09cdd5000c59025180798131baa00a409081226002003375c601e60486ea80226eb8c038c090dd5004200e3023375403f164088604a60446ea8c050c088dd50009bab301430223754602860446ea8004c090c084dd5000c5901f1111192cc004c0a0006264b30013375e6050604a6ea80040162b30013375e6e98c044dd5980b98129baa001374c602200915980099b89300700430073756602e604a6ea80062b30013375e6030604a6ea8004cdd2a40086604e00697ae0899baf4c0103d87a8000300c3025375400314a0811a2941023452820468a50408c604e003164094646600200200a44b30010018a5eb8226644b30013375e6054604e6ea8c0a8c09cdd5001181518139baa00789981480119802002000c4cc01001000502518140009814800a04c32330010013758604660406ea8060896600200314c103d87a80008992cc004cdd7981298111baa0010188980919812000a5eb82266006006604c0048100c09000502214c00400691100a44100400844464b3001301a3020375400314800226eb4c090c084dd5000a03e3259800980d18101baa0018a6103d87a8000899198008009bab30253022375400444b30010018a6103d87a8000899192cc004cdc8803000c56600266e3c0180062602a6604e604a00497ae08a60103d87a8000408d1330040043029003408c6eb8c08c004c098005024203e32330010010042259800800c5300103d87a8000899192cc004cdc8803000c56600266e3c018006260286604c604800497ae08a60103d87a80004089133004004302800340886eb8c088004c09400502322c8058c030dd50040c024dd5001c590070c020004c00cdd5004452689b2b200201",
+      "hash": "1c0768e344e6df08a58bdf3912f6c8955209c6d69ec36f8f70822843"
+    }
+  ],
+  "definitions": {
+    "ByteArray": {
+      "dataType": "bytes"
+    },
+    "Int": {
+      "dataType": "integer"
+    },
+    "Option<cardano/address/StakeCredential>": {
+      "title": "Option",
+      "anyOf": [
+        {
+          "title": "Some",
+          "description": "An optional value.",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "$ref": "#/definitions/cardano~1address~1StakeCredential"
+            }
+          ]
+        },
+        {
+          "title": "None",
+          "description": "Nothing.",
+          "dataType": "constructor",
+          "index": 1,
+          "fields": []
+        }
+      ]
+    },
+    "aiken/crypto/ScriptHash": {
+      "title": "ScriptHash",
+      "dataType": "bytes"
+    },
+    "aiken/crypto/VerificationKeyHash": {
+      "title": "VerificationKeyHash",
+      "dataType": "bytes"
+    },
+    "cardano/address/Address": {
+      "title": "Address",
+      "description": "A Cardano `Address` typically holding one or two credential references.\n\n Note that legacy bootstrap addresses (a.k.a. 'Byron addresses') are\n completely excluded from Plutus contexts. Thus, from an on-chain\n perspective only exists addresses of type 00, 01, ..., 07 as detailed\n in [CIP-0019 :: Shelley Addresses](https://github.com/cardano-foundation/CIPs/tree/master/CIP-0019/#shelley-addresses).",
+      "anyOf": [
+        {
+          "title": "Address",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "title": "payment_credential",
+              "$ref": "#/definitions/cardano~1address~1PaymentCredential"
+            },
+            {
+              "title": "stake_credential",
+              "$ref": "#/definitions/Option<cardano~1address~1StakeCredential>"
+            }
+          ]
+        }
+      ]
+    },
+    "cardano/address/Credential": {
+      "title": "Credential",
+      "description": "A general structure for representing an on-chain `Credential`.\n\n Credentials are always one of two kinds: a direct public/private key\n pair, or a script (native or Plutus).",
+      "anyOf": [
+        {
+          "title": "VerificationKey",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "$ref": "#/definitions/aiken~1crypto~1VerificationKeyHash"
+            }
+          ]
+        },
+        {
+          "title": "Script",
+          "dataType": "constructor",
+          "index": 1,
+          "fields": [
+            {
+              "$ref": "#/definitions/aiken~1crypto~1ScriptHash"
+            }
+          ]
+        }
+      ]
+    },
+    "cardano/address/PaymentCredential": {
+      "title": "PaymentCredential",
+      "description": "A general structure for representing an on-chain `Credential`.\n\n Credentials are always one of two kinds: a direct public/private key\n pair, or a script (native or Plutus).",
+      "anyOf": [
+        {
+          "title": "VerificationKey",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "$ref": "#/definitions/aiken~1crypto~1VerificationKeyHash"
+            }
+          ]
+        },
+        {
+          "title": "Script",
+          "dataType": "constructor",
+          "index": 1,
+          "fields": [
+            {
+              "$ref": "#/definitions/aiken~1crypto~1ScriptHash"
+            }
+          ]
+        }
+      ]
+    },
+    "cardano/address/StakeCredential": {
+      "title": "StakeCredential",
+      "description": "Represent a type of object that can be represented either inline (by hash)\n or via a reference (i.e. a pointer to an on-chain location).\n\n This is mainly use for capturing pointers to a stake credential\n registration certificate in the case of so-called pointer addresses.",
+      "anyOf": [
+        {
+          "title": "Inline",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "$ref": "#/definitions/cardano~1address~1Credential"
+            }
+          ]
+        },
+        {
+          "title": "Pointer",
+          "dataType": "constructor",
+          "index": 1,
+          "fields": [
+            {
+              "title": "slot_number",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "transaction_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "certificate_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        }
+      ]
+    },
+    "cardano/assets/AssetName": {
+      "title": "AssetName",
+      "dataType": "bytes"
+    },
+    "cardano/assets/PolicyId": {
+      "title": "PolicyId",
+      "dataType": "bytes"
+    },
+    "hirakumi/types/PackDatum": {
+      "title": "PackDatum",
+      "description": "Inline datum of a pack lock. Constr 0, fields in this exact order.",
+      "anyOf": [
+        {
+          "title": "PackDatum",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "title": "channel_id",
+              "description": "32 bytes. Unique pack id; also the inline-datum tag on payouts.",
+              "$ref": "#/definitions/ByteArray"
+            },
+            {
+              "title": "receipt_key",
+              "description": "32 bytes. The buyer's ed25519 verification key for IOUs.",
+              "$ref": "#/definitions/ByteArray"
+            },
+            {
+              "title": "buyer_refund",
+              "description": "Refund address. Its payment key hash is also the buyer's signing identity.",
+              "$ref": "#/definitions/cardano~1address~1Address"
+            },
+            {
+              "title": "seller",
+              "$ref": "#/definitions/cardano~1address~1Address"
+            },
+            {
+              "title": "policy_id",
+              "$ref": "#/definitions/cardano~1assets~1PolicyId"
+            },
+            {
+              "title": "asset_name",
+              "$ref": "#/definitions/cardano~1assets~1AssetName"
+            },
+            {
+              "title": "price_per_call",
+              "description": "micros of the pack asset",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "max_calls",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "rule_hash",
+              "description": "32 bytes. sha256 of the published promise. Informational.",
+              "$ref": "#/definitions/ByteArray"
+            },
+            {
+              "title": "fee_address",
+              "$ref": "#/definitions/cardano~1address~1Address"
+            },
+            {
+              "title": "fee_bps",
+              "description": "Hirakumi take rate in basis points; clamped to 0..1000 at settlement.",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "closer",
+              "description": "28 bytes. Payment key hash of Hirakumi's operator wallet.",
+              "$ref": "#/definitions/ByteArray"
+            },
+            {
+              "title": "contest_period",
+              "description": "ms between a Close and the earliest Settle.",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "close_fee_budget",
+              "description": "Max lovelace a Settle may take from the buyer for the network fee.",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "stage",
+              "$ref": "#/definitions/hirakumi~1types~1Stage"
+            }
+          ]
+        }
+      ]
+    },
+    "hirakumi/types/PackRedeemer": {
+      "title": "PackRedeemer",
+      "anyOf": [
+        {
+          "title": "Close",
+          "description": "Constr 0. Open -> Closing. Buyer or closer.",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "title": "accepted",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "signature",
+              "$ref": "#/definitions/ByteArray"
+            }
+          ]
+        },
+        {
+          "title": "Raise",
+          "description": "Constr 1. Closing -> Closing with a higher count. Anyone.",
+          "dataType": "constructor",
+          "index": 1,
+          "fields": [
+            {
+              "title": "accepted",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "signature",
+              "$ref": "#/definitions/ByteArray"
+            }
+          ]
+        },
+        {
+          "title": "Settle",
+          "description": "Constr 2. Closing -> paid out. Anyone.",
+          "dataType": "constructor",
+          "index": 2,
+          "fields": []
+        }
+      ]
+    },
+    "hirakumi/types/Stage": {
+      "title": "Stage",
+      "description": "Where a pack is in its life.\n\n `Open` = Constr 0 []\n `Closing { accepted, contest_end }` = Constr 1 [accepted, contest_end]",
+      "anyOf": [
+        {
+          "title": "Open",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": []
+        },
+        {
+          "title": "Closing",
+          "dataType": "constructor",
+          "index": 1,
+          "fields": [
+            {
+              "title": "accepted",
+              "description": "Highest IOU count proven on-chain so far.",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "contest_end",
+              "description": "POSIX ms. Raise is allowed strictly before it, Settle strictly after.",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
