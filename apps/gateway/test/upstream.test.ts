@@ -21,11 +21,20 @@ describe("buildUpstreamRequest", () => {
     expect(r.url).toBe("https://a.example/v1/price/ADA?fiat=usd");
     expect(r.init).toEqual({ method: "GET", headers: { accept: "application/json", "user-agent": "hirakumi-gateway/0.1" } });
   });
-  it("sends a JSON body for POST", () => {
-    const r = buildUpstreamRequest({ origin: "https://a.example", path_prefix: "/" }, { method: "POST", path: "/quote" }, { symbol: "ADA" });
-    expect(r.url).toBe("https://a.example/quote");
-    expect(r.init.body).toBe('{"symbol":"ADA"}');
+  it("POST follows the shared input convention: `body` is the JSON body, other fields are query (contract P3 #3)", () => {
+    const r = buildUpstreamRequest(
+      { origin: "https://a.example", path_prefix: "/" }, { method: "POST", path: "/quote/{venue}" },
+      { venue: "dex", currency: "usd", body: { symbol: "ADA", qty: 2 } },
+    );
+    expect(r.url).toBe("https://a.example/quote/dex?currency=usd");
+    expect(r.init.body).toBe('{"symbol":"ADA","qty":2}');
     expect(r.init.headers["content-type"]).toBe("application/json");
+  });
+  it("POST without a `body` field sends no body", () => {
+    const r = buildUpstreamRequest({ origin: "https://a.example", path_prefix: "/" }, { method: "POST", path: "/ping" }, { verbose: true });
+    expect(r.url).toBe("https://a.example/ping?verbose=true");
+    expect(r.init.body).toBeUndefined();
+    expect(r.init.headers["content-type"]).toBeUndefined();
   });
   it("fails on a missing path parameter", () => {
     expect(() => buildUpstreamRequest({ origin: "https://a.example", path_prefix: "/" }, { method: "GET", path: "/p/{id}" }, {})).toThrow(/id/);

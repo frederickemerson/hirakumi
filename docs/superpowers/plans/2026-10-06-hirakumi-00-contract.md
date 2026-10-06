@@ -376,3 +376,6 @@ These override the sections above and any plan text that disagrees.
 
 ### Decided: database hosting (6 Oct)
 Vercel (web) can't reach Postgres on EC2 without exposing it to the internet. **Decision:** the Hirakumi database runs on **Neon** (managed Postgres via the Vercel Marketplace, TLS). The gateway and coworker on EC2 and the web app on Vercel all use its `DATABASE_URL`. The Masumi payment service keeps its own Postgres inside Docker on EC2. `/internal/*` stays reachable through Caddy only with `INTERNAL_TOKEN`.
+
+### Amendment G9 (6 Oct, during execution)
+Operation input convention, shared by coworker parsing (P3) and gateway proxying (P1): `{name}` fields in the path template are path parameters, a field named `body` is the JSON request body, and every other field is a query parameter, for every method. GET and HEAD never send a body.

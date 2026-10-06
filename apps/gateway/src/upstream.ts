@@ -18,16 +18,17 @@ export function buildUpstreamRequest(
   const url = new URL(api.origin.replace(/\/+$/, "") + prefix + path);
   const method = op.method.toUpperCase();
   const headers: Record<string, string> = { accept: "application/json", "user-agent": "hirakumi-gateway/0.1" };
-  if (method === "GET" || method === "DELETE" || method === "HEAD") {
-    for (const [k, v] of Object.entries(rest)) {
-      if (v === undefined || v === null) continue;
-      if (Array.isArray(v)) for (const x of v) url.searchParams.append(k, String(x));
-      else url.searchParams.set(k, typeof v === "object" ? JSON.stringify(v) : String(v));
-    }
-    return { url: url.toString(), init: { method, headers } };
+  // Shared input convention (P3 contract addition 3): `{name}` fields fill the path, a field named
+  // `body` is the JSON request body, and every other field is a query parameter, for any method.
+  const { body, ...query } = rest;
+  for (const [k, v] of Object.entries(query)) {
+    if (v === undefined || v === null) continue;
+    if (Array.isArray(v)) for (const x of v) url.searchParams.append(k, String(x));
+    else url.searchParams.set(k, typeof v === "object" ? JSON.stringify(v) : String(v));
   }
+  if (body === undefined || method === "GET" || method === "HEAD") return { url: url.toString(), init: { method, headers } };
   headers["content-type"] = "application/json";
-  return { url: url.toString(), init: { method, headers, body: JSON.stringify(rest) } };
+  return { url: url.toString(), init: { method, headers, body: JSON.stringify(body) } };
 }
 
 /** MIP-003 input_data arrives as an object (Sokosumi) or as [{key, value}] (MIP-003 examples). */
