@@ -1,44 +1,62 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
-import { Elapsed } from "@/components/elapsed";
+import { useEffect, useRef, useState } from "react";
+import { Elapsed, useElapsed } from "@/components/elapsed";
 import { InlineError, InlineStatus } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PhoneWalletConnect } from "@/components/phone-wallet-connect";
 import { GetAWallet, useWallets, WalletIcon } from "@/components/wallet-picker";
 import { postJson, RequestError } from "@/lib/client-fetch";
+import type { ChallengeCheck } from "@/lib/gateway";
 import { startRouteProgress } from "@/lib/route-progress";
 import { connectWallet, signText, walletErrorMessage } from "@/lib/wallet-client";
 import { cn } from "@/lib/utils";
 
-/** The verification file expires 30 minutes after it is first downloaded (lib/repo/challenges.ts). */
-export const CHALLENGE_TTL_MS = 30 * 60 * 1000;
+/** How often the page re-reads the seller's OpenAPI file while it is visible. */
+export const AUTO_CHECK_MS = 10_000;
+const FIELD = "x-hirakumi-verify";
 
-export function formatCountdown(ms: number): string {
-  const total = Math.max(0, Math.ceil(ms / 1000));
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
-}
-
-/** "Expires in 29:41", ticking each second; null before hydration or without a file yet. */
-function useCountdown(expiresAt: number | null): number | null {
-  const [now, setNow] = useState<number | null>(null);
-  useEffect(() => {
-    if (expiresAt === null) return;
-    setNow(Date.now());
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [expiresAt]);
-  return expiresAt === null || now === null ? null : expiresAt - now;
+/** The line the seller adds at the root of their OpenAPI file, in each format. */
+export function specSnippets(code: string): { yaml: string; json: string } {
+  return { yaml: `${FIELD}: "${code}"`, json: `"${FIELD}": "${code}",` };
 }
 
 type CheckState =
-  | { kind: "idle" }
-  | { kind: "checking" }
-  | { kind: "failed"; triedUrl: string; detail: string }
+  | { kind: "waiting" }
+  | { kind: "failed"; result: ChallengeCheck }
   | { kind: "error"; text: string };
 type SignState = { kind: "idle" } | { kind: "working"; walletId: string; text: string; message?: string } | { kind: "error"; text: string };
+
+/** One sentence naming what the check found. Short, plain, no dashes. */
+function headline(r: ChallengeCheck): string {
+  switch (r.reason) {
+    case "http_status":
+      return `We couldn't fetch the file. Your server answered ${r.status ?? "an error"}.`;
+    case "redirect":
+      return `We couldn't fetch the file. Your server answered ${r.status ?? "3xx"}, a redirect.`;
+    case "timeout":
+    case "unreachable":
+    case "blocked":
+    case "too_large":
+      return "We couldn't fetch the file.";
+    case "unreadable":
+      return "We fetched the file, but it isn't valid JSON or YAML.";
+    case "missing":
+      return `We read the file, but ${FIELD} is missing at the root.`;
+    case "mismatch":
+      return `We found ${FIELD}, but the code doesn't match this API's code.`;
+    case "origin_mismatch":
+    case "outside_directory":
+    case "bad_url":
+      return "This file can't prove you own this API.";
+    default:
+      return "The check didn't pass.";
+  }
+}
+/** The gateway's detail adds facts (why a fetch failed, which folder) beyond the headline for these. */
+const SHOW_DETAIL = new Set<ChallengeCheck["reason"]>(["timeout", "unreachable", "blocked", "too_large", "origin_mismatch", "outside_directory", "bad_url", "no_code"]);
 
 function StepNumber({ n, done }: { n: number; done?: boolean }) {
   return (
@@ -48,43 +66,89 @@ function StepNumber({ n, done }: { n: number; done?: boolean }) {
   );
 }
 
-export function OwnershipPanel({ apiId, fileUrl, initiallyPassed, challengeExpiresAt = null }: {
+function Snippet({ label, text }: { label: "YAML" | "JSON"; text: string }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+    }
+  }
+  return (
+    <div className="rounded-[2px] border-2 border-ink">
+      <div className="flex items-center justify-between gap-4 border-b-2 border-ink px-3 py-1.5">
+        <span className="text-caption font-semibold uppercase tracking-[0.04em]">{label}</span>
+        <Button variant="outline" size="xs" onClick={copy} aria-live="polite">{copied ? "Copied" : `Copy ${label}`}</Button>
+      </div>
+      <pre className="overflow-x-auto bg-ink p-3 text-caption text-cream"><code>{text}</code></pre>
+    </div>
+  );
+}
+
+const isVisible = () => typeof document === "undefined" || document.visibilityState !== "hidden";
+
+export function OwnershipPanel({ apiId, openapiUrl, code, initiallyPassed }: {
   apiId: string;
-  fileUrl: string;
+  /** The API's openapi_url: the file the code must be added to. */
+  openapiUrl: string;
+  /** This API's verification code (server-side, per API). */
+  code: string;
   initiallyPassed: boolean;
-  /** Expiry of the file already handed out (ISO), if any. */
-  challengeExpiresAt?: string | null;
 }) {
   const router = useRouter();
   const [passed, setPassed] = useState(initiallyPassed);
-  const [check, setCheck] = useState<CheckState>({ kind: "idle" });
+  const [check, setCheck] = useState<CheckState>({ kind: "waiting" });
+  const [inFlight, setInFlight] = useState(false);
+  const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
   const [sign, setSign] = useState<SignState>({ kind: "idle" });
   const [signed, setSigned] = useState(false);
   const wallets = useWallets();
-  const [expiresAt, setExpiresAt] = useState<number | null>(challengeExpiresAt ? Date.parse(challengeExpiresAt) : null);
-  const left = useCountdown(expiresAt);
-  const expired = left !== null && left <= 0;
-
-  function onDownload() {
-    // The server reuses the open file until it expires; a new one starts a fresh 30 minutes.
-    if (expiresAt === null || expired) setExpiresAt(Date.now() + CHALLENGE_TTL_MS);
-  }
+  const sinceLast = useElapsed(lastCheckedAt, !passed && lastCheckedAt !== null);
+  const busy = useRef(false);
+  const lastStarted = useRef(0);
+  const snippets = specSnippets(code);
 
   async function runCheck() {
-    setCheck({ kind: "checking" });
+    if (busy.current) return;
+    busy.current = true;
+    lastStarted.current = Date.now();
+    setInFlight(true);
     try {
-      const result = await postJson<{ ok: boolean; triedUrl: string; detail: string }>(`/api/apis/${apiId}/ownership/http-check`, {});
+      const result = await postJson<ChallengeCheck>(`/api/apis/${apiId}/ownership/spec-check`, {});
       if (result.ok) {
         setPassed(true);
-        setCheck({ kind: "idle" });
+        setCheck({ kind: "waiting" });
       } else {
-        setPassed(false);
-        setCheck({ kind: "failed", triedUrl: result.triedUrl, detail: result.detail });
+        setCheck({ kind: "failed", result });
       }
     } catch (e) {
       setCheck({ kind: "error", text: e instanceof RequestError ? e.message : "Something went wrong. Try again." });
+    } finally {
+      busy.current = false;
+      setInFlight(false);
+      setLastCheckedAt(Date.now());
     }
   }
+  const runCheckRef = useRef(runCheck);
+  runCheckRef.current = runCheck;
+
+  // Check on open, then every AUTO_CHECK_MS while the page is visible, until the code is found.
+  useEffect(() => {
+    if (passed) return;
+    const tick = () => {
+      if (isVisible() && Date.now() - lastStarted.current >= AUTO_CHECK_MS - 250) void runCheckRef.current();
+    };
+    tick();
+    const timer = setInterval(tick, AUTO_CHECK_MS);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, [passed]);
 
   async function runSign(walletId: string) {
     try {
@@ -108,56 +172,52 @@ export function OwnershipPanel({ apiId, fileUrl, initiallyPassed, challengeExpir
 
   return (
     <ol className="space-y-4">
-      <li className="flex gap-4 rounded-[2px] border-2 border-ink bg-frost p-5">
+      <li aria-labelledby="own-step-1" className="flex gap-4 rounded-[2px] border-2 border-ink bg-frost p-5">
         <StepNumber n={1} done={passed} />
-        <div className="min-w-0 flex-1 space-y-2">
-          <h2 className="text-body-lg font-semibold">Put the verification file on your server</h2>
-          <p className="text-body">Download the file and upload it, unchanged, so it opens at:</p>
-          <code className="block break-all rounded-[2px] bg-ink p-3 text-body text-cream">{fileUrl}</code>
-          <a href={`/api/apis/${apiId}/challenge-file`} download onClick={onDownload} className="inline-block py-1 text-body underline underline-offset-4">
-            {expired ? "Download a new file" : "Download the file"}
-          </a>
-          {left === null || passed ? (
-            <p className="text-caption text-graphite">The file works once and expires 30 minutes after you download it.</p>
-          ) : expired ? (
-            <p role="alert" className="border-l-4 border-coral pl-3 text-caption">This file has expired. Download a new one and upload it again.</p>
-          ) : (
-            <p className="text-caption text-graphite">
-              Expires in <span className={cn("font-semibold tabular-nums", left < 5 * 60 * 1000 ? "text-ink" : "")}>{formatCountdown(left)}</span>
-            </p>
-          )}
-        </div>
-      </li>
-      <li className="flex gap-4 rounded-[2px] border-2 border-ink bg-frost p-5">
-        <StepNumber n={2} done={passed} />
         <div className="min-w-0 flex-1 space-y-3">
-          <h2 className="text-body-lg font-semibold">Check the file</h2>
-          <div className="flex flex-wrap items-center gap-4">
-            <Button variant="outline" pending={check.kind === "checking"} pendingLabel="Checking…" onClick={runCheck}>Check</Button>
-            {check.kind === "checking" && (
-              <InlineStatus busy>
-                Fetching the file from your server <Elapsed prefix=" " className="text-graphite" />
-              </InlineStatus>
-            )}
+          <h2 id="own-step-1" className="text-body-lg font-semibold">Add your code</h2>
+          <p className="text-body">So nobody can sell an API they don&apos;t own.</p>
+          <p className="text-body">Add this line at the root of your OpenAPI file, next to <code>openapi</code> and <code>info</code>:</p>
+          <div className="grid gap-3 md:grid-cols-2">
+            <Snippet label="YAML" text={snippets.yaml} />
+            <Snippet label="JSON" text={snippets.json} />
           </div>
-          {passed && <InlineStatus>Found it. Your file matches.</InlineStatus>}
-          {check.kind === "failed" && (
-            <div role="alert" className="space-y-1 border-l-4 border-coral pl-3 text-body">
-              <p>We couldn&apos;t confirm the file. We tried {check.triedUrl}</p>
-              <p>{check.detail}</p>
+          <p className="text-body">Your OpenAPI file:</p>
+          <code className="block break-all rounded-[2px] bg-ink p-3 text-body text-cream">{openapiUrl}</code>
+          {passed ? (
+            <InlineStatus>Found your code.</InlineStatus>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-4">
+                <Button variant="outline" pending={inFlight} pendingLabel="Checking…" onClick={() => void runCheck()}>Check now</Button>
+                <p role="status" aria-live="off" className="min-w-0 break-all text-caption text-graphite">
+                  Checking {openapiUrl}…{sinceLast !== null && !inFlight ? ` last checked ${sinceLast} s ago` : ""}
+                </p>
+              </div>
+              {check.kind === "failed" && (
+                <div role="alert" className="space-y-2 border-l-4 border-coral pl-3 text-body">
+                  <p className="font-semibold">{headline(check.result)}</p>
+                  {SHOW_DETAIL.has(check.result.reason) && <p>{check.result.detail}</p>}
+                  <ul className="list-disc space-y-0.5 pl-5 text-caption">
+                    <li>Serve the file at this exact URL. Redirects are not followed.</li>
+                    <li>Use HTTPS.</li>
+                    <li>Publish the updated file. We check again every 10 s.</li>
+                  </ul>
+                </div>
+              )}
+              {check.kind === "error" && <InlineError>{check.text}</InlineError>}
             </div>
           )}
-          {check.kind === "error" && <InlineError>{check.text}</InlineError>}
         </div>
       </li>
-      <li className="flex gap-4 rounded-[2px] border-2 border-ink bg-frost p-5">
-        <StepNumber n={3} done={signed} />
+      <li aria-labelledby="own-step-2" className="flex gap-4 rounded-[2px] border-2 border-ink bg-frost p-5">
+        <StepNumber n={2} done={signed} />
         <div className="min-w-0 flex-1 space-y-3">
-          <h2 className="text-body-lg font-semibold">Sign with your wallet</h2>
+          <h2 id="own-step-2" className="text-body-lg font-semibold">Sign with your wallet</h2>
           <p className="text-body">
             Your wallet shows a message naming this API and the address buyers will pay. Signing costs nothing and moves no funds.
           </p>
-          {!passed && <p className="text-caption text-graphite">Check the file first; signing unlocks after it passes.</p>}
+          {!passed && <p className="text-caption text-graphite">Signing unlocks once we find your code.</p>}
           {wallets === null ? (
             <div role="status" aria-label="Looking for wallets" className="flex flex-wrap gap-4">
               <Skeleton className="h-11 w-44" />

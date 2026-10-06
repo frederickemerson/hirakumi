@@ -1,6 +1,11 @@
 import { env } from "./env";
 
-export type ChallengeCheck = { ok: boolean; triedUrl: string; detail: string };
+/** Why the OpenAPI check passed or failed (apps/gateway/src/internal.ts OwnershipReason). */
+export type ChallengeReason =
+  | "verified" | "no_code" | "bad_url" | "origin_mismatch" | "outside_directory" | "redirect" | "blocked"
+  | "timeout" | "too_large" | "unreachable" | "http_status" | "unreadable" | "missing" | "mismatch";
+/** The OpenAPI check: triedUrl is the API's openapi_url; status is the HTTP status when the fetch got one. */
+export type ChallengeCheck = { ok: boolean; reason: ChallengeReason; triedUrl: string; detail: string; status?: number };
 export type GatewayHealth = { health: "healthy" | "down"; checkedAt: string | null; lastReasons: string[] };
 export type Gateway = {
   checkChallenge(apiId: string): Promise<ChallengeCheck>;
@@ -56,10 +61,13 @@ export function createGateway(opts: { baseUrl: string; token: string; fetchImpl?
     async checkChallenge(apiId) {
       const path = `/internal/challenge/${encodeURIComponent(apiId)}/check`;
       const b = await body(await call("POST", path), path);
-      if (typeof b.ok !== "boolean" || typeof b.triedUrl !== "string" || typeof b.detail !== "string") {
+      if (typeof b.ok !== "boolean" || typeof b.reason !== "string" || typeof b.triedUrl !== "string" || typeof b.detail !== "string") {
         throw new GatewayError(UNREADABLE, `gateway ${path} returned an unexpected shape`);
       }
-      return { ok: b.ok, triedUrl: b.triedUrl, detail: b.detail };
+      return {
+        ok: b.ok, reason: b.reason as ChallengeReason, triedUrl: b.triedUrl, detail: b.detail,
+        ...(typeof b.status === "number" ? { status: b.status } : {}),
+      };
     },
     async reloadApi(apiId) {
       await call("POST", `/internal/apis/${encodeURIComponent(apiId)}/reload`);
