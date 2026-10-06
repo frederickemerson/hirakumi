@@ -4,11 +4,18 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 
-/** Tab strip for one API's pages. The current tab is filled ink, like the product frame's tabs. */
-export function ApiNav({ apiId }: { apiId: string }) {
+const STEP_PAGE = /\/(endpoints|ownership|review)$/;
+
+/**
+ * Tab strip for one API's pages. The current tab is filled ink, like the product frame's tabs.
+ * "Listing steps" links straight to the current step's page: the one being viewed, or the one the
+ * layout worked out from the API's state.
+ */
+export function ApiNav({ apiId, stepHref }: { apiId: string; stepHref: string }) {
   const pathname = usePathname();
+  const onStep = STEP_PAGE.test(pathname);
   const links = [
-    { href: `/apis/${apiId}`, label: "Listing steps", active: /\/(endpoints|ownership|review)$/.test(pathname) || pathname === `/apis/${apiId}` },
+    { href: onStep ? pathname : stepHref, label: "Listing steps", active: onStep || pathname === `/apis/${apiId}` },
     { href: `/apis/${apiId}/overview`, label: "Overview", active: pathname.endsWith("/overview") },
     { href: `/apis/${apiId}/sales`, label: "Sales", active: pathname.endsWith("/sales") },
   ];

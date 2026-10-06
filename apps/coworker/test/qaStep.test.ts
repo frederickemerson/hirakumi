@@ -43,6 +43,28 @@ describe("qaStep (ownership_verified → rule_built)", () => {
     expect((await messagesFor(db.pool, apiId)).at(-1)?.body).toMatch(/^Test calls done: 6 calls .* Review the price and publish: https:\/\/web\.test\/apis\//);
   });
 
+  it("writes live progress {done, total} into the step output as test calls finish", async () => {
+    const apiId = await seedApi(db.pool, { state: "ownership_verified" });
+    await seedOperation(db.pool, apiId);
+    const seen: unknown[] = [];
+    const preview = vi.fn(async (_a: string, _o: string, i: Record<string, unknown>) => {
+      if (i.symbol === INVALID_STRING) {
+        // The bad-input call runs after the five good ones: by then their progress is on the step row.
+        await vi.waitFor(async () => {
+          const progress = (await getStep(db.pool, apiId, "qa"))?.output?.progress as { done: number } | undefined;
+          expect(progress?.done).toBe(5);
+          seen.push(progress);
+        });
+        return json(404, { error: "unknown symbol" });
+      }
+      return json(200, { symbol: i.symbol, price: 0.31 });
+    });
+    const now = new Date("2026-10-06T10:00:00Z");
+    expect(await qaStep({ pool: db.pool, gateway: { preview } as GatewayClient, llm, webBaseUrl: "https://web.test", now: () => now }, apiId)).toBe("ran");
+    expect(seen.at(-1)).toEqual({ done: 5, total: 6, startedAt: now.toISOString() });
+    expect((await getStep(db.pool, apiId, "qa"))?.output?.progress).toEqual({ done: 6, total: 6, startedAt: now.toISOString() });
+  });
+
   it("re-running after a crash reuses saved rules instead of calling upstream again", async () => {
     const apiId = await seedApi(db.pool, { state: "ownership_verified" });
     await seedOperation(db.pool, apiId);

@@ -5,6 +5,7 @@ import { JetBrains_Mono } from "next/font/google";
 import { RouteProgress } from "@/components/route-progress";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
+import { Toaster } from "@/components/toast";
 import { cn } from "@/lib/utils";
 
 const mono = JetBrains_Mono({
@@ -33,6 +34,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         {/* Pages sit in a centred 1200px column with a 16px gutter. Full-bleed bands use the `bleed` utility. */}
         <main className="mx-auto w-full max-w-[1200px] flex-1 px-4 py-10">{children}</main>
         <SiteFooter />
+        <Toaster />
       </body>
     </html>
   );

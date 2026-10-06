@@ -1,12 +1,12 @@
 import { redirect } from "next/navigation";
 import { EndpointsForm } from "@/components/endpoints-form";
+import { LiveProgress } from "@/components/live-progress";
 import { EmptyState, ErrorState, WaitingState } from "@/components/states";
-import { StepList } from "@/components/step-list";
 import { getSql } from "@/lib/db";
-import { firstFailedStep, stepForState } from "@/lib/flow";
+import { stepForState } from "@/lib/flow";
 import { loadApiPage } from "@/lib/page-auth";
-import { listOnboardSteps } from "@/lib/repo/apis";
 import { listOperations } from "@/lib/repo/operations";
+import { loadProgress } from "@/lib/repo/progress";
 
 export default async function EndpointsPage({ params }: { params: Promise<{ apiId: string }> }) {
   const { apiId } = await params;
@@ -15,8 +15,8 @@ export default async function EndpointsPage({ params }: { params: Promise<{ apiI
   const heading = <h1 className="text-h font-medium uppercase">Choose what to sell</h1>;
 
   if (api.state === "intake" || api.state === "parsed") {
-    const steps = await listOnboardSteps(sql, apiId);
-    const failure = firstFailedStep(steps);
+    const progress = await loadProgress(sql, api);
+    const failure = progress.failure;
     if (failure) {
       return (
         <section className="space-y-6">
@@ -26,13 +26,13 @@ export default async function EndpointsPage({ params }: { params: Promise<{ apiI
         </section>
       );
     }
-    const running = steps.find((s) => s.status === "running");
     return (
       <section className="space-y-6">
         {heading}
-        <WaitingState title="Reading your API description" detail="This usually takes under a minute. This page updates by itself."
-          since={running?.updatedAt ?? api.createdAt}>
-          <StepList steps={steps} />
+        <WaitingState title={api.state === "intake" ? "Reading your API description" : "Describing your endpoints"}
+          detail="This usually takes under a minute. This page updates by itself."
+          since={progress.timeline.current?.since ?? api.createdAt}>
+          <LiveProgress apiId={apiId} initial={progress} />
         </WaitingState>
       </section>
     );

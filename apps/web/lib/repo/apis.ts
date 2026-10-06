@@ -88,7 +88,15 @@ export async function transitionState(
   return rows.length === 1;
 }
 
+/**
+ * The coworker's onboarding steps for one API. onboard_steps also holds data rows that are not steps
+ * (seller_samples); only the coworker's real step names are returned.
+ */
+export const ONBOARD_STEP_NAMES = ["parse", "describe", "qa", "register"] as const;
+
 export async function listOnboardSteps(sql: Sql, apiId: string): Promise<OnboardStep[]> {
   return sql<OnboardStep[]>`
-    select step, status, output, updated_at from onboard_steps where api_id = ${apiId} order by updated_at asc`;
+    select step, status, output, updated_at from onboard_steps
+    where api_id = ${apiId} and step in ${sql(ONBOARD_STEP_NAMES)}
+    order by updated_at asc`;
 }
