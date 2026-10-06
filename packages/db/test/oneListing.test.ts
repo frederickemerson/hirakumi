@@ -53,7 +53,7 @@ describe(`migration ${MIGRATION}`, () => {
     await seedApi(sql, { id: "api_trying", seller: "sel_d", origin: "http://localhost:4100", prefix: "/", state: "endpoints_confirmed" });
     await seedApi(sql, { id: "api_gone", seller: "sel_e", origin: "http://localhost:4100", prefix: "/", state: "retired" });
 
-    expect(await migrate(sql)).toEqual([MIGRATION]);
+    expect((await migrate(sql))[0]).toBe(MIGRATION); // later migrations may follow
 
     const rows = await sql<{ id: string; state: string; base_legacy_duplicate: boolean }[]>`
       select id, state, base_legacy_duplicate from apis order by id`;
@@ -72,7 +72,7 @@ describe(`migration ${MIGRATION}`, () => {
     const { sql } = await schemaBefore(MIGRATION);
     await seedApi(sql, { id: "api_one", seller: "sel_a", origin: "https://h.com", prefix: "/v1", state: "live" });
     await seedApi(sql, { id: "api_two", seller: "sel_b", origin: "https://h.com", prefix: "/v10", state: "live" });
-    expect(await migrate(sql)).toEqual([MIGRATION]);
+    expect((await migrate(sql))[0]).toBe(MIGRATION); // later migrations may follow
     const flagged = await sql`select id from apis where base_legacy_duplicate`;
     expect(flagged).toEqual([]);
   });

@@ -1,7 +1,7 @@
 import { cn } from "cn"
 
 /*
- * The Hirakumi mark: a torii gate (開く hiraku, to open) with a coin sign inside. The gate is
+ * The Hirakumi mark: a torii gate with a coin sign inside. The gate is
  * `currentColor`, so it follows the surrounding text color (ink on light, cream on dark); the sign is
  * duck-bill orange. Same geometry as app/icon.svg and docs/brand/*.svg.
  */

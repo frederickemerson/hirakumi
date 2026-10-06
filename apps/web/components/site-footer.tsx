@@ -38,7 +38,7 @@ export function SiteFooter() {
             <span>Hirakumi</span>
           </Link>
           <p className="max-w-xs text-body text-graphite">
-            開く <span className="text-ink">hiraku</span>, to open. Hirakumi makes your API payable by AI agents on Cardano.
+            Hirakumi makes your API payable by AI agents on Cardano.
             Buyers pay nothing for answers that break your promise.
           </p>
         </div>

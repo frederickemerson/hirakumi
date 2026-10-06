@@ -1,6 +1,6 @@
 # Hirakumi slides (8 slides + appendix)
 
-1. **Title:** "Hirakumi (開く, to open): any API, sold to AI agents in three minutes. Buyers only pay for answers that pass." Team names, TOKEN2049 Origins, Cardano Agentic Commerce track.
+1. **Title:** "Hirakumi: any API, sold to AI agents in three minutes. Buyers only pay for answers that pass." Team names, TOKEN2049 Origins, Cardano Agentic Commerce track.
 2. **Problem:**
    - Agents need paid data per call; API sellers have no way to reach them on Masumi without building an agent.
    - Buyers pay even when a response is broken or stale.
