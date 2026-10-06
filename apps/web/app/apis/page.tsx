@@ -30,7 +30,7 @@ export default async function ApisPage() {
         </ul>
       )}
       <form action="/api/auth/logout" method="post">
-        <button type="submit" className="text-body underline underline-offset-4 hover:text-graphite">Sign out</button>
+        <button type="submit" className="text-body underline underline-offset-4 hover:text-graphite">Log out</button>
       </form>
     </section>
   );
