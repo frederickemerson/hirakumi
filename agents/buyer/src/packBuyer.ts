@@ -4,7 +4,7 @@ import type { PendingStore, TokenStore } from "./tokenStore.js";
 
 export type PackDemoDeps = {
   fetch: FetchLike;
-  buyPack: (buyUrl: string) => Promise<PackPurchase>;
+  buyPack: (buyUrl: string, expected: { amount: bigint }) => Promise<PackPurchase>;
   tokens: TokenStore;
   pending: PendingStore;
   log: (line: string) => void;
@@ -67,7 +67,7 @@ export async function runPackDemo(deps: PackDemoDeps, o: PackDemoOptions): Promi
     const started = deps.now();
     let p: PackPurchase;
     try {
-      p = await deps.buyPack(pack.buyUrl);
+      p = await deps.buyPack(pack.buyUrl, { amount: BigInt(pack.price) });
     } catch (e) {
       if (e instanceof PackPurchaseError && e.settlementFailed && e.paymentSignature && e.recoverySecret) {
         deps.pending.put(o.apiId, { packId: pack.packId, paymentSignature: e.paymentSignature, recoverySecret: e.recoverySecret, at: new Date(deps.now()).toISOString() });
