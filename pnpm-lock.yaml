@@ -300,6 +300,25 @@ importers:
         specifier: 3.2.7
         version: 3.2.7(@types/node@22.20.5)(jiti@2.7.0)(jsdom@30.1.2(@noble/hashes@2.4.0))(lightningcss@1.33.0)(tsx@4.23.15)(yaml@2.9.1)
 
+  packages/escrow:
+    dependencies:
+      '@evolution-sdk/evolution':
+        specifier: 0.5.17
+        version: 0.5.17
+      '@noble/curves':
+        specifier: 1.9.7
+        version: 1.9.7
+    devDependencies:
+      '@types/node':
+        specifier: 22.20.5
+        version: 22.20.5
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 3.2.7
+        version: 3.2.7(@types/node@22.20.5)(jiti@2.7.0)(jsdom@30.1.2(@noble/hashes@2.4.0))(lightningcss@1.33.0)(tsx@4.23.15)(yaml@2.9.1)
+
   packages/masumi:
     devDependencies:
       '@types/node':
