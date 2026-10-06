@@ -2,11 +2,15 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { Elapsed } from "@/components/elapsed";
+import { InlineError, InlineStatus } from "@/components/states";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { postJson } from "@/lib/client-fetch";
+import { startRouteProgress } from "@/lib/route-progress";
 import { connectWallet, listWallets, signText, walletErrorMessage, type WalletInfo } from "@/lib/wallet-client";
 
-type Phase = { kind: "idle" } | { kind: "working"; text: string } | { kind: "error"; text: string };
+type Phase = { kind: "idle" } | { kind: "working"; text: string; walletId: string } | { kind: "error"; text: string };
 
 export function WalletLogin({ next }: { next: string }) {
   const router = useRouter();
@@ -22,37 +26,55 @@ export function WalletLogin({ next }: { next: string }) {
 
   async function signIn(walletId: string) {
     try {
-      setPhase({ kind: "working", text: "Connecting to your wallet…" });
+      setPhase({ kind: "working", walletId, text: "Connecting to your wallet…" });
       const { api, addressHex } = await connectWallet(walletId);
       const challenge = await postJson<{ message: string; nonceToken: string }>("/api/auth/nonce", { address: addressHex });
-      setPhase({ kind: "working", text: "Approve the sign-in message in your wallet. It costs nothing and moves no funds." });
+      setPhase({ kind: "working", walletId, text: "Approve the sign-in message in your wallet. It costs nothing and moves no funds." });
       const sig = await signText(api, addressHex, challenge.message);
+      setPhase({ kind: "working", walletId, text: "Signature received. Opening your dashboard…" });
       await postJson("/api/auth/verify", { nonceToken: challenge.nonceToken, ...sig });
+      startRouteProgress();
       router.push(next);
     } catch (e) {
       setPhase({ kind: "error", text: walletErrorMessage(e) });
     }
   }
 
-  if (wallets === null) return null;
+  if (wallets === null) {
+    return (
+      <div role="status" aria-label="Looking for wallets" className="flex gap-2">
+        <Skeleton className="h-11 w-44" />
+        <Skeleton className="h-11 w-44" />
+      </div>
+    );
+  }
   if (wallets.length === 0) {
     return (
-      <p role="alert" className="text-sm">
+      <InlineError>
         No Cardano wallet found in this browser. Install Lace or Eternl, switch it to the Preprod test network, then reload this page.
-      </p>
+      </InlineError>
     );
   }
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap gap-2">
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-4">
         {wallets.map((w) => (
-          <Button key={w.id} disabled={phase.kind === "working"} onClick={() => signIn(w.id)}>
+          <Button
+            key={w.id}
+            pending={phase.kind === "working" && phase.walletId === w.id}
+            disabled={phase.kind === "working"}
+            onClick={() => signIn(w.id)}
+          >
             Sign in with {w.name}
           </Button>
         ))}
       </div>
-      {phase.kind === "working" && <p role="status" className="text-sm text-muted-foreground">{phase.text}</p>}
-      {phase.kind === "error" && <p role="alert" className="text-sm text-destructive">{phase.text}</p>}
+      {phase.kind === "working" && (
+        <InlineStatus busy>
+          {phase.text} <Elapsed prefix=" " className="text-graphite" />
+        </InlineStatus>
+      )}
+      {phase.kind === "error" && <InlineError>{phase.text}</InlineError>}
     </div>
   );
 }

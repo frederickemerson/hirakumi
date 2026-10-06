@@ -2,13 +2,17 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
+import { Elapsed } from "@/components/elapsed";
+import { InlineError, InlineStatus } from "@/components/states";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { postJson, RequestError } from "@/lib/client-fetch";
 import { formatTusdm, parsePackCalls, parseTusdm, perCallTusdm } from "@/lib/money";
+import { startRouteProgress } from "@/lib/route-progress";
 import type { Pack, RuleView } from "@/lib/types";
 
-type Status = { kind: "idle" } | { kind: "busy" } | { kind: "saved" } | { kind: "error"; text: string };
+type Status = { kind: "idle" } | { kind: "saving" } | { kind: "publishing" } | { kind: "saved" } | { kind: "error"; text: string };
 
 export function ReviewPanel({ apiId, state, promises, pack }: {
   apiId: string;
@@ -21,6 +25,7 @@ export function ReviewPanel({ apiId, state, promises, pack }: {
   const [price, setPrice] = useState(pack ? formatTusdm(pack.priceMicros) : "2");
   const [escrow, setEscrow] = useState(pack ? formatTusdm(pack.escrowPriceMicros) : "2");
   const [status, setStatus] = useState<Status>({ kind: "idle" });
+  const busy = status.kind === "saving" || status.kind === "publishing";
 
   const perCall = useMemo(() => {
     try {
@@ -30,8 +35,8 @@ export function ReviewPanel({ apiId, state, promises, pack }: {
     }
   }, [price, calls]);
 
-  async function run(action: () => Promise<void>) {
-    setStatus({ kind: "busy" });
+  async function run(kind: "saving" | "publishing", action: () => Promise<void>) {
+    setStatus({ kind });
     try {
       await action();
     } catch (e) {
@@ -39,65 +44,75 @@ export function ReviewPanel({ apiId, state, promises, pack }: {
     }
   }
 
-  const save = () => run(async () => {
+  const save = () => run("saving", async () => {
     await postJson(`/api/apis/${apiId}/pricing`, { packCalls: calls, packPrice: price, escrowPrice: escrow });
     setStatus({ kind: "saved" });
     router.refresh();
   });
 
-  const publish = () => run(async () => {
+  const publish = () => run("publishing", async () => {
     await postJson(`/api/apis/${apiId}/publish`, {});
+    startRouteProgress();
     router.push(`/apis/${apiId}/overview`);
   });
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-8" aria-busy={busy || undefined}>
       <section className="space-y-4">
-        <h2 className="text-lg font-medium">Your promise to buyers</h2>
-        <p className="text-sm text-muted-foreground">
-          A buyer's credit is used only when your response keeps this promise. Otherwise the call is free.
+        <h2 className="text-sub font-semibold uppercase">Your promise to buyers</h2>
+        <p className="text-body-lg">
+          A buyer&apos;s credit is used only when your response keeps this promise. Otherwise the call is free.
         </p>
         {promises.map((p) => (
-          <div key={p.operationId} className="space-y-2 rounded-lg border p-4">
-            <p className="font-mono text-sm">{p.method.toUpperCase()} {p.path}</p>
-            <p>{p.plainEnglish ?? "The plain-English summary isn't ready yet. The exact check is below."}</p>
-            <details>
-              <summary className="cursor-pointer text-sm">Show the exact check (JSON)</summary>
-              <pre className="mt-2 overflow-x-auto rounded bg-muted p-2 text-xs">{JSON.stringify(p.definition, null, 2)}</pre>
-              <p className="text-xs text-muted-foreground">Fingerprint: {p.hash}</p>
+          <div key={p.operationId} className="space-y-3 rounded-[2px] border-2 border-ink bg-frost p-5">
+            <p className="flex items-center gap-2 text-body-lg"><Badge variant="sky">{p.method.toUpperCase()}</Badge><code>{p.path}</code></p>
+            <p className="text-body-lg">{p.plainEnglish ?? "The plain-English summary isn't ready yet. The exact check is below."}</p>
+            <details className="group">
+              <summary className="cursor-pointer text-body underline underline-offset-4">Show the exact check (JSON)</summary>
+              <pre className="mt-3 overflow-x-auto rounded-[2px] bg-ink p-3 text-caption text-cream">{JSON.stringify(p.definition, null, 2)}</pre>
+              <p className="mt-2 text-caption text-graphite">Fingerprint: {p.hash}</p>
             </details>
           </div>
         ))}
       </section>
 
-      <section className="space-y-4">
-        <h2 className="text-lg font-medium">Price</h2>
+      <section className="space-y-4 rounded-[2px] border-2 border-ink bg-frost p-5 sm:p-6">
+        <h2 className="text-sub font-semibold uppercase">Price</h2>
         <div className="grid gap-4 sm:grid-cols-3">
-          <div className="space-y-1">
-            <label htmlFor="pack-calls" className="text-sm font-medium">Calls per pack</label>
-            <Input id="pack-calls" type="text" inputMode="numeric" value={calls} onChange={(e) => setCalls(e.target.value)} />
+          <div className="space-y-2">
+            <label htmlFor="pack-calls" className="block text-body font-medium">Calls per pack</label>
+            <Input id="pack-calls" type="text" inputMode="numeric" value={calls} onChange={(e) => setCalls(e.target.value)} disabled={busy} />
           </div>
-          <div className="space-y-1">
-            <label htmlFor="pack-price" className="text-sm font-medium">Pack price (tUSDM)</label>
-            <Input id="pack-price" type="text" inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} />
+          <div className="space-y-2">
+            <label htmlFor="pack-price" className="block text-body font-medium">Pack price (tUSDM)</label>
+            <Input id="pack-price" type="text" inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} disabled={busy} />
           </div>
-          <div className="space-y-1">
-            <label htmlFor="escrow-price" className="text-sm font-medium">Price per job hire (tUSDM)</label>
-            <Input id="escrow-price" type="text" inputMode="decimal" value={escrow} onChange={(e) => setEscrow(e.target.value)} />
+          <div className="space-y-2">
+            <label htmlFor="escrow-price" className="block text-body font-medium">Price per job hire (tUSDM)</label>
+            <Input id="escrow-price" type="text" inputMode="decimal" value={escrow} onChange={(e) => setEscrow(e.target.value)} disabled={busy} />
           </div>
         </div>
-        {perCall && <p className="text-sm text-muted-foreground">About {perCall} tUSDM per call.</p>}
-        <p className="text-sm text-muted-foreground">
+        {perCall && <p className="text-body">About {perCall} tUSDM per call.</p>}
+        <p className="text-body text-graphite">
           Pack payments go straight to your wallet. For per-job hires, Masumi holds the payment and keeps 5%.
         </p>
-        <Button variant="outline" disabled={status.kind === "busy"} onClick={save}>Save price</Button>
-        {status.kind === "saved" && <p role="status" className="text-sm text-green-700">Saved.</p>}
+        <div className="flex flex-wrap items-center gap-4">
+          <Button variant="outline" disabled={busy} pending={status.kind === "saving"} pendingLabel="Saving…" onClick={save}>Save price</Button>
+          {status.kind === "saved" && <InlineStatus>Saved.</InlineStatus>}
+        </div>
       </section>
 
-      <section className="space-y-2">
-        <Button disabled={state !== "priced" || status.kind === "busy"} onClick={publish}>Publish</Button>
-        {state !== "priced" && <p className="text-sm text-muted-foreground">Save a price to publish.</p>}
-        {status.kind === "error" && <p role="alert" className="text-sm text-destructive">{status.text}</p>}
+      <section className="space-y-3">
+        <div className="flex flex-wrap items-center gap-4">
+          <Button disabled={state !== "priced" || busy} pending={status.kind === "publishing"} pendingLabel="Publishing…" onClick={publish}>Publish</Button>
+          {status.kind === "publishing" && (
+            <InlineStatus busy>
+              Registering your API on Masumi <Elapsed prefix=" " className="text-graphite" />
+            </InlineStatus>
+          )}
+        </div>
+        {state !== "priced" && <p className="text-body text-graphite">Save a price to publish.</p>}
+        {status.kind === "error" && <InlineError>{status.text}</InlineError>}
       </section>
     </div>
   );
