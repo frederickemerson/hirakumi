@@ -17,7 +17,7 @@ Turn any read-only OpenAPI API into a paid supplier for AI agents on Cardano. Bu
 | If Hirakumi disappears | Buyer closes and settles alone and gets everything unsigned back | Remaining credits can't be used | No result, so Cardano refunds |
 | Cost | One lock plus one close/settle per pack | ~0.014 ADA overhead per call | A full payment and minutes per job |
 
-The pass/fail check runs on our gateway in every mode, against a rule whose hash is published before payment. The escrow channel is the validator in `contracts/pack-escrow` (Aiken, Plutus V3, 110 tests), proven end to end on preprod (see `docs/submission/submission-checklist.md`).
+The pass/fail check runs on our gateway in every mode, against a rule whose hash is published before payment. The escrow channel is the validator in `contracts/pack-escrow` (Aiken, Plutus V3, 164 tests), proven end to end on preprod with the previous validator version (the security fixes of 6 Oct changed the script address; the re-run is pending, see `docs/submission/submission-checklist.md`).
 
 ## Where each technology is used
 

@@ -195,7 +195,7 @@ export default function Home() {
               <div data-reveal className="rounded-[2px] border-2 border-ink bg-frost p-6">
                 <dt className="text-caption font-semibold uppercase tracking-[0.06em]">Written and tested, shipping next</dt>
                 <dd className="mt-4 text-body-lg">
-                  The escrow channel: an Aiken validator with buyer-signed IOUs and <span className="font-medium tabular-nums">110 contract tests</span> passing.
+                  The escrow channel: an Aiken validator with buyer-signed IOUs and <span className="font-medium tabular-nums">164 contract tests</span> passing.
                 </dd>
               </div>
             </Reveal>
