@@ -5,28 +5,50 @@ import type { Sql } from "./client";
 /** A pool or a transaction: the purchase steps below run inside withTryApiLock's transaction. */
 type Q = Sql | postgres.TransactionSql;
 
-/** A live-demo pack that can still pay for calls: its credit token is active (or settling) with credits left. */
+/**
+ * A live-demo pack that can still pay for calls: its credit token is active (or settling) with credits left.
+ * `channelId` is set for an escrow pack (PACK_MODE=escrow); the demo wallet signs its IOUs.
+ */
 export type UsableTryPack = {
   id: string; token: string; creditTokenId: string; packId: string | null; txHash: string | null;
-  remaining: number; pending: boolean; boughtAt: Date;
+  remaining: number; pending: boolean; boughtAt: Date; channelId: string | null;
 };
 
-/** The newest live-demo pack for this API whose credit token still has credits. */
+/**
+ * Where an escrow pack is still open for calls: its lock is being verified or verified, and the demo wallet
+ * never disputed an answer. A closing or settled channel takes no more calls, so a new pack is bought.
+ */
+export const OPEN_TRY_CHANNEL = `(t.channel_id is null or (not t.disputed and exists (
+  select 1 from pack_channels p where p.channel_id = t.channel_id and p.status in ('pending', 'locked'))))`;
+
+/** The newest live-demo pack for this API whose credit token still has credits (and, if escrow, is open). */
 export async function findUsableTryPack(sql: Q, apiId: string): Promise<UsableTryPack | null> {
   const [row] = await sql<{
     id: string; token: string; credit_token_id: string; pack_id: string | null; tx_hash: string | null;
-    remaining: number; status: string; created_at: Date;
+    remaining: number; status: string; created_at: Date; channel_id: string | null;
   }[]>`
     select t.id, t.token, c.id as credit_token_id, t.pack_id, coalesce(t.tx_hash, c.tx_hash) as tx_hash,
-           c.remaining, c.status, t.created_at
+           c.remaining, c.status, t.created_at, t.channel_id
     from try_tokens t join credit_tokens c on c.token_hash = t.token_hash and c.api_id = t.api_id
     where t.api_id = ${apiId} and t.status = 'active' and c.status in ('active', 'pending') and c.remaining > 0
+      and ${sql.unsafe(OPEN_TRY_CHANNEL)}
     order by t.created_at desc limit 1`;
   if (!row) return null;
   return {
     id: row.id, token: row.token, creditTokenId: row.credit_token_id, packId: row.pack_id, txHash: row.tx_hash,
-    remaining: row.remaining, pending: row.status === "pending", boughtAt: row.created_at,
+    remaining: row.remaining, pending: row.status === "pending", boughtAt: row.created_at, channelId: row.channel_id,
   };
+}
+
+/**
+ * An escrow purchase's channel and IOU key, saved once the datum was checked and the lock signed, before it
+ * is sent: a lock that lands is then always closable, and its IOUs signable, whatever happens next.
+ */
+export async function saveTryChannel(sql: Q, id: string, r: { channelId: string; iouSecret: string; ruleHash: string }): Promise<boolean> {
+  const done = await sql`
+    update try_tokens set channel_id = ${r.channelId}, iou_secret = ${r.iouSecret}, rule_hash = ${r.ruleHash}
+    where id = ${id} and status = 'buying'`;
+  return done.count === 1;
 }
 
 export type UnsettledTryPurchase = { id: string; packId: string; paymentSignature: string; recoverySecret: string; createdAt: Date };

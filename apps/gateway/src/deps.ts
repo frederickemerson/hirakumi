@@ -1,6 +1,6 @@
 import type { FacilitatorClient } from "@x402/core/server";
 import type { Sql } from "@hirakumi/db";
-import type { SignedHook } from "@hirakumi/buyer";
+import type { EscrowPurchase, OfferCheck, SignedHook } from "@hirakumi/buyer";
 import type { GatewayConfig } from "./config";
 import type { HealthTracker } from "./health";
 import type { EscrowChain } from "./escrowChain";
@@ -27,6 +27,13 @@ export type DemoBuyer = {
   address: string;
   /** Direct-pack x402 purchase that pays exactly `expected.amount`. `onSigned` fires when settlement starts. */
   buyPack(buyUrl: string, expected: { amount: bigint }, hooks?: { onSigned?: SignedHook }): Promise<{ token: string; credits: number; txHash: string | null }>;
+  /**
+   * Escrow-pack x402 purchase (PACK_MODE=escrow): sends the IOU key and refund address, pays only if `check`
+   * accepts the 402's datum, and `onSigned` fires (awaited) once the lock is signed, before it is sent.
+   */
+  buyEscrowPack(
+    buyUrl: string, keys: { receiptKey: string; refundAddress: string }, check: OfferCheck, hooks?: { onSigned?: SignedHook },
+  ): Promise<EscrowPurchase>;
   /** What the wallet holds on-chain right now. */
   balance(): Promise<{ lovelace: bigint; usdmMicros: bigint }>;
   /** Used for /recover against the gateway's own public URL. */

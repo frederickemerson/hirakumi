@@ -185,6 +185,9 @@ importers:
       '@hirakumi/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@hirakumi/escrow':
+        specifier: workspace:*
+        version: link:../../packages/escrow
       '@meshsdk/core-cst':
         specifier: 1.9.1
         version: 1.9.1(@harmoniclabs/bytestring@1.0.0)(@harmoniclabs/crypto@0.2.5)(rxjs@7.8.2)

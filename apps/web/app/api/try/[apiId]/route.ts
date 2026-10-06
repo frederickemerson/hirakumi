@@ -3,7 +3,7 @@ import { env } from "@/lib/env";
 import type { ApiRouteContext } from "@/lib/http";
 import { createRateLimiter, envTryToken } from "@/lib/try";
 import { createTryHandler } from "@/lib/try-handler";
-import { demoBudgetProblem, findTryPack } from "@/lib/try-repo";
+import { demoBudgetProblem, findTryPack, tryEscrowStore } from "@/lib/try-repo";
 
 /** Paid tries per hour per pack across all visitors, so one pack can't be drained in a minute. */
 const PAID_TRIES_PER_HOUR = 30;
@@ -18,6 +18,7 @@ export async function POST(req: Request, ctx: ApiRouteContext): Promise<Response
     pack: (id) => findTryPack(getSql(), id, envTryToken(id)),
     allow,
     budget: (_apiId, token) => demoBudgetProblem(getSql(), token, PAID_TRIES_PER_HOUR),
+    escrow: tryEscrowStore(getSql()),
   });
   return handle(req, apiId);
 }

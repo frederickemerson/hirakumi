@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { useRef, useState, type ReactNode } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { DeleteApiButton } from "@/components/delete-api-button";
 import { EmptyState } from "@/components/states";
 import { toast } from "@/components/toast";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { accountTotals, passRatePct, type AccountApi, type ApiBadge } from "@/lib/account";
-import { deleteJson, postJson } from "@/lib/client-fetch";
+import { postJson } from "@/lib/client-fetch";
 import { formatTime, RETIRE_COPY } from "@/lib/copy";
 import { STATUS_BADGE_VARIANT } from "@/lib/status-labels";
 import { formatTusdm } from "@/lib/money";
@@ -25,7 +26,7 @@ function motionAllowed(): boolean {
 }
 
 /**
- * Totals and the seller's APIs, with Retire and Delete. The list is local state seeded by the server, so a
+ * Totals and the seller's APIs, with Retire and Delete (any stage). The list is local state seeded by the server, so a
  * confirmed change shows at once (badge, actions and totals) without waiting on a page reload.
  * `children` renders between the totals and the list (the account details).
  */
@@ -45,9 +46,8 @@ export function AccountApis({ initial, children }: { initial: AccountApi[]; chil
     heading.current?.focus(); // the row that held focus is gone: land on the list, not on <body>
   }
 
-  async function del(a: AccountApi) {
-    await deleteJson(`/api/apis/${a.id}`);
-    toast(`Deleted ${a.name}`);
+  /** After the server confirmed the delete: collapse the row, then drop it. */
+  function deleted(a: AccountApi) {
     if (!motionAllowed()) return remove(a.id);
     setLeaving((s) => new Set(s).add(a.id));
     setTimeout(() => remove(a.id), COLLAPSE_MS);
@@ -57,7 +57,7 @@ export function AccountApis({ initial, children }: { initial: AccountApi[]; chil
     await postJson(`/api/apis/${a.id}/retire`, {});
     setApis((list) => list.map((x) => (x.id === a.id
       ? { ...x, state: "retired", badge: { tone: "retired", label: "Retired", detail: null },
-          deleteBlocker: "This API reached the Masumi registry, so its records stay." }
+          recordsKept: "It reached the Masumi registry, so we keep its records." }
       : x)));
     toast(`Retired ${a.name}`);
   }
@@ -84,7 +84,7 @@ export function AccountApis({ initial, children }: { initial: AccountApi[]; chil
         ) : (
           <ul className="overflow-hidden rounded-[2px] border-2 border-ink bg-frost">
             {apis.map((a, i) => (
-              <ApiRow key={a.id} api={a} first={i === 0} leaving={leaving.has(a.id)} onDelete={() => del(a)} onRetire={() => retire(a)} />
+              <ApiRow key={a.id} api={a} first={i === 0} leaving={leaving.has(a.id)} onDeleted={() => deleted(a)} onRetire={() => retire(a)} />
             ))}
           </ul>
         )}
@@ -102,11 +102,11 @@ function Total({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ApiRow({ api: a, first, leaving, onDelete, onRetire }: {
+function ApiRow({ api: a, first, leaving, onDeleted, onRetire }: {
   api: AccountApi;
   first: boolean;
   leaving: boolean;
-  onDelete: () => Promise<void>;
+  onDeleted: () => void;
   onRetire: () => Promise<void>;
 }) {
   const nameId = `api-${a.id}-name`;
@@ -154,26 +154,7 @@ function ApiRow({ api: a, first, leaving, onDelete, onRetire }: {
                 onConfirm={onRetire}
               />
             )}
-            {a.deleteBlocker === null && (
-              <ConfirmDialog
-                triggerLabel="Delete"
-                triggerVariant="destructive"
-                title={`Delete ${a.name}?`}
-                description="It never went live, so nothing on Masumi points at it. This can't be undone."
-                details={
-                  <ul className="list-disc space-y-1 pl-5 text-body text-graphite">
-                    <li>The API and its endpoints</li>
-                    <li>Promises, test inputs and test calls</li>
-                    <li>Prices, ownership checks and progress</li>
-                    <li>Chat messages about it</li>
-                  </ul>
-                }
-                confirmLabel="Delete API"
-                pendingLabel="Deleting…"
-                typeToConfirm={a.name}
-                onConfirm={onDelete}
-              />
-            )}
+            <DeleteApiButton api={a} onDeleted={onDeleted} />
           </div>
         </div>
       </div>

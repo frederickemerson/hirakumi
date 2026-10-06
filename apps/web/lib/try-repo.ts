@@ -1,5 +1,6 @@
-import { sha256Hex } from "@hirakumi/core";
+import { ruleHash, sha256Hex, type RuleDefinition } from "@hirakumi/core";
 import type { Sql } from "./db";
+import type { TryChannel, TryEscrowStore } from "./try-escrow";
 
 export type TryOperationRow = {
   opId: string;
@@ -31,14 +32,22 @@ export type TryPack = {
   txHash: string | null;
   boughtAt: Date;
   source: "live" | "env";
+  /** An escrow pack (PACK_MODE=escrow): the demo wallet signs its IOUs (lib/try-escrow). Null for a direct pack. */
+  channel?: TryChannel | null;
 };
 
 /** Columns arrive camel-cased (lib/db transform). */
-type PackRow = { token: string; creditTokenId: string; remaining: number; status: string; txHash: string | null; boughtAt: Date };
+type PackRow = {
+  token: string; creditTokenId: string; remaining: number; status: string; txHash: string | null; boughtAt: Date;
+  tryId?: string; channelId?: string | null; iouSecret?: string | null; ruleHash?: string | null; iouLast?: string | null;
+};
 
 const toPack = (r: PackRow, source: TryPack["source"]): TryPack => ({
   token: r.token, creditTokenId: r.creditTokenId, remaining: r.remaining, pending: r.status === "pending",
   txHash: r.txHash, boughtAt: r.boughtAt, source,
+  channel: r.tryId && r.channelId && r.iouSecret && r.ruleHash
+    ? { tryId: r.tryId, channelId: r.channelId, secretKey: r.iouSecret, ruleHash: r.ruleHash, lastIou: r.iouLast ?? null }
+    : null,
 });
 
 /**
@@ -53,11 +62,16 @@ export async function findTryPack(
   opts: { withCredits?: boolean } = {},
 ): Promise<TryPack | null> {
   const withCredits = opts.withCredits ?? true;
+  // An escrow pack can pay only while its channel takes calls (lock pending or verified, never disputed); the
+  // same rule as the gateway's findUsableTryPack (packages/db/src/tryTokens.ts, OPEN_TRY_CHANNEL).
   const [live] = await sql<PackRow[]>`
-    select t.token, c.id as credit_token_id, c.remaining, c.status, coalesce(t.tx_hash, c.tx_hash) as tx_hash, t.created_at as bought_at
+    select t.token, c.id as credit_token_id, c.remaining, c.status, coalesce(t.tx_hash, c.tx_hash) as tx_hash, t.created_at as bought_at,
+           t.id as try_id, t.channel_id, t.iou_secret, t.rule_hash, t.iou_last
     from try_tokens t join credit_tokens c on c.token_hash = t.token_hash and c.api_id = t.api_id
     where t.api_id = ${apiId} and t.status = 'active'
-      and (${!withCredits} or (c.status in ('active', 'pending') and c.remaining > 0))
+      and (${!withCredits} or (c.status in ('active', 'pending') and c.remaining > 0
+        and (t.channel_id is null or (not t.disputed and exists (
+          select 1 from pack_channels p where p.channel_id = t.channel_id and p.status in ('pending', 'locked'))))))
     order by t.created_at desc limit 1`;
   if (live) return toPack(live, "live");
   if (!envToken) return null;
@@ -81,4 +95,31 @@ export async function demoBudgetProblem(sql: Sql, token: string, perHour: number
   if (!row || (row.status !== "active" && row.status !== "pending") || row.remaining <= 0) return "This pack is used up. Buy a new one live.";
   if (row.used >= perHour) return "This pack has made its calls for this hour. Try again later.";
   return null;
+}
+
+/** The demo wallet's IOU state for escrow packs, kept on its try_tokens row. */
+export function tryEscrowStore(sql: Sql): TryEscrowStore {
+  return {
+    async rule(hash) {
+      const rows = await sql<{ definition: RuleDefinition }[]>`select definition from rules where hash = ${hash} limit 1`;
+      // The stored row proves nothing by itself: the definition must hash to the promise the lock names.
+      const def = rows[0]?.definition;
+      return def && ruleHash(def) === hash ? def : null;
+    },
+    async countPass(tryId) {
+      const [row] = await sql<{ iouVerified: number }[]>`
+        update try_tokens set iou_verified = iou_verified + 1 where id = ${tryId} returning iou_verified`;
+      return row?.iouVerified ?? 0;
+    },
+    async verified(tryId) {
+      const [row] = await sql<{ iouVerified: number }[]>`select iou_verified from try_tokens where id = ${tryId}`;
+      return row?.iouVerified ?? 0;
+    },
+    async saveIou(tryId, n, iou) {
+      await sql`update try_tokens set iou_signed = ${n}, iou_last = ${iou} where id = ${tryId} and iou_signed < ${n}`;
+    },
+    async dispute(tryId) {
+      await sql`update try_tokens set disputed = true where id = ${tryId}`;
+    },
+  };
 }

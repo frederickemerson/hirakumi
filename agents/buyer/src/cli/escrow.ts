@@ -1,5 +1,5 @@
 import { parseArgs } from "node:util";
-import { cliArgs } from "../cliArgs.js";
+import { cliArgs, queryArgs } from "../cliArgs.js";
 import { randomBytes } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import { inputHash, outputHash } from "@hirakumi/core";
@@ -7,9 +7,9 @@ import { createPurchase } from "@hirakumi/masumi";
 import { need } from "../env.js";
 import { runEscrowJob } from "../escrowBuyer.js";
 
-const { values } = parseArgs({ args: cliArgs(), options: { api: { type: "string" }, symbol: { type: "string", default: "ADA" } } });
+const { values } = parseArgs({ args: cliArgs(), options: { api: { type: "string" }, symbol: { type: "string", default: "ADA" }, query: { type: "string", multiple: true } } });
 if (!values.api) {
-  console.error("Usage: pnpm --filter @hirakumi/buyer escrow -- --api <apiId> [--symbol ADA]");
+  console.error("Usage: pnpm --filter @hirakumi/buyer escrow -- --api <apiId> [--symbol ADA | --query name=value ...]");
   process.exit(1);
 }
 const masumi = { baseUrl: need("BUYER_PAYMENT_SERVICE_URL"), token: need("BUYER_PAYMENT_SERVICE_TOKEN"), network: "Preprod" as const };
@@ -28,7 +28,7 @@ const result = await runEscrowJob(
   {
     gatewayUrl: need("PUBLIC_BASE_URL"),
     apiId: values.api,
-    input: { symbol: values.symbol },
+    input: queryArgs(values.query, values.symbol),
     escrowUnit: need("MASUMI_ESCROW_UNIT"),
     maxEscrowMicros: BigInt(process.env.MAX_ESCROW_MICROS ?? "5000000"),
     pollMs: 5_000,

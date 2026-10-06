@@ -54,9 +54,9 @@ WHEN AN API IS DOWN
 - Hirakumi checks each Live API on a schedule against its promise. After 2 failed checks it shows as Down: the gateway answers 503 before any payment, no credits are used, Masumi marks the agent Offline, and the public status page shows the outage.
 
 WHERE THE MONEY SITS (is my money safe?)
-- Direct packs, the default today: the pack payment settles straight to the seller's wallet. Hirakumi never holds the money. The gateway counts credits and uses one only on a pass; buyers can audit every call through their receipts. A wrongly charged credit is not refunded by the chain.
+- Escrow packs, the default: the pack payment locks in a Cardano contract (Aiken, Plutus V3, 175 contract tests), never with Hirakumi. The buyer signs for each answer that kept the promise; when the pack closes the seller is paid for the signed calls less Hirakumi's 3% fee, and everything else goes back to the buyer. The buyer can always exit with everything unsigned. Hirakumi closes a pack once its calls are used up or the buyer asks.
 - Masumi escrow jobs: an agent can hire the API for a single job. Masumi's contract holds the money per job. A failing answer is not submitted, so Masumi refunds the buyer automatically on-chain.
-- Escrow pack channel: proven end to end on preprod, but not the default yet. The pack money waits in a Cardano contract (Aiken, Plutus V3, 175 contract tests). The buyer signs for each answer that kept the promise, the seller is paid only for signed calls, and the rest goes back to the buyer. The buyer can always exit with everything unsigned.
+- Direct packs: an older mode where the pack payment settles straight to the seller's wallet. It is only a fallback now.
 
 COST AND BUSINESS MODEL
 - Using Hirakumi costs nothing on preprod.
@@ -99,7 +99,7 @@ const SUGGESTED_ANSWERS: Record<(typeof SUGGESTED_QUESTIONS)[number] | (typeof E
   "How do I list my API?":
     "Sign in with your Cardano wallet, then paste the link to your OpenAPI 3 file at /apis/new. Hirakumi reads it and lists your endpoints. You choose which ones to sell, prove the API is yours by adding a code to your OpenAPI file and signing once with your wallet, then check the promise and set a pack price. Nothing is published until you press Publish.",
   "Is my money safe?":
-    "Today a pack payment settles straight to the seller's wallet, so Hirakumi never holds it. The gateway uses a buyer's credit only when an answer keeps the promise, and every call has a receipt. An escrow channel, where the money waits in a Cardano contract, is proven on preprod but not the default yet. Everything runs on preprod with test funds.",
+    "A pack payment locks in a Cardano escrow contract, so Hirakumi never holds it. The buyer signs for each answer that kept the promise; the seller is paid for signed calls only and the rest goes back to the buyer. Every call has a receipt. Everything runs on preprod with test funds.",
   "Why do you need my wallet?":
     "Your wallet address is your account and the place buyers pay. To sign in and to prove an API is yours, you sign one message. Signing costs nothing and moves no funds. Any CIP-30 wallet on preprod works, such as Lace or Eternl.",
   "What does a promise look like?":
@@ -118,7 +118,7 @@ const LANDING_ANSWERS: Record<(typeof LANDING_QUESTIONS)[number], string> = {
   "Is this on mainnet?":
     "No. Everything runs on Cardano preprod, a test network, with test USDM. Nothing here moves real money.",
   "What does it cost?":
-    "Nothing on preprod. The plan is an onboarding fee and a small take rate on sales. Pack payments settle to your wallet; Hirakumi never holds your money.",
+    "Nothing on preprod. The plan is an onboarding fee and a small take rate on sales. Pack money waits in a Cardano escrow contract, never with Hirakumi, and pays you per kept promise.",
 };
 
 export const OFFLINE_FAQ: Record<string, string> = { ...SUGGESTED_ANSWERS, ...LANDING_ANSWERS };

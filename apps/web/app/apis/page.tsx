@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { RefreshingDeleteApiButton } from "@/components/delete-api-button";
 import { HealthBadge } from "@/components/health-badge";
 import { EmptyState } from "@/components/states";
 import { TryLiveLink } from "@/components/try-live-link";
@@ -8,7 +9,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { shortAddress, STATE_LABEL } from "@/lib/copy";
 import { getSql } from "@/lib/db";
 import { requireSellerPage } from "@/lib/page-auth";
-import { listApisForSeller, listStoppedApiIds } from "@/lib/repo/apis";
+import { listApisForSeller, listRecordsKept, listStoppedApiIds } from "@/lib/repo/apis";
 import { apiStatus, STATUS_BADGE_VARIANT } from "@/lib/status-labels";
 import type { Api } from "@/lib/types";
 
@@ -17,7 +18,9 @@ export const metadata: Metadata = { title: "Your APIs" };
 export default async function ApisPage() {
   const session = await requireSellerPage("/apis");
   const sql = getSql();
-  const [apis, stopped] = await Promise.all([listApisForSeller(sql, session.sellerId), listStoppedApiIds(sql, session.sellerId)]);
+  const [apis, stopped, recordsKept] = await Promise.all([
+    listApisForSeller(sql, session.sellerId), listStoppedApiIds(sql, session.sellerId), listRecordsKept(sql, session.sellerId),
+  ]);
   return (
     <section className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -42,6 +45,7 @@ export default async function ApisPage() {
                   <ApiStatusBadge state={a.state} health={a.health} stopped={stopped.has(a.id)} />
                 )}
                 <TryLiveLink apiId={a.id} state={a.state} health={a.health} variant="outline" size="sm" />
+                <RefreshingDeleteApiButton api={{ id: a.id, name: a.name, state: a.state, recordsKept: recordsKept.get(a.id) ?? null }} />
               </div>
             </li>
           ))}

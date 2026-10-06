@@ -3,7 +3,9 @@ import {
   compareBases, judgeListingBase, LISTED_BY_OTHER, listActiveOnOrigin, newId, overlapWarning, takenEarly, type QueryFn,
 } from "@hirakumi/core";
 import type { Sql } from "../db";
+import { recordsKeptReason } from "../api-delete";
 import type { Api, ApiState, OnboardStep } from "../types";
+import { registerStartedSql, soldSql } from "./delete-api";
 
 export const API_COLUMNS = [
   "id", "seller_id", "name", "origin", "openapi_url", "state", "health",
@@ -98,7 +100,7 @@ export async function createApiForTask(
 }
 
 export async function getApiForSeller(sql: Sql, apiId: string, sellerId: string): Promise<Api | null> {
-  const [row] = await sql<Api[]>`select ${sql(API_COLUMNS)} from apis where id = ${apiId} and seller_id = ${sellerId}`;
+  const [row] = await sql<Api[]>`select ${sql(API_COLUMNS)} from apis where id = ${apiId} and seller_id = ${sellerId} and deleted_at is null`;
   return row ?? null;
 }
 
@@ -111,12 +113,21 @@ export async function getLiveApi(sql: Sql, apiId: string): Promise<Api | null> {
 export async function listStoppedApiIds(sql: Sql, sellerId: string): Promise<Set<string>> {
   const rows = await sql<{ apiId: string }[]>`
     select distinct s.api_id from onboard_steps s join apis a on a.id = s.api_id
-    where a.seller_id = ${sellerId} and s.status = 'failed'`;
+    where a.seller_id = ${sellerId} and a.deleted_at is null and s.status = 'failed'`;
   return new Set(rows.map((r) => r.apiId));
 }
 
+/** For each of the seller's APIs, why deleting it keeps its records (null: it would be erased). */
+export async function listRecordsKept(sql: Sql, sellerId: string): Promise<Map<string, string | null>> {
+  const a = sql`a.id`;
+  const rows = await sql<{ id: string; state: ApiState; agentIdentifier: string | null; registerStarted: boolean; sold: boolean }[]>`
+    select a.id, a.state, a.agent_identifier, ${registerStartedSql(sql, a)} as register_started, ${soldSql(sql, a)} as sold
+    from apis a where a.seller_id = ${sellerId} and a.deleted_at is null`;
+  return new Map(rows.map((r) => [r.id, recordsKeptReason(r)]));
+}
+
 export async function listApisForSeller(sql: Sql, sellerId: string): Promise<Api[]> {
-  return sql<Api[]>`select ${sql(API_COLUMNS)} from apis where seller_id = ${sellerId} order by created_at desc`;
+  return sql<Api[]>`select ${sql(API_COLUMNS)} from apis where seller_id = ${sellerId} and deleted_at is null order by created_at desc`;
 }
 
 /** Conditional transition: succeeds only from one of `from`, so double clicks and races can't skip a step. */

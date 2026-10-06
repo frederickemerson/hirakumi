@@ -1,4 +1,15 @@
 export const MIN_PRICE_MICROS = 1_000_000n;
+
+/**
+ * Escrow packs pay the seller per call, so the pack price must split evenly across its calls in micro-tUSDM
+ * (the gateway refuses to offer one that doesn't). Null when it does, else what to change, in the seller's words.
+ */
+export function unevenPackPrice(priceMicros: bigint, calls: number): string | null {
+  if (calls < 1 || priceMicros % BigInt(calls) === 0n) return null;
+  const n = BigInt(calls);
+  const nearest = ((priceMicros + n - 1n) / n) * n; // the nearest even split at or above the price
+  return `The pack price must split evenly across its ${calls} calls, because escrow pays you per call. Try ${formatTusdm(nearest)} tUSDM.`;
+}
 const MICROS = 1_000_000n;
 
 export class MoneyError extends Error {}

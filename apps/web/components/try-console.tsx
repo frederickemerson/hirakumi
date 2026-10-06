@@ -311,7 +311,8 @@ export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReas
                     ) : (
                       <>
                         A real x402 payment{packPrice ? ` of ${formatTusdm(packPrice.priceMicros)} tUSDM for ${packPrice.calls} calls` : ""} on Cardano preprod,
-                        from Hirakumi&apos;s demo wallet. Settles in 20 to 60 s, then makes your call.
+                        from Hirakumi&apos;s demo wallet, locked in escrow. Settles in 20 to 60 s, then makes your call. The wallet signs for each
+                        answer it checked against the promise; the seller is paid only for those.
                       </>
                     )}
                   </p>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatTusdm, MoneyError, parsePackCalls, parseTusdm, perCallTusdm } from "./money";
+import { formatTusdm, MoneyError, parsePackCalls, parseTusdm, perCallTusdm, unevenPackPrice } from "./money";
 
 describe("parseTusdm", () => {
   it.each([
@@ -39,5 +39,16 @@ describe("parsePackCalls", () => {
 describe("perCallTusdm", () => {
   it("divides the pack price across its calls", () => {
     expect(perCallTusdm("2000000", 100)).toBe("0.02");
+  });
+});
+
+describe("unevenPackPrice (escrow pays per call)", () => {
+  it("accepts a price that splits evenly across the calls", () => {
+    expect(unevenPackPrice(2_000_000n, 100)).toBeNull();
+    expect(unevenPackPrice(1_000_000n, 1)).toBeNull();
+  });
+  it("names the nearest even price above an uneven one", () => {
+    expect(unevenPackPrice(1_000_001n, 100)).toBe("The pack price must split evenly across its 100 calls, because escrow pays you per call. Try 1.0001 tUSDM.");
+    expect(unevenPackPrice(1_000_000n, 3)).toMatch(/Try 1\.000002 tUSDM/);
   });
 });

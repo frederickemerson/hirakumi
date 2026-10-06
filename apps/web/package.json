@@ -18,6 +18,7 @@
     "@fabianbormann/cardano-peer-connect": "1.2.21",
     "@gsap/react": "2.1.2",
     "@hirakumi/core": "workspace:*",
+    "@hirakumi/escrow": "workspace:*",
     "@meshsdk/core-cst": "1.9.1",
     "class-variance-authority": "0.7.1",
     "cn": "0.4.0",
