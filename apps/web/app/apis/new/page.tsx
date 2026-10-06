@@ -1,4 +1,6 @@
+import { ChatPanel } from "@/components/chat-panel";
 import { SetupForm } from "@/components/setup-form";
+import { env } from "@/lib/env";
 import { requireSellerPage } from "@/lib/page-auth";
 
 export default async function NewApiPage({ searchParams }: { searchParams: Promise<{ openapiUrl?: string }> }) {
@@ -12,6 +14,7 @@ export default async function NewApiPage({ searchParams }: { searchParams: Promi
         Nothing is published until you approve it.
       </p>
       <SetupForm initialUrl={typeof openapiUrl === "string" ? openapiUrl : ""} />
+      {env.chatFallback() && <ChatPanel apiId={null} />}
     </section>
   );
 }
