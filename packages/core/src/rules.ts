@@ -13,7 +13,8 @@ export type RuleDefinition = {
 export type Verdict = { pass: boolean; reasons: string[] };
 export type CompiledRule = { hash: string; check(res: UpstreamResult): Verdict };
 
-export const DEFAULT_MAX_AGE_SECONDS = 300;
+// Contract v1.1 B2: 600–3000 s. Price feeds such as CoinGecko lag 1–5 min, and a stale demo answer is 1 h old.
+export const DEFAULT_MAX_AGE_SECONDS = 900;
 
 /** Age in seconds of an ISO 8601 string or an epoch-seconds number; null when unparseable. */
 export function ageSeconds(value: string | number, nowMs: number): number | null {

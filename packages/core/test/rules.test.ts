@@ -85,9 +85,16 @@ describe("inferRule", () => {
         createdAt: { type: "string" },
         price: { type: "number" },
         symbol: { type: "string" },
-        updatedAt: { type: "string", maxAgeSeconds: 300 },
+        updatedAt: { type: "string", maxAgeSeconds: 900 },
       },
     });
+  });
+  it("inferred freshness tolerates a lagging price feed (6 min) but fails stale data (1 h) — contract v1.1 B2", () => {
+    const c = compileRule(inferRule(samples));
+    const at = (ageS: number) => new Date(NOW.getTime() - ageS * 1000).toISOString();
+    const body = (ageS: number) => ({ symbol: "ADA", price: 0.4, updatedAt: at(ageS), createdAt: "2019-01-01T00:00:00Z" });
+    expect(c.check(res(body(360))).pass).toBe(true);
+    expect(c.check(res(body(3600))).pass).toBe(false);
   });
   it("the inferred rule fails the broken deploy ({})", () => {
     expect(compileRule(inferRule(samples)).check(res({})).pass).toBe(false);
