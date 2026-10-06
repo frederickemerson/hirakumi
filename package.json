@@ -1,0 +1,29 @@
+{
+  "name": "hirakumi",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.28.1",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "pnpm -r --workspace-concurrency=1 test",
+    "typecheck": "pnpm -r typecheck",
+    "db:up": "docker compose -f docker-compose.dev.yml up -d postgres",
+    "db:migrate": "pnpm --filter @hirakumi/db migrate"
+  },
+  "pnpm": {
+    "overrides": {
+      "@x402/core": "2.26.0",
+      "@x402/extensions": "2.26.0",
+      "@x402/cardano": "2.26.0",
+      "@x402/express": "2.26.0",
+      "@x402/fetch": "2.26.0"
+    },
+    "onlyBuiltDependencies": ["esbuild"]
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  }
+}

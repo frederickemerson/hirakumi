@@ -8,3 +8,4 @@ dist/
 vendor/
 .DS_Store
 coverage/
+*.log

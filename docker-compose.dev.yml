@@ -1,0 +1,17 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    command: ["postgres", "-c", "max_connections=300"]
+    environment:
+      POSTGRES_USER: hirakumi
+      POSTGRES_PASSWORD: hirakumi
+      POSTGRES_DB: hirakumi
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hirakumi -d hirakumi"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+volumes:
+  pgdata: {}

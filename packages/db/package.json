@@ -1,0 +1,14 @@
+{
+  "name": "@hirakumi/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts", "./testing": "./src/testing.ts" },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p .",
+    "migrate": "tsx src/migrate-cli.ts"
+  },
+  "dependencies": { "postgres": "3.4.9" },
+  "devDependencies": { "@types/node": "22.20.5", "tsx": "4.23.15", "typescript": "5.9.3", "vitest": "3.2.7" }
+}
