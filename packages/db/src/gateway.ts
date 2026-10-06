@@ -246,9 +246,3 @@ export async function getActiveHttpChallenge(sql: Sql, apiId: string): Promise<{
   return row ?? null;
 }
 
-export async function consumeChallenge(sql: Sql, id: string, proof: Record<string, unknown>): Promise<boolean> {
-  const rows = await sql`
-    update challenges set consumed_at = now(), proof = ${json(sql, proof)}
-    where id = ${id} and consumed_at is null returning id`;
-  return rows.length === 1;
-}

@@ -36,15 +36,17 @@ describe("challenge check", () => {
     h.sql`insert into challenges (id, api_id, kind, token, expires_at) values (${`ch_${token}`}, ${h.seeded.apiId}, 'http', ${token}, now() + interval '30 minutes')`;
   const check = () => request(h.app).post(`/internal/challenge/${h.seeded.apiId}/check`).set(auth());
 
-  it("passes once when the file matches, then the challenge is used up", async () => {
+  it("passes when the file matches and leaves the challenge for the web app to consume", async () => {
     await insertChallenge("tok-123");
     h.stub.setChallenge(httpChallengePath(h.seeded.apiId), "tok-123\n");
     const ok = await check();
     expect(ok.body).toEqual({ ok: true, triedUrl: `${h.stub.origin}${httpChallengePath(h.seeded.apiId)}`, detail: "Ownership file verified." });
-    const [row] = await h.sql<{ consumed_at: Date | null; proof: { status: number } | null }[]>`select consumed_at, proof from challenges`;
-    expect(row.consumed_at).not.toBeNull();
-    expect(row.proof?.status).toBe(200);
-    expect((await check()).body.ok).toBe(false);
+    // Contract v1.1 D3: the gateway only reads the http challenge. The web app records the pass and
+    // consumes the row when ownership is finalised, so a second check still matches.
+    const [row] = await h.sql<{ consumed_at: Date | null; proof: unknown }[]>`select consumed_at, proof from challenges`;
+    expect(row.consumed_at).toBeNull();
+    expect(row.proof).toBeNull();
+    expect((await check()).body.ok).toBe(true);
   });
   it("explains a missing file and a wrong file with the exact URL tried", async () => {
     await insertChallenge("tok-456");

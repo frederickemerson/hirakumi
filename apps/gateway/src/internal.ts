@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { Router, type RequestHandler } from "express";
 import { httpChallengePath, safeFetch, UpstreamBlockedError, UpstreamTimeoutError } from "@hirakumi/core";
-import { consumeChallenge, getActiveHttpChallenge, insertCall } from "@hirakumi/db";
+import { getActiveHttpChallenge, insertCall } from "@hirakumi/db";
 import type { AppDeps } from "./deps";
 import { runOperation } from "./upstream";
 
@@ -59,7 +59,7 @@ export function internalRouter(d: AppDeps): Router {
         } else if (got.body.trim() !== challenge.token.trim()) {
           detail = "The file was found, but its contents do not match the challenge. Upload the file you downloaded, unchanged.";
         } else {
-          await consumeChallenge(d.sql, challenge.id, { url: triedUrl, status: got.status, checkedAt: new Date().toISOString() });
+          // Read-only (contract v1.1 D3): the web app records the pass and consumes the row at finalisation.
           res.json({ ok: true, triedUrl, detail: "Ownership file verified." });
           return;
         }

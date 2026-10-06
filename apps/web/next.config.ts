@@ -5,6 +5,8 @@ const config: NextConfig = {
   serverExternalPackages: ["@meshsdk/core-cst"],
   // @hirakumi/core may ship TypeScript source from the workspace.
   transpilePackages: ["@hirakumi/core"],
+  // Don't write AGENTS.md / CLAUDE.md into the app directory on `next dev`.
+  agentRules: false,
 };
 
 export default config;
