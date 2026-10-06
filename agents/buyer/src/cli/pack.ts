@@ -1,4 +1,5 @@
 import { parseArgs } from "node:util";
+import { cliArgs } from "../cliArgs.js";
 import { setTimeout as sleep } from "node:timers/promises";
 import { resolve } from "node:path";
 import { need } from "../env.js";
@@ -6,7 +7,7 @@ import { createPackPayer } from "../payClient.js";
 import { TokenStore } from "../tokenStore.js";
 import { runPackDemo } from "../packBuyer.js";
 
-const { values } = parseArgs({
+const { values } = parseArgs({ args: cliArgs(),
   options: {
     api: { type: "string" },
     op: { type: "string", default: "getPrice" },

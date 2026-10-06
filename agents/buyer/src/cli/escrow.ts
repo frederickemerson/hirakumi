@@ -1,4 +1,5 @@
 import { parseArgs } from "node:util";
+import { cliArgs } from "../cliArgs.js";
 import { randomBytes } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import { inputHash, outputHash } from "@hirakumi/core";
@@ -6,7 +7,7 @@ import { createPurchase } from "@hirakumi/masumi";
 import { need } from "../env.js";
 import { runEscrowJob } from "../escrowBuyer.js";
 
-const { values } = parseArgs({ options: { api: { type: "string" }, symbol: { type: "string", default: "ADA" } } });
+const { values } = parseArgs({ args: cliArgs(), options: { api: { type: "string" }, symbol: { type: "string", default: "ADA" } } });
 if (!values.api) {
   console.error("Usage: pnpm --filter @hirakumi/buyer escrow -- --api <apiId> [--symbol ADA]");
   process.exit(1);
