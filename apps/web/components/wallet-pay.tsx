@@ -89,9 +89,8 @@ export function WalletPay({ apiId, packPrice, onBought }: {
     <div id="try-pack-note" role="note" className="space-y-4" data-testid="wallet-pay">
       <div className="space-y-1">
         <p className="text-body-lg font-semibold">Pay with your wallet</p>
-        <p className="text-body">{SELF_PAY_LINE}</p>
         {packPrice && (
-          <p className="text-body text-graphite">
+          <p className="text-body">
             {`${formatTusdm(packPrice.priceMicros)} tUSDM for ${packPrice.calls} calls, paid to your payout address. Settled direct, no escrow.`}
           </p>
         )}

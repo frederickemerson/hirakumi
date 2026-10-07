@@ -44,6 +44,7 @@ export function SellerTryLive({ apiId, ops, initialPack, packPrice, downReason, 
           {` (${freeTestsLeft} left on your account)`}. It settles in 20 to 60 s on Cardano preprod, then makes your call.
         </>
       }
+      noPackHint="Pay for a pack with your wallet, then call your API."
       noPackNote={
         <WalletPay
           apiId={apiId}

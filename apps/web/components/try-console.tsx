@@ -76,7 +76,7 @@ function prefersReducedMotion(): boolean {
   return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReason = null, liveBuy = false, paths, noPackNote, buyNote, onPackChange }: {
+export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReason = null, liveBuy = false, paths, noPackNote, noPackHint, buyNote, onPackChange }: {
   apiId: string;
   ops: TryOp[];
   /** A pack with credits left when the page loaded, or null: then the first step is "Buy a pack live". */
@@ -93,6 +93,8 @@ export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReas
   noPackNote?: React.ReactNode;
   /** Replaces the note under "Buy a pack live". */
   buyNote?: React.ReactNode;
+  /** The empty result slot's hint when there is no pack and no demo purchase. */
+  noPackHint?: string;
   /** Told when the pack's credits change or it runs out (null). */
   onPackChange?: (pack: TryPackView | null) => void;
 }) {
@@ -377,7 +379,7 @@ export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReas
                 <p className="max-w-xs text-body text-graphite">
                   {hasCredits
                     ? "Each call goes through the real gateway with a credit from the live pack."
-                    : liveBuy ? "First buy a pack live, just like an agent would." : "Live calls need a pack bought with an agent's own wallet."}
+                    : liveBuy ? "First buy a pack live, just like an agent would." : (noPackHint ?? "Live calls need a pack bought with an agent's own wallet.")}
                 </p>
               </div>
             ) : null}
