@@ -136,7 +136,10 @@ describe("the sealed key never reaches a buyer", () => {
     ["utf-16 hex", (k) => Buffer.from(k, "utf16le").toString("hex")],
   ];
   /** Forms a real careless API produces (echoing its request, logging, JSON writers). These must be caught. */
-  const MUST_CATCH = new Set(["raw", "upper", "json-escaped unicode", "base64", "base64url", "double base64", "percent all", "html decimal", "hex", "echoed URL"]);
+  const MUST_CATCH = new Set([
+    "raw", "upper", "json-escaped unicode", "base64", "base64url", "double base64", "percent all", "html decimal", "hex", "echoed URL",
+    "mime-wrapped base64", "zero-width split", "utf-16 hex",
+  ]);
 
   it("each encoding of the key in an otherwise passing answer: withheld, no credit; exotic ones listed", async () => {
     const keys = generateUpstreamAuthKeys();

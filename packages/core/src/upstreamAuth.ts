@@ -178,12 +178,15 @@ const base64Forms = (s: string) => {
 };
 /**
  * The part as an upstream may have read it: a "+" in a query value decoded as a space (form encoding), and its bytes
- * hex encoded (only for parts of MIN_SECRET_PART characters or more, so a short token's hex does not match ordinary
- * digits). Matching ignores case, so the hex form also stands for upper case hex.
+ * hex encoded, as UTF-8 and as UTF-16LE and UTF-16BE (only for parts of MIN_SECRET_PART characters or more, so a
+ * short token's hex does not match ordinary digits). Matching ignores case, so the hex forms also stand for upper
+ * case hex.
  */
 const readForms = (s: string) => [
   ...(s.includes("+") ? [s.replaceAll("+", " ")] : []),
-  ...(s.length >= MIN_SECRET_PART ? [Buffer.from(s, "utf8").toString("hex")] : []),
+  ...(s.length >= MIN_SECRET_PART
+    ? [Buffer.from(s, "utf8").toString("hex"), Buffer.from(s, "utf16le").toString("hex"), Buffer.from(s, "utf16le").swap16().toString("hex")]
+    : []),
 ];
 const htmlEscape = (s: string, quot: string, apos: string) =>
   s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', quot).replaceAll("'", apos);
@@ -218,13 +221,19 @@ const NAMED_ENTITIES: Record<string, string> = {
   amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", plus: "+", sol: "/", equals: "=", colon: ":", num: "#", percnt: "%",
   lowbar: "_", hyphen: "-", dash: "-", period: ".", comma: ",", excl: "!", quest: "?", lpar: "(", rpar: ")", ast: "*",
   commat: "@", dollar: "$", semi: ";", tilde: "~", verbar: "|", bsol: "\\", lsqb: "[", rsqb: "]", lcub: "{", rcub: "}",
-  nbsp: " ",
+  nbsp: " ", shy: "\u00ad", zwnj: "\u200c", zwj: "\u200d", nobreak: "\u2060",
 };
 const codePoint = (n: number, whole: string) => (n >= 0 && n <= 0x10ffff ? String.fromCodePoint(n) : whole);
 
 const JSON_CONTROL: Record<string, string> = { b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" };
 
-/** One round of unescaping: JSON backslash escapes (\uXXXX, \/ \" \\, \n and the like), \xXX, HTML entities (named, decimal, hex), and %XX for ASCII. */
+/** Characters that show as nothing: zero-width space, non-joiner and joiner, word joiner, BOM, and the soft hyphen. */
+const INVISIBLE = /[\u00ad\u200b-\u200d\u2060\ufeff]/g;
+
+/**
+ * One round of unescaping: JSON backslash escapes (\uXXXX, \/ \" \\, \n and the like), \xXX, HTML entities (named,
+ * decimal, hex), and %XX for ASCII. Invisible characters (INVISIBLE), written as they are or escaped, are removed.
+ */
 function decodeOnce(t: string): string {
   return t
     // Backslash escapes in one left-to-right pass, like a JSON parser: the raw text \\u0073 (a \u escape escaped
@@ -236,7 +245,8 @@ function decodeOnce(t: string): string {
     .replace(/&#(\d{1,7});?/g, (w, d: string) => codePoint(parseInt(d, 10), w))
     .replace(/&#[xX]([0-9a-fA-F]{1,6});?/g, (w, h: string) => codePoint(parseInt(h, 16), w))
     .replace(/&([A-Za-z]{2,8});/g, (w, n: string) => NAMED_ENTITIES[n.toLowerCase()] ?? w)
-    .replace(/%([0-7][0-9a-fA-F])/g, (_w, h: string) => String.fromCharCode(parseInt(h, 16)));
+    .replace(/%([0-7][0-9a-fA-F])/g, (_w, h: string) => String.fromCharCode(parseInt(h, 16)))
+    .replace(INVISIBLE, "");
 }
 
 /** Rounds of decoding before normaliseText stops: enough for any encoding a real upstream nests, and bounded. */
@@ -254,17 +264,34 @@ function normaliseText(text: string): string {
 }
 
 const BASE64_TOKEN = /[A-Za-z0-9+/_-]{16,}={0,2}/g;
+/**
+ * Base64 broken over lines, as MIME (76 columns, CRLF) and PEM (64, LF) write it: runs of base64 characters joined
+ * by one line break each, with spaces or tabs around it. Starting only at the start of a run and one break per joint
+ * keep the match linear in the text's length.
+ */
+const WRAPPED_BASE64 = /(?<![A-Za-z0-9+/_-])[A-Za-z0-9+/_-]+(?:[ \t]*(?:\r\n|\r|\n)[ \t]*[A-Za-z0-9+/_-]+)+={0,2}/g;
+
+/** The text with each line-wrapped base64 run joined into one token, or null when it has none. */
+function unwrapBase64(text: string): string | null {
+  const joined = text.replace(WRAPPED_BASE64, (m) => m.replace(/\s+/g, ""));
+  return joined === text ? null : joined;
+}
 const MAX_BASE64_TOKENS = 200;
 const MAX_BASE64_TOKEN_LENGTH = 4096;
 
-/** The decoded base64/base64url tokens of 16 characters or more in the texts: at most 200, each up to 4 KB. */
+/**
+ * The decoded base64/base64url tokens of 16 characters or more in the texts (at most 200, each up to 4 KB), each as
+ * decoded and normalised. As decoded too, because normalising can eat the key's first characters ("%" then a key
+ * starting "0A" reads as a line break).
+ */
 function decodedBase64Tokens(texts: string[]): string[] {
   const out: string[] = [];
+  let tokens = 0;
   for (const text of texts) {
     for (const m of text.matchAll(BASE64_TOKEN)) {
-      if (out.length >= MAX_BASE64_TOKENS) return out;
-      const token = m[0].slice(0, MAX_BASE64_TOKEN_LENGTH);
-      out.push(normaliseText(Buffer.from(token, "base64").toString("latin1")));
+      if (tokens++ >= MAX_BASE64_TOKENS) return out;
+      const decoded = Buffer.from(m[0].slice(0, MAX_BASE64_TOKEN_LENGTH), "base64").toString("latin1");
+      out.push(decoded, normaliseText(decoded));
     }
   }
   return out;
@@ -273,10 +300,11 @@ function decodedBase64Tokens(texts: string[]): string[] {
 /**
  * True when text contains the key (or one of its parts), in any case. It looks for the forms of
  * upstreamSecretForms as they are, then in the text with escapes undone (mixed percent-encoding, \u00XX escapes of
- * every character as ASP.NET writes them, decimal and hex HTML entities), then inside base64 and base64url tokens
- * of the answer. This is defence in depth, not a complete check: it catches common encodings, not every one. An
- * upstream can always transform the key in a way no check foresees, so sending the key in a header (which answers
- * echo less often than URLs) is the safer default.
+ * every character as ASP.NET writes them, decimal and hex HTML entities) and zero-width characters and soft hyphens
+ * removed, then inside base64 and base64url tokens of the answer, line-wrapped ones (MIME, PEM) joined first. This is
+ * defence in depth, not a complete check: it catches common encodings, not every one (not the key reversed, nor
+ * base64 encoded three times). An upstream can always transform the key in a way no check foresees, so sending the
+ * key in a header (which answers echo less often than URLs) is the safer default.
  */
 export function textLeaksSecret(text: string | null | undefined, value: string): boolean {
   if (!text) return false;
@@ -289,7 +317,9 @@ export function textLeaksSecret(text: string | null | undefined, value: string):
     const l = t.toLowerCase();
     return needles.some((n) => l.includes(n));
   };
-  return normalised.some(found) || decodedBase64Tokens([text, ...normalised]).some(found);
+  const scanned = [text, ...normalised];
+  const unwrapped = scanned.map(unwrapBase64).filter((t): t is string => t !== null);
+  return normalised.some(found) || decodedBase64Tokens([...scanned, ...unwrapped]).some(found);
 }
 
 /** True when any of the texts contains the key, by the same check as textLeaksSecret (example requests, say). */
