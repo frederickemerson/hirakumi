@@ -48,6 +48,9 @@ export async function POST(req: Request): Promise<Response> {
       if ("claimedByOther" in forTask) {
         return errorJson(403, "This setup link is already in use by another wallet. Sign in with that wallet, or start a new task in Sokosumi.");
       }
+      if ("linkedElsewhere" in forTask) {
+        return errorJson(409, "Your Sokosumi account is linked to another wallet. Open your setup link again to move it to this wallet.");
+      }
       result = forTask;
     } else {
       result = await createApi(getSql(), input);
