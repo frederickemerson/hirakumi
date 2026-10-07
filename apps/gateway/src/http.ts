@@ -59,9 +59,15 @@ export function sellingPausedBody(api: { ownership_paused_at: Date | null }) {
 }
 
 export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
-  const e = err as { type?: string };
+  const e = err as { type?: string; status?: unknown; expose?: unknown };
   if (e.type === "entity.parse.failed") { res.status(400).json({ error: "invalid_json" }); return; }
   if (e.type === "entity.too.large") { res.status(413).json({ error: "input_too_large", message: "Inputs are limited to 256 KB." }); return; }
+  // Any other client error body-parser raises (http-errors with expose: true), such as an unsupported charset or
+  // content encoding: the client's fault, so its own 4xx rather than a 500 and a logged stack.
+  if (e.expose === true && typeof e.status === "number" && e.status >= 400 && e.status < 500) {
+    res.status(e.status).json({ error: e.type ?? "bad_request" });
+    return;
+  }
   console.error("[gateway]", err);
   if (!res.headersSent) res.status(500).json({ error: "internal_error" });
 };

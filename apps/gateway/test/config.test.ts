@@ -23,6 +23,11 @@ describe("loadConfig", () => {
     expect(c).toMatchObject({ port: 5000, demoMode: true, probeIntervalMs: 10_000, thresholds: { failsToDown: 2, passesToHeal: 2 } });
     expect(estimatedDowntimeSeconds(c)).toBe(20);
   });
+  it("GATEWAY_PORT: blank means the default; anything but a port number 1-65535 is refused", () => {
+    expect(loadConfig({ ...env, GATEWAY_PORT: "" }).port).toBe(4021);
+    expect(loadConfig({ ...env, GATEWAY_PORT: " 8080 " }).port).toBe(8080);
+    for (const bad of ["0", "abc", "70000", "80.5"]) expect(() => loadConfig({ ...env, GATEWAY_PORT: bad })).toThrow(/GATEWAY_PORT/);
+  });
   it("TRY_LIVE_APIS: the featured demo API by default, else the comma list (audit I2)", () => {
     expect(loadConfig(env).tryLiveApis).toEqual(["api_eejiaioyqt"]);
     expect(loadConfig({ ...env, TRY_LIVE_APIS: " api_a, api_b ,api_a" }).tryLiveApis).toEqual(["api_a", "api_b"]);

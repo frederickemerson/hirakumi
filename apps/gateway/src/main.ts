@@ -1,5 +1,5 @@
 import { HTTPFacilitatorClient } from "@x402/core/server";
-import { createDb, migrate } from "@hirakumi/db";
+import { createDb, deleteStaleDecisions, deleteStaleQuotes, migrate } from "@hirakumi/db";
 import { createApp } from "./app";
 import { listen } from "./server";
 import { ChannelWatcher } from "./channelWatcher";
@@ -41,6 +41,12 @@ const reconciler = config.blockfrostProjectId ? new Reconciler({ sql, lookup: bl
 reconciler?.start();
 const watcher = escrowChain && config.packEscrow ? new ChannelWatcher({ sql, chain: escrowChain, config: config.packEscrow, intervalMs: config.demoMode ? 10_000 : 30_000 }) : null;
 watcher?.start();
+// Unpaid 402s store a settlement decision (and, in escrow, a quote) per buyer key pair. The watcher prunes them;
+// without one (no escrow settings or no Blockfrost) prune them here, or they grow without bound.
+const pruner = watcher ? null : setInterval(() => {
+  deleteStaleQuotes(sql).catch((e) => console.error("[gateway] quote cleanup:", (e as Error).message));
+  deleteStaleDecisions(sql).catch((e) => console.error("[gateway] settlement decision cleanup:", (e as Error).message));
+}, 3_600_000);
 if (!reconciler) console.warn("[gateway] BLOCKFROST_PROJECT_ID not set: pending tokens are activated only by the settle hook");
 
 const server = listen(app, config.port, () => {
@@ -53,6 +59,7 @@ const shutdown = async () => {
   jobs?.stop();
   reconciler?.stop();
   watcher?.stop();
+  if (pruner) clearInterval(pruner);
   server.close();
   await sql.end({ timeout: 5 });
   process.exit(0);

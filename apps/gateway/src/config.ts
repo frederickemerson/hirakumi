@@ -88,7 +88,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
   const psUrl = env.PAYMENT_SERVICE_URL?.trim();
   const psToken = env.PAYMENT_SERVICE_TOKEN?.trim();
   return {
-    port: Number(env.GATEWAY_PORT ?? 4021),
+    port: parsePort(env.GATEWAY_PORT),
     publicBaseUrl: required("PUBLIC_BASE_URL").replace(/\/+$/, ""),
     internalToken,
     demoMode,
@@ -116,6 +116,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     tryLiveApis: parseTryLiveApis(env.TRY_LIVE_APIS),
     upstreamAuthPrivateKey: env.UPSTREAM_AUTH_PRIVATE_KEY?.trim() || null,
   };
+}
+
+/** GATEWAY_PORT: blank or unset is 4021. Number("") is 0 (a random port) and Number("x") is NaN, so check the text. */
+function parsePort(raw: string | undefined): number {
+  const v = raw?.trim() ?? "";
+  if (!v) return 4021;
+  const n = /^\d{1,5}$/.test(v) ? Number(v) : NaN;
+  if (!(n >= 1 && n <= 65_535)) throw new Error(`GATEWAY_PORT must be a port number from 1 to 65535, not "${v}"`);
+  return n;
 }
 
 /** "a.b.c.d/n, x:y::/n, a.b.c.d" → normalised CIDRs. A bare address is a /32 or /128. /0 is refused (trusts everyone). */

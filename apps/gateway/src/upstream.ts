@@ -1,5 +1,5 @@
 import {
-  isJsonMediaType, redactUpstreamSecret, safeFetch, textLeaksSecret, upstreamSecretForms, urlWithinBase, UpstreamBlockedError, UpstreamTimeoutError, UpstreamTooLargeError, type UpstreamCredential, type UpstreamResult,
+  isJsonMediaType, redactUpstreamSecret, safeFetch, textLeaksSecret, upstreamSecretForms, urlWithinBase, UpstreamBlockedError, UpstreamTimeoutError, type UpstreamCredential, type UpstreamResult,
 } from "@hirakumi/core";
 import type { ApiRow, OperationRow } from "@hirakumi/db";
 import type { LoadedOp, UpstreamAccess } from "./registry";
@@ -157,7 +157,6 @@ async function callUpstream(
     const latencyMs = Math.round(performance.now() - started);
     if (e instanceof UpstreamBlockedError) return { execution: "blocked", verdict: "n/a", reasons: [e.message], result: null, latencyMs };
     if (e instanceof UpstreamTimeoutError) return { execution: "timeout", verdict: failVerdict, reasons: [e.message], result: null, latencyMs };
-    if (e instanceof UpstreamTooLargeError) return { execution: "upstream_error", verdict: failVerdict, reasons: [e.message], result: null, latencyMs };
     return { execution: "upstream_error", verdict: failVerdict, reasons: [(e as Error).message], result: null, latencyMs };
   }
 }

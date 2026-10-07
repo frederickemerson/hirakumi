@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { blockfrostLookup, paidTo, Reconciler, USDM_PREPROD_UNIT, type ChainLookup } from "../src/reconcile";
 import { insertActiveToken, makeHarness, type Harness } from "./helpers";
 
@@ -39,6 +39,19 @@ describe("Reconciler", () => {
     await new Reconciler({ sql: h.sql, lookup }).tick();
     expect(await statusOf(dead)).toBe("revoked");
     expect(await statusOf(recent)).toBe("pending");
+  });
+  it("one failed lookup doesn't stop the rest of the tick", async () => {
+    const broken = await pendingWithTx("ff".repeat(32), 12);
+    const good = await pendingWithTx("aa".repeat(32), 10);
+    const lookup: ChainLookup = async (tx) => {
+      if (tx === "ff".repeat(32)) throw new Error("blockfrost 500");
+      return { found: true, outputs: [{ address: h.seeded.payTo, amount: [{ unit: USDM_PREPROD_UNIT, quantity: "2000000" }] }] };
+    };
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await new Reconciler({ sql: h.sql, lookup }).tick()).toEqual({ checked: 2, activated: 1 });
+    err.mockRestore();
+    expect(await statusOf(broken)).toBe("pending");
+    expect(await statusOf(good)).toBe("active");
   });
   it("ignores tokens younger than minAgeSeconds (the settle hook gets the first chance)", async () => {
     await pendingWithTx("cc".repeat(32), 0);

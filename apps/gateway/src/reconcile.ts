@@ -59,7 +59,14 @@ export class Reconciler {
     try {
       for (const p of await listPendingPayments(this.d.sql, this.minAgeSeconds)) {
         checked += 1;
-        const r = await this.d.lookup(p.tx_hash);
+        let r: Awaited<ReturnType<ChainLookup>>;
+        try {
+          r = await this.d.lookup(p.tx_hash);
+        } catch (e) {
+          // One failed lookup (a Blockfrost error) must not stop the rest of the queue; this row is retried next tick.
+          console.error(`[reconcile] lookup ${p.tx_hash}:`, (e as Error).message);
+          continue;
+        }
         if (!r.found) {
           if (p.age_seconds > PENDING_EXPIRY_SECONDS && (await revokePendingToken(this.d.sql, p.id))) {
             console.log(`[reconcile] token ${p.id} revoked: tx ${p.tx_hash} never reached the chain`);
@@ -68,8 +75,10 @@ export class Reconciler {
         }
         const paid = paidTo(r.outputs, p.pay_to, USDM_PREPROD_UNIT);
         if (paid >= BigInt(p.price_micros)) {
-          if (await activateTokenById(this.d.sql, p.id)) activated += 1;
-          console.log(`[reconcile] token ${p.id} activated from chain tx ${p.tx_hash}`);
+          if (await activateTokenById(this.d.sql, p.id)) {
+            activated += 1;
+            console.log(`[reconcile] token ${p.id} activated from chain tx ${p.tx_hash}`);
+          }
         } else {
           console.warn(`[reconcile] tx ${p.tx_hash} pays ${paid} of ${p.price_micros} to the seller; token ${p.id} stays pending`);
         }
