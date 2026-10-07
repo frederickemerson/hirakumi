@@ -208,15 +208,16 @@ describe("the ownership step for an API without an OpenAPI file", () => {
     const code: string = (await db.pool.query(`select token from challenges where api_id = $1 and kind = 'dns' and consumed_at is null`, [apiId])).rows[0].token;
     expect(body).toBe([
       `Step 4 of 7, Prove ownership: Prove you own s.example.dev: add this DNS TXT record where your domain's DNS is managed (your API itself doesn't change), then sign once with your Cardano wallet (no payment): ${WEB}/apis/${apiId}/ownership`,
-      "- Type: TXT",
-      "- Name: _hirakumi.s (the full name is _hirakumi.s.example.dev)",
-      `- Value: ${code}`,
-      "The page checks every 10 seconds and unlocks signing once the record is live.",
+      "- Type: `TXT`",
+      "- Name: `_hirakumi.s` (the full name is `_hirakumi.s.example.dev`)",
+      `- Value: \`${code}\``,
+      "",
+          "Open the link to finish: the page checks every 10 seconds and unlocks the wallet signature once the record is live.",
       "Your API needs a key (a bearer token in the Authorization header): add it on the same page. Never paste it in a comment.",
     ].join("\n"));
     await reply("what now?");
     const help = (await messagesForTask(t.id)).at(-1)?.body ?? "";
-    expect(help).toContain(`- Value: ${code}`);
+    expect(help).toContain(`- Value: \`${code}\``);
     expect(help).toContain("Next: Prove you own s.example.dev: add this DNS TXT record");
     expect(help).not.toContain("hirakumi-verify.json");
   });
