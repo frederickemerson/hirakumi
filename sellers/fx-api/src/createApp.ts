@@ -1,20 +1,24 @@
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import { createHash, timingSafeEqual } from "node:crypto";
-import { isSupportedSymbol, PriceUnavailableError, SUPPORTED_SYMBOLS, type PriceSource } from "./priceSource.js";
+import { isSupportedCurrency, RateUnavailableError, roundRate, SUPPORTED_CURRENCIES, type Currency, type RateSource } from "./rateSource.js";
 import { isBreakMode, BREAK_MODES, type BreakMode, type ModeStore } from "./modeStore.js";
-import { buildOpenApi } from "./openapi.js";
+import { buildOpenApi, DEFAULT_TITLE } from "./openapi.js";
 import { latestCode } from "./challenge.js";
 
-export const STALE_AGE_MS = 3_600_000;
+/** How old "stale" mode makes every asOf: hours, well past any freshness promise. */
+export const STALE_AGE_MS = 2 * 3_600_000;
+export const MAX_AMOUNT = 1e12;
 
 export type AppDeps = {
-  prices: PriceSource;
+  rates: RateSource;
   modes: ModeStore;
   now: () => number;
   adminToken: string | undefined;
   /** Hirakumi ownership codes by API id; the latest one set is sent as the X-Hirakumi-Verify header (see challenge.ts). */
   verifyCodes: Record<string, string>;
   publicUrl: string;
+  /** The OpenAPI info.title, which becomes the listing's name on Hirakumi (API_TITLE). */
+  title?: string;
   log: (msg: string, err?: unknown) => void;
 };
 
@@ -23,6 +27,8 @@ function sameSecret(expected: string, given: string): boolean {
   const b = createHash("sha256").update(given).digest();
   return timingSafeEqual(a, b);
 }
+
+const currencyParam = (req: Request, name: string) => (typeof req.query[name] === "string" ? (req.query[name] as string).trim().toUpperCase() : "");
 
 export function createApp(deps: AppDeps): Express {
   const app = express();
@@ -49,21 +55,22 @@ export function createApp(deps: AppDeps): Express {
     next();
   };
 
-  app.get("/healthz", (_req, res) => {
-    res.json({ ok: true, modeStore: deps.modes.kind });
-  });
-
-  app.get("/openapi.json", (_req, res) => {
-    // no-store: a cache must not keep an answer with an old X-Hirakumi-Verify code.
-    res.set("Cache-Control", "no-store").json(buildOpenApi(deps.publicUrl));
-  });
-
-  app.get("/price", async (req, res) => {
-    const raw = typeof req.query.symbol === "string" ? req.query.symbol.trim().toUpperCase() : "";
-    if (!isSupportedSymbol(raw)) {
-      res.status(400).json({ error: "unknown_symbol", message: `symbol must be one of ${SUPPORTED_SYMBOLS.join(", ")}` });
-      return;
+  /** The pair from the query, or null after answering 400. */
+  function pair(req: Request, res: Response): { from: Currency; to: Currency } | null {
+    const from = currencyParam(req, "from");
+    const to = currencyParam(req, "to");
+    if (!isSupportedCurrency(from) || !isSupportedCurrency(to)) {
+      res.status(400).json({ error: "unknown_currency", message: `from and to must each be one of ${SUPPORTED_CURRENCIES.join(", ")}` });
+      return null;
     }
+    return { from, to };
+  }
+
+  /**
+   * The rate for the pair under the current break mode: null after answering (empty mode or no real rate),
+   * else the rate and its asOf.
+   */
+  async function quote(res: Response, from: Currency, to: Currency): Promise<{ rate: number; asOf: string } | null> {
     const mode: BreakMode = await deps.modes.get().catch((err: unknown) => {
       deps.log("mode store read failed; serving normal data", err);
       return "ok" as const;
@@ -71,19 +78,51 @@ export function createApp(deps: AppDeps): Express {
     res.set("Cache-Control", "no-store");
     if (mode === "empty") {
       res.json({});
-      return;
+      return null;
     }
-    let quote;
+    let table;
     try {
-      quote = await deps.prices.get(raw);
+      table = await deps.rates.get(from);
     } catch (err) {
-      if (!(err instanceof PriceUnavailableError)) throw err;
-      res.status(503).json({ error: "price_unavailable", message: "The upstream price feed is unavailable. Try again in a minute." });
+      if (!(err instanceof RateUnavailableError)) throw err;
+      res.status(503).json({ error: "rate_unavailable", message: "The upstream rate feed is unavailable. Try again in a minute." });
+      return null;
+    }
+    res.set("X-Rate-Source", table.source);
+    const asOf = mode === "stale" ? new Date(deps.now() - STALE_AGE_MS).toISOString() : table.asOf;
+    return { rate: roundRate(table.rates[to]), asOf };
+  }
+
+  app.get("/healthz", (_req, res) => {
+    res.json({ ok: true, modeStore: deps.modes.kind });
+  });
+
+  app.get("/openapi.json", (_req, res) => {
+    // no-store: a cache must not keep an answer with an old X-Hirakumi-Verify code.
+    res.set("Cache-Control", "no-store").json(buildOpenApi(deps.publicUrl, deps.title ?? DEFAULT_TITLE));
+  });
+
+  app.get("/rate", async (req, res) => {
+    const p = pair(req, res);
+    if (!p) return;
+    const q = await quote(res, p.from, p.to);
+    if (!q) return;
+    res.json({ from: p.from, to: p.to, rate: q.rate, asOf: q.asOf });
+  });
+
+  app.get("/convert", async (req, res) => {
+    const p = pair(req, res);
+    if (!p) return;
+    const raw = typeof req.query.amount === "string" ? req.query.amount.trim() : "";
+    const amount = raw === "" ? NaN : Number(raw);
+    if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_AMOUNT) {
+      res.status(400).json({ error: "invalid_amount", message: `amount must be a number above 0 and at most ${MAX_AMOUNT}` });
       return;
     }
-    res.set("X-Price-Source", quote.source);
-    const timestamp = mode === "stale" ? new Date(deps.now() - STALE_AGE_MS).toISOString() : quote.timestamp;
-    res.json({ symbol: quote.symbol, usd: quote.usd, change24h: quote.change24h, timestamp });
+    const q = await quote(res, p.from, p.to);
+    if (!q) return;
+    const result = Math.round(amount * q.rate * 10_000) / 10_000;
+    res.json({ from: p.from, to: p.to, amount, result, rate: q.rate, asOf: q.asOf });
   });
 
   app.post("/admin/break", requireAdmin, express.json({ limit: "1kb" }), async (req, res) => {
