@@ -13,7 +13,7 @@ const columns = [
       { href: "/#how", label: "How it works" },
       { href: "/#trust", label: "How the money is protected" },
       { href: DEMO_API, label: "Live status page" },
-      { href: tryHref(DEMO_API_ID), label: "Try a live API" },
+      { href: tryHref(DEMO_API_ID), label: "Buy a real pack in your browser" },
       { href: "/login", label: "List your API", listApi: true },
     ],
   },
@@ -38,8 +38,8 @@ export function SiteFooter() {
             <span>Hirakumi</span>
           </Link>
           <p className="max-w-xs text-body text-graphite">
-            Hirakumi makes your API payable by AI agents on Cardano.
-            Buyers pay nothing for answers that break your promise.
+            Monetize any API in under 3 minutes. You set a promise.
+            AI agents pay only when you keep it.
           </p>
         </div>
         {columns.map((col) => (

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Check, X } from "lucide-react";
 import { CloudDoodle, SmallCloudDoodle } from "@/components/brand/doodles";
 import { Mascot } from "@/components/brand/mascot";
 import { Floaters } from "@/components/landing/floaters";
@@ -18,46 +19,98 @@ import { cn } from "@/lib/utils";
 
 const DEMO_API = `/p/${DEMO_API_ID}`;
 const PRIMARY_CTA = "List your API";
-const SECONDARY_CTA = "Try a live API";
+const SECONDARY_CTA = "Buy a real pack in your browser";
 
-/* The argument, read at scroll speed: why now, what is broken, and the one idea that fixes it. */
-const WHY: Paragraph[] = [
+const CARDANOSCAN = "https://preprod.cardanoscan.io/transaction/";
+/** Mika's FX Rates on preprod: the settle that paid the seller for signed answers, and the Masumi registry mint. */
+const SETTLE_TX = "d64f790605dbda025dbf92272c0546ea0fe02ab6f10984516df064da0fa4fdaa";
+const REGISTRY_TX = "8f04206b27e66266d61f22423c01447cad88582fb9c7fd7b96b7ac1f728e602a";
+
+/* The problem for enterprises and institutions, read at scroll speed. The figures between the two blocks are MuleSoft's. */
+const PROBLEM: Paragraph[] = [
   {
-    text: "AI agents now have wallets. They can find an API on the Masumi registry or the Sokosumi marketplace and pay for it on Cardano. Most APIs are not ready to be paid that way.",
-  },
-  {
-    text: "APIs are still sold with keys, monthly plans and invoices. An agent has none of those; it has a wallet and a task. Paying per call on-chain costs about 1.4 ADA in overhead and 20 seconds per payment. And a stale answer costs the buyer the same as a fresh one.",
-  },
-  {
-    text: "So sell calls in packs, and make each credit conditional on the answer. Your API publishes a promise: a rule a machine can check. An answer that breaks it costs the buyer nothing.",
-    strong: true,
+    text: "Enterprises and institutions sit on lots of good APIs. Making one payable by AI agents means new code inside big, siloed codebases: billing, wallets, refunds and an agent wrapper, each change waiting on security review and the next release.",
   },
 ];
-
-const STEPS: { title: string; body: string; rb: string }[] = [
+const TRUST_GAP: Paragraph[] = [
   {
-    title: "Paste a link or example requests",
-    body: "Give your OpenAPI link, or your API's address and a few example requests. Hirakumi lists the read-only endpoints it can sell. To prove it is yours, add one DNS record, then sign once with your wallet.",
+    text: "So most of these APIs never earn a cent from agents. And even on Masumi, Cardano's marketplace for AI agents, buyers have no trust layer: they pay even for empty or stale answers, because the seller grades its own work.",
+  },
+  { text: "An AI can write you an agent, but it can't be its own trust layer.", strong: true },
+];
+
+const INTEGRATION: { value: number; unit: string; label: string }[] = [
+  { value: 897, unit: "", label: "applications in the average enterprise" },
+  { value: 29, unit: "%", label: "of them connected" },
+  { value: 39, unit: "%", label: "of IT time spent on custom integrations" },
+];
+
+const YOURSELF = [
+  "Build an agent around your API",
+  "Run your own payment node",
+  "Register it in the Masumi directory",
+  "Handle payments and refunds",
+  "Keep its status honest, all day",
+];
+
+const STEPS: { title: string; body: string; tag: string; rb: string }[] = [
+  {
+    title: "Bring any API",
+    body: "No OpenAPI file needed: a base URL and a few example requests are enough. We test it and describe it for agents.",
+    tag: "Off chain",
     rb: "rb-coral",
   },
   {
-    title: "Approve the promise and a price",
-    body: "Test calls become a promise: the fields a good answer has, their types and how fresh the data must be. You check it and set a pack price.",
+    title: "Prove it's yours",
+    body: "One DNS TXT record, then one signature binds your payout address. Sign in with Google or email through UTXOS, or use a Cardano wallet.",
+    tag: "One signature",
+    rb: "rb-peach",
+  },
+  {
+    title: "Seal the key",
+    body: "If your API needs a key, it is sealed so only our gateway can use it, and never shown again.",
+    tag: "Off chain",
     rb: "rb-mint",
   },
   {
-    title: "You're live",
-    body: "Agents on Masumi and Sokosumi find your API and buy call packs in USDM on Cardano. Each pack locks in an escrow contract and pays you per answer that kept the promise.",
+    title: "Set the promise",
+    body: "Inferred from real test calls: the fields a good answer has and how fresh it must be. Its hash is public before any sale.",
+    tag: "Off chain",
+    rb: "rb-lilac",
+  },
+  {
+    title: "Publish",
+    body: "Registered as an agent on Masumi with a registry token, and sold in packs of 100 answers.",
+    tag: "On Cardano",
     rb: "rb-periwinkle",
   },
 ];
 
-const LIVE_TODAY = [
-  "Pack money waits in a Cardano escrow contract until it is earned",
-  "A credit is used only when the answer keeps the promise",
-  "A receipt for every paid call, open to the buyer",
-  "Single jobs through Masumi, refunded on-chain when the answer fails",
-  "Monitoring with a public status page",
+const BUYER_STEPS: { title: string; body: string }[] = [
+  { title: "See the offer", body: "The agent calls the API and gets a 402 with the price and the promise." },
+  { title: "Pay once", body: "One x402 payment in USDM on Cardano buys 100 calls, direct or into the safe." },
+  { title: "Ask", body: "Each question goes through Hirakumi, which calls the API with the sealed key and checks the answer." },
+];
+
+const ESCROW_STEPS: { title: string; body: string }[] = [
+  { title: "Money goes into a safe", body: "The payment waits in an Aiken smart contract, not with Hirakumi." },
+  { title: "A receipt per good answer", body: "The agent checks each answer itself and signs only for good ones." },
+  { title: "Close, then a final check", body: "The pack closes on the latest receipt; anyone with a newer one can raise it." },
+  { title: "Everyone paid fairly", body: "The seller for the good answers, Hirakumi 3%, the agent the rest back." },
+];
+
+/* Slide 3: each layer adds what the last one lacks. true, false or a short word. */
+const LAYERS = ["x402", "Masumi", "Hirakumi"] as const;
+const LAYER_NOTES = ["payments", "agent directory", "done for you"];
+const COMPARE: { row: string; cells: [boolean | string, boolean | string, boolean | string] }[] = [
+  { row: "Agents pay over the web", cells: [true, true, true] },
+  { row: "Found by AI agents", cells: [false, true, true] },
+  { row: "Money held, with refunds", cells: [false, true, true] },
+  { row: "Independent trust layer", cells: [false, false, true] },
+  { row: "Cheap for single answers", cells: [false, false, true] },
+  { row: "Pay only for good answers", cells: [false, false, true] },
+  { row: "Honest live status and alerts", cells: [false, "basic", true] },
+  { row: "Setup", cells: ["build it", "build an agent", "paste a link"] },
 ];
 
 /* Speed first. Each number counts in as its row scrolls into view; `from` is where the count starts. */
@@ -68,10 +121,30 @@ const PROOF: { value: number; decimals: number; from: number; unit: string; labe
   { value: 0, decimals: 0, from: 0, unit: "credits", label: "charged for a stale or broken answer" },
 ];
 
+const USE_CASES: { who: string; what: string; rb: string }[] = [
+  { who: "Banks and exchanges", what: "Prices and exchange rates for trading agents.", rb: "rb-coral" },
+  { who: "Logistics and travel", what: "Weather for logistics and travel agents.", rb: "rb-mint" },
+  { who: "Data providers", what: "Search and company data for research agents.", rb: "rb-lilac" },
+  { who: "Any developer or hobbyist", what: "A niche dataset you already host, ready to earn from agents within minutes.", rb: "rb-marigold" },
+];
+
+/* The same questions and answers are in lib/ask/facts.ts, so Ask Hirakumi answers them word for word offline. */
 const FAQ: { q: string; a: string }[] = [
   {
+    q: "Do I have to change my API?",
+    a: "No. One DNS TXT record proves the API is yours, and the API itself stays as it is. If it needs a key, the key is sealed so only our gateway can use it.",
+  },
+  {
+    q: "Do I need a wallet?",
+    a: "No. Sign in with Google or email: UTXOS opens a non-custodial Cardano wallet that you own. A CIP-30 browser wallet such as Lace or Eternl works too. Signing costs nothing and moves no funds.",
+  },
+  {
+    q: "Can I do it from Sokosumi?",
+    a: "Yes. Assign a task to the Hirakumi coworker with your API's link, and every step happens in the task's comments. Only a signature or your API's key opens one short browser page. The coworker also tells you when your API breaks.",
+  },
+  {
     q: "Who decides pass or fail?",
-    a: "Our gateway, against the rule your API published before the sale. Every paid call is logged with its verdict, and the buyer can read the log at /receipts.",
+    a: "Our gateway, against the promise your API published before the sale. Every paid call is logged with its verdict, and the buyer can read the log at /receipts. In escrow the agent also signs only for good answers.",
   },
   {
     q: "What happens when my API goes down?",
@@ -83,20 +156,34 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: "What does it cost?",
-    a: "Nothing on preprod. The plan is an onboarding fee and a small take rate on sales. Pack money waits in a Cardano escrow contract, never with Hirakumi, and pays you per kept promise.",
+    a: "Hirakumi earns a 3% fee, paid by the escrow contract only on good answers, plus a small listing fee per API (planned). On preprod everything is paid with test tokens.",
   },
   {
     q: "What does a promise look like?",
-    a: "A JSON-schema rule for a good answer. For the demo API: GET /price returns symbol, usd, change24h and a timestamp no older than 15 minutes.",
-  },
-  {
-    q: "Do I need a wallet?",
-    a: "Yes. Any CIP-30 wallet on preprod, such as Lace or Eternl. Your address is your account and the place buyers pay.",
+    a: "A JSON Schema rule per endpoint, built from Hirakumi's test calls: the fields a good answer has, their types and how fresh the data must be, for example a timestamp no older than 15 minutes. You read it and approve it before publishing, and its hash is published before any sale.",
   },
 ];
 
-function H2({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <h2 className={cn("text-h font-normal uppercase sm:text-h-lg", className)}>{children}</h2>;
+function H2({ children, className, id }: { children: React.ReactNode; className?: string; id?: string }) {
+  return <h2 id={id} className={cn("text-h font-normal uppercase sm:text-h-lg", className)}>{children}</h2>;
+}
+
+/** A filled square with a tick or a cross, as on the deck. The word is for screen readers. */
+function Mark({ yes }: { yes: boolean }) {
+  return (
+    <span className={cn("inline-flex size-7 items-center justify-center rounded-[2px] border-2 border-ink", yes ? "bg-mint" : "bg-coral")}>
+      {yes ? <Check aria-hidden className="size-4" strokeWidth={3} /> : <X aria-hidden className="size-4" strokeWidth={3} />}
+      <span className="sr-only">{yes ? "Yes" : "No"}</span>
+    </span>
+  );
+}
+
+function TxLink({ hash, children }: { hash: string; children: React.ReactNode }) {
+  return (
+    <a href={`${CARDANOSCAN}${hash}`} target="_blank" rel="noreferrer" className="underline underline-offset-4 hover:no-underline">
+      {children}
+    </a>
+  );
 }
 
 export default function Home() {
@@ -114,10 +201,10 @@ export default function Home() {
         <div className="relative grid gap-12 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] lg:items-center lg:gap-16">
           <div className="max-w-[40rem]">
             <h1 className="text-[2.5rem] font-light uppercase leading-[1.02] animate-rise sm:text-display">
-              Make your APIs monetizable
+              Monetize any API in under 3 minutes
             </h1>
             <p className="mt-6 max-w-[36rem] text-body-lg animate-rise [animation-delay:70ms] sm:text-sub">
-              Paste an OpenAPI link or a few example requests, sign with your Cardano wallet, set a pack price. AI agents pay in USDM, and stale or empty answers cost them nothing.
+              You set a promise. AI agents pay only when you keep it.
             </p>
             <div className="mt-8 flex flex-col items-stretch gap-4 animate-rise [animation-delay:140ms] sm:flex-row sm:items-center">
               <ListApiLink className={buttonVariants({ size: "lg" })}>{PRIMARY_CTA}</ListApiLink>
@@ -125,6 +212,9 @@ export default function Home() {
                 {SECONDARY_CTA}
               </Link>
             </div>
+            <p className="mt-6 text-body text-graphite animate-rise [animation-delay:200ms]">
+              No change to your code. One DNS record. Sign in with Google or email.
+            </p>
           </div>
           <Parallax distance={36}>
             <Receipt className="animate-rise [animation-delay:240ms]" />
@@ -134,95 +224,191 @@ export default function Home() {
 
       <Marquee />
 
-      {/* Why: the argument, read at scroll speed. */}
-      <section id="why" className="scroll-mt-10 py-20 sm:py-28">
-        <ScrubText paragraphs={WHY} className="max-w-[52rem] text-sub leading-[1.5] sm:text-h-sm sm:leading-[1.45]" />
+      {/* Problem: why good enterprise APIs never reach agents, and the trust gap even where they do. */}
+      <section id="why" aria-labelledby="why-title" className="scroll-mt-10 py-20 sm:py-28">
+        <Reveal className="max-w-2xl">
+          <H2 id="why-title">Good APIs, stuck behind a project</H2>
+        </Reveal>
+        <ScrubText paragraphs={PROBLEM} className="mt-10 max-w-[52rem] text-sub leading-[1.5] sm:text-h-sm sm:leading-[1.45]" />
+        <figure className="mt-12">
+          <Reveal as="dl" stagger={0.08} className="grid gap-y-8 sm:grid-cols-3 sm:gap-x-8">
+            {INTEGRATION.map((s) => (
+              <div key={s.label} data-reveal data-stat className="flex flex-col border-t-2 border-ink pt-5">
+                <dt className="order-2 mt-3 max-w-[18rem] text-body-lg text-graphite">{s.label}</dt>
+                <dd className="order-1 flex items-baseline gap-1 whitespace-nowrap font-light leading-none">
+                  <CountUp value={s.value} className="text-[3rem] lg:text-[4rem]" />
+                  {s.unit && <span className="text-h-sm lg:text-h">{s.unit}</span>}
+                </dd>
+              </div>
+            ))}
+          </Reveal>
+          <figcaption className="mt-6 text-body text-graphite">Source: MuleSoft, 2025.</figcaption>
+        </figure>
+        <ScrubText paragraphs={TRUST_GAP} className="mt-16 max-w-[52rem] text-sub leading-[1.5] sm:text-h-sm sm:leading-[1.45]" />
+
+        {/* Slide 2: what selling on Masumi takes, and what Hirakumi does instead. */}
+        <Reveal stagger={0.1} className="mt-16 grid gap-8 lg:grid-cols-2">
+          <div data-reveal className="rounded-[2px] border-2 border-ink bg-frost p-6 shadow-hard sm:p-8">
+            <h3 className="text-caption font-semibold uppercase tracking-[0.06em] text-graphite">Selling on Masumi yourself</h3>
+            <ul className="mt-5 space-y-3 text-body-lg">
+              {YOURSELF.map((t) => (
+                <li key={t} className="flex items-center gap-4">
+                  <span aria-hidden className="size-6 shrink-0 rounded-[2px] border-2 border-ink" />
+                  <span>{t}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-6 font-semibold text-graphite">A lot of setup, and still no trust layer: buyers just take your word for it.</p>
+          </div>
+          <div data-reveal className="flex flex-col justify-between gap-8 rounded-[2px] border-2 border-ink bg-ink p-6 text-frost shadow-hard sm:p-8">
+            <div>
+              <h3 className="text-caption font-semibold uppercase tracking-[0.06em] text-canary">With Hirakumi</h3>
+              <p className="mt-6 text-h-sm font-light leading-snug sm:text-h">
+                Paste your link. We do all of it in under 3 minutes, with no change to your code.
+              </p>
+            </div>
+            <p className="rounded-[2px] border-2 border-canary p-4 text-body-lg">
+              <span className="font-semibold text-canary">Plus the trust layer Masumi doesn&apos;t have:</span> every answer is checked
+              before anyone pays for it.
+            </p>
+          </div>
+        </Reveal>
       </section>
 
-      {/* How it works: three steps, one real sequence. */}
+      {/* How it works for sellers: five steps, one real sequence (deck slide 6). */}
       <section id="how" className="scroll-mt-10 border-t-2 border-ink py-20 sm:py-28">
         <Reveal className="max-w-2xl">
-          <H2>How it works</H2>
-          <p className="mt-4 text-body-lg">Three steps. Nothing is published until you approve the promise and the price.</p>
+          <H2>From API to Masumi agent</H2>
+          <p className="mt-4 text-body-lg">Five steps. Nothing is published until you approve the promise and the price.</p>
         </Reveal>
         {/* The line through the step numbers fills as the steps scroll by (StepLine). */}
         <div className="relative mt-12">
           <StepLine />
-          <Reveal as="ol" stagger={0.1} className="relative grid gap-10 md:grid-cols-3 md:gap-8">
+          <Reveal as="ol" stagger={0.08} className="relative grid gap-10 lg:grid-cols-5 lg:gap-6">
             {STEPS.map((s, i) => (
-              <li key={s.title} data-reveal className="grid grid-cols-[2.5rem_minmax(0,1fr)] content-start gap-x-4 gap-y-3 md:flex md:flex-col md:gap-4">
-                <span data-step-badge className={cn("rb-border flex size-10 items-center justify-center rounded-[2px] border-2 bg-frost text-body-lg font-semibold tabular-nums shadow-hard-sm", i === 1 ? "row-span-3" : "row-span-2", s.rb)}>
+              <li key={s.title} data-reveal className="grid grid-cols-[2.5rem_minmax(0,1fr)] content-start gap-x-4 gap-y-3 lg:flex lg:flex-col lg:gap-4">
+                <span data-step-badge className={cn("rb-border row-span-3 flex size-10 items-center justify-center rounded-[2px] border-2 bg-frost text-body-lg font-semibold tabular-nums shadow-hard-sm", s.rb)}>
                   {i + 1}
                 </span>
-                <h3 className="col-start-2 self-center text-sub font-semibold md:self-auto">{s.title}</h3>
+                <h3 className="col-start-2 self-center text-sub font-semibold lg:self-auto">{s.title}</h3>
                 <p className="col-start-2 text-body-lg text-graphite">{s.body}</p>
-                {i === 1 && (
-                  <pre className="col-start-2 mt-1 overflow-x-auto rounded-[2px] border-2 border-ink bg-ink p-4 text-caption leading-relaxed text-sky">{`"usd":       { "type": "number" }
-"timestamp": { "type": "string",
-               "maxAgeSeconds": 900 }`}</pre>
-                )}
+                <span className={cn("col-start-2 w-fit rounded-[2px] border border-ink px-2 py-1 text-caption font-semibold uppercase tracking-[0.04em]", s.tag === "On Cardano" ? "bg-canary" : "bg-frost")}>
+                  {s.tag}
+                </span>
               </li>
             ))}
           </Reveal>
         </div>
+        <Reveal className="mt-14 rounded-[2px] border-2 border-ink bg-notebook p-6 sm:p-8">
+          <h3 className="text-sub font-semibold">Already on Sokosumi? Do it from a task.</h3>
+          <p className="mt-3 max-w-[52rem] text-body-lg">
+            Assign a task to the Hirakumi coworker with your API&apos;s link. Every step happens in the task&apos;s comments; only a
+            signature or your API&apos;s key opens one short browser page. The coworker also tells you when your API breaks.
+          </p>
+        </Reveal>
       </section>
 
-      {/* Trust: where the money sits. */}
+      {/* Buyers and the settlement layer: pay once, only good answers, and where the money waits (slides 7 and 8). */}
       <section id="trust" className="bleed scroll-mt-10 border-t-2 border-ink bg-ice py-20 sm:py-28">
         <div className="mx-auto w-full max-w-[1200px] px-4">
-          <div className="grid gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:gap-16">
-            <Reveal>
-              <H2>How the money is protected</H2>
-              <p className="mt-6 text-body-lg sm:text-sub">
-                A pack payment locks in a Cardano escrow contract. The buyer signs for each answer that kept the promise; the seller is
-                paid only for signed calls, and everything else goes back to the buyer. A stale, empty or failed answer is free.
+          <Reveal className="max-w-2xl">
+            <H2>Buyers pay once, then only for good answers</H2>
+          </Reveal>
+          <Reveal as="ol" stagger={0.08} className="mt-12 grid gap-6 md:grid-cols-3">
+            {BUYER_STEPS.map((s, i) => (
+              <li key={s.title} data-reveal className={cn("rounded-[2px] border-2 border-ink p-6 shadow-hard", i === 1 ? "bg-blush" : "bg-frost")}>
+                <h3 className="text-sub font-semibold">
+                  <span className="tabular-nums">{i + 1}</span>&nbsp; {s.title}
+                </h3>
+                <p className="mt-3 text-body-lg">{s.body}</p>
+              </li>
+            ))}
+          </Reveal>
+          <Reveal stagger={0.08} className="mt-6 grid gap-6 md:grid-cols-2">
+            <div data-reveal className="flex gap-4 rounded-[2px] border-2 border-ink bg-frost p-6">
+              <Mark yes />
+              <p className="text-body-lg"><span className="font-semibold">Promise kept.</span> The agent gets the answer. One credit is used.</p>
+            </div>
+            <div data-reveal className="flex gap-4 rounded-[2px] border-2 border-ink bg-frost p-6">
+              <Mark yes={false} />
+              <p className="text-body-lg">
+                <span className="font-semibold">Promise broken.</span> A 422, and nothing is charged. If it keeps failing, the API goes Down
+                and stops selling.
               </p>
-              <p className="mt-6 text-body-lg text-graphite">
-                Every paid call is logged with its verdict, and the buyer can audit the log at /receipts.
-              </p>
-            </Reveal>
-            <Reveal as="dl" stagger={0.12} className="grid gap-6 sm:grid-cols-2 lg:grid-cols-1">
-              <div data-reveal className="rounded-[2px] border-2 border-ink bg-frost p-6 shadow-hard">
-                <dt className="flex items-center justify-between gap-4 text-caption font-semibold uppercase tracking-[0.06em]">
-                  Live on Cardano preprod today
-                  <span aria-hidden className="inline-block size-2.5 border border-ink bg-mint" />
-                </dt>
-                <dd>
-                  <ul className="mt-4 space-y-2 text-body-lg">
-                    {LIVE_TODAY.map((t) => (
-                      <li key={t} className="flex gap-3">
-                        <span aria-hidden className="mt-[0.7em] size-1.5 shrink-0 bg-ink" />
-                        <span>{t}</span>
-                      </li>
-                    ))}
-                  </ul>
-                  <Link href={DEMO_API} className={cn(buttonVariants({ variant: "outline", size: "sm" }), "mt-6")}>
-                    See a live status page
-                  </Link>
-                </dd>
-              </div>
-              <div data-reveal className="rounded-[2px] border-2 border-ink bg-frost p-6">
-                <dt className="text-caption font-semibold uppercase tracking-[0.06em]">Proven on preprod, rolling out next</dt>
-                <dd className="mt-4 space-y-3 text-body-lg">
-                  <p>
-                    An escrow channel: the pack money waits in a Cardano contract, the buyer signs for each answer that kept the
-                    promise, and the seller is paid for those calls only. The rest goes back to the buyer.
-                  </p>
-                  <p className="text-graphite">
-                    Settled end to end on preprod, with <span className="font-medium tabular-nums text-ink">175 contract tests</span> passing.
-                  </p>
-                </dd>
-              </div>
-            </Reveal>
-          </div>
+            </div>
+          </Reveal>
+
+          <Reveal className="mt-20 max-w-2xl">
+            <h3 className="text-h-sm font-normal uppercase sm:text-h">Hybrid settlement</h3>
+          </Reveal>
+          <Reveal as="dl" stagger={0.08} className="mt-8 grid gap-6 md:grid-cols-2">
+            <div data-reveal className="rounded-[2px] border-2 border-ink bg-frost p-6">
+              <dt className="text-caption font-semibold uppercase tracking-[0.06em]">Direct: small packs from proven sellers</dt>
+              <dd className="mt-3 text-body-lg">One payment straight to the seller. Our gateway counts a credit only on a good answer.</dd>
+            </div>
+            <div data-reveal className="rounded-[2px] border-2 border-ink bg-blush p-6">
+              <dt className="text-caption font-semibold uppercase tracking-[0.06em]">Escrow: when it matters</dt>
+              <dd className="mt-3 text-body-lg">
+                A large pack, a seller under 99% uptime, a listing under 7 days old, or whenever the buyer asks. Never a silent switch to
+                direct.
+              </dd>
+            </div>
+          </Reveal>
+          <Reveal as="ol" stagger={0.06} className="mt-6 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+            {ESCROW_STEPS.map((s, i) => (
+              <li key={s.title} data-reveal className="border-t-2 border-ink pt-4">
+                <h4 className="text-body-lg font-semibold">
+                  <span className="tabular-nums text-graphite">{i + 1}</span>&nbsp; {s.title}
+                </h4>
+                <p className="mt-2 text-body-lg text-graphite">{s.body}</p>
+              </li>
+            ))}
+          </Reveal>
+          <Reveal className="mt-10 rounded-[2px] border-2 border-ink bg-ink p-6 text-frost shadow-hard sm:p-8">
+            <p className="text-sub font-semibold">Nobody can take more than the agent agreed to, not even us.</p>
+          </Reveal>
         </div>
       </section>
 
-      {/* Proof: what was measured, nothing else. */}
+      {/* Comparison: each layer adds what the last one lacks (slide 3). */}
+      <section id="compare" aria-labelledby="compare-title" className="scroll-mt-10 border-t-2 border-ink py-20 sm:py-28">
+        <Reveal className="max-w-2xl">
+          <H2 id="compare-title">Each layer adds what the last one lacks</H2>
+        </Reveal>
+        <Reveal className="mt-12 overflow-x-auto rounded-[2px] border-2 border-ink bg-frost shadow-hard">
+          <table className="w-full min-w-[36rem] border-collapse text-body-lg">
+            <thead>
+              <tr>
+                <td className="p-4" />
+                {LAYERS.map((l, i) => (
+                  <th key={l} scope="col" className={cn("p-4 text-center font-semibold", i === 2 && "bg-ink text-canary")}>
+                    {l}
+                    <span className={cn("block text-caption font-normal", i === 2 ? "text-frost" : "text-graphite")}>{LAYER_NOTES[i]}</span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {COMPARE.map((r) => (
+                <tr key={r.row} className="border-t border-silver">
+                  <th scope="row" className="p-4 text-left font-normal">{r.row}</th>
+                  {r.cells.map((c, i) => (
+                    <td key={i} className={cn("p-3 text-center", i === 2 && "bg-ink text-frost")}>
+                      {typeof c === "boolean" ? <Mark yes={c} /> : <span className="text-body">{c}</span>}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Reveal>
+      </section>
+
+      {/* Proof: live on preprod, what was measured, and the transactions anyone can check. */}
       <section id="proof" className="scroll-mt-10 border-t-2 border-ink py-20 sm:py-28">
         <Reveal className="max-w-2xl">
-          <H2>Fast, and fair</H2>
-          <p className="mt-4 text-body-lg">Measured on Cardano preprod with test funds.</p>
+          <H2>Live on Cardano preprod</H2>
+          <p className="mt-4 text-body-lg">Real packs paid, used and settled on chain. Measured on Cardano preprod with test funds.</p>
         </Reveal>
         <Reveal as="dl" stagger={0.08} className="mt-12 grid gap-y-10 sm:grid-cols-3 sm:gap-x-8">
           {PROOF.map((p) => (
@@ -235,6 +421,73 @@ export default function Home() {
             </div>
           ))}
         </Reveal>
+        <Reveal className="mt-12 grid gap-6 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+          <ul className="space-y-3 text-body-lg">
+            <li className="flex gap-3">
+              <span aria-hidden className="mt-[0.7em] size-1.5 shrink-0 bg-ink" />
+              <span>
+                Mika&apos;s FX Rates, <TxLink hash={REGISTRY_TX}>registered on Masumi</TxLink>: the registry token minted on chain.
+              </span>
+            </li>
+            <li className="flex gap-3">
+              <span aria-hidden className="mt-[0.7em] size-1.5 shrink-0 bg-ink" />
+              <span>
+                <TxLink hash={SETTLE_TX}>The safe settled Mika&apos;s pack</TxLink>: the seller paid for the signed answers, Hirakumi 3%,
+                the rest back to the buyer.
+              </span>
+            </li>
+          </ul>
+          <div className="flex flex-col gap-4 sm:flex-row">
+            <Link href={DEMO_API} className={buttonVariants({ variant: "outline" })}>See a live status page</Link>
+            <Link href={tryHref(DEMO_API_ID)} className={buttonVariants({ variant: "outline" })}>{SECONDARY_CTA}</Link>
+          </div>
+        </Reveal>
+      </section>
+
+      {/* Use cases and economics: who it is for, why packs, and how Hirakumi earns. */}
+      <section id="use-cases" aria-labelledby="use-cases-title" className="scroll-mt-10 border-t-2 border-ink py-20 sm:py-28">
+        <Reveal className="max-w-2xl">
+          <H2 id="use-cases-title">Open an API to agents, without a modernization project</H2>
+        </Reveal>
+        <Reveal as="ul" stagger={0.06} className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+          {USE_CASES.map((u) => (
+            <li key={u.who} data-reveal className={cn("rb-border rounded-[2px] border-2 bg-frost p-6", u.rb)}>
+              <h3 className="text-sub font-semibold">{u.who}</h3>
+              <p className="mt-3 text-body-lg text-graphite">{u.what}</p>
+            </li>
+          ))}
+        </Reveal>
+
+        <div className="mt-20 grid gap-10 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] lg:gap-16">
+          <Reveal>
+            <h3 className="text-h-sm font-normal uppercase sm:text-h">100x cheaper than paying for every call</h3>
+            <dl className="mt-8 space-y-6 rounded-[2px] border-2 border-ink bg-frost p-6 shadow-hard">
+              <div>
+                <dt className="text-body-lg">Paying on chain for every answer</dt>
+                <dd className="mt-2 w-full rounded-[2px] border-2 border-ink bg-coral px-4 py-3 font-semibold">about 40 cents and a 20 s wait</dd>
+              </div>
+              <div>
+                <dt className="text-body-lg">With a Hirakumi pack (one payment, 100 answers)</dt>
+                <dd className="mt-2 flex items-center gap-4 font-semibold">
+                  <span aria-hidden className="h-11 w-2 shrink-0 rounded-[2px] border-2 border-ink bg-mint" />
+                  about 0.4 cents and no wait
+                </dd>
+              </div>
+              <p className="text-body text-graphite">1 ADA is about $0.28. Answers flow at web speed, about 0.3 s each.</p>
+            </dl>
+          </Reveal>
+          <Reveal stagger={0.08}>
+            <h3 className="text-caption font-semibold uppercase tracking-[0.06em] text-graphite lg:mt-3">How Hirakumi makes money</h3>
+            <div data-reveal className="mt-6 rounded-[2px] border-2 border-ink bg-frost p-6 shadow-hard">
+              <p className="text-sub font-semibold">3% fee, only on good answers</p>
+              <p className="mt-2 text-body-lg text-graphite">Paid out by the Cardano contract when a pack settles.</p>
+            </div>
+            <div data-reveal className="mt-6 rounded-[2px] border-2 border-ink bg-frost p-6 shadow-hard">
+              <p className="text-sub font-semibold">A small listing fee per API</p>
+              <p className="mt-2 text-body-lg text-graphite">Planned, paid once when a seller lists an API.</p>
+            </div>
+          </Reveal>
+        </div>
       </section>
 
       {/* FAQ: the real objections, answered plainly. */}
@@ -244,7 +497,7 @@ export default function Home() {
         </Reveal>
         <Reveal as="dl" stagger={0.06} className="mt-12 grid gap-x-12 gap-y-10 md:grid-cols-2">
           {FAQ.map((f) => (
-            <div key={f.q} data-reveal className="border-t border-ink pt-5">
+            <div key={f.q} data-reveal data-faq className="border-t border-ink pt-5">
               <dt className="text-sub font-semibold">{f.q}</dt>
               <dd className="mt-3 max-w-[34rem] text-body-lg text-graphite">{f.a}</dd>
             </div>
@@ -262,7 +515,8 @@ export default function Home() {
           <Mascot className="h-16" title="" />
           <h2 className="mt-6 text-h font-light uppercase sm:text-h-lg">Start with one link</h2>
           <p className="mt-4 max-w-[34rem] text-body-lg">
-            Paste an OpenAPI link or a few example requests, sign with your Cardano wallet, approve the promise and the price. That is the whole onboarding.
+            You set a promise. AI agents pay only when you keep it. Paste your API&apos;s link, add one DNS record and approve the promise
+            and the price.
           </p>
           <div className="mt-8 flex w-full flex-col items-stretch gap-4 sm:w-auto sm:flex-row">
             <ListApiLink className={buttonVariants({ size: "lg" })}>{PRIMARY_CTA}</ListApiLink>

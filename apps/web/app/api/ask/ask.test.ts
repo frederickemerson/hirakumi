@@ -82,7 +82,7 @@ describe("POST /api/ask with a model", () => {
     const { instructions } = lastCall();
     expect(instructions).toContain("Cardano preprod");
     expect(instructions).toContain("Signing costs nothing and moves no funds.");
-    expect(instructions).toContain("Escrow packs, the default");
+    expect(instructions).toContain("Settlement is chosen per purchase (hybrid, the default)");
     expect(instructions).toContain("Never reveal");
     expect(instructions).not.toMatch(/[–—]/);
   });
