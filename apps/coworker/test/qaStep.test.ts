@@ -118,7 +118,9 @@ describe("qaStep for a text answer with no header line (status-only)", () => {
     expect(output).toMatchObject({ suggestedPhrases: { getPrice: "Price of" } });
     expect(output?.goodAnswers).toEqual({ getPrice: [{ body: "Price of ADA: 1 USD", complete: true }, { body: "Price of BTC: 1 USD", complete: true }] });
     const body = (await messagesFor(db.pool, apiId)).at(-1)?.body ?? "";
-    expect(body).toContain('This is a status-only promise: it does not check the content. Before you publish, confirm the phrase "Price of" on the review page or type another. Every good answer must contain it, so it can\'t be a date, a version or a count. Suggested price:');
+    // On a Sokosumi task the phrase is confirmed by reply, and no web page is linked.
+    expect(body).toContain('This is a status-only promise: it does not check the content. Before you publish, confirm the phrase "Price of": reply `phrase Price of`, or the same with another word. Every good answer must contain it, so it can\'t be a date, a version or a count. Suggested price:');
+    expect(body).not.toMatch(/https?:\/\//);
     // The rule itself is unchanged: the seller confirms the phrase on the review page, which writes a new version.
     expect((await db.pool.query(`select count(*)::int as n from rules r join operations o on o.id = r.operation_id where o.api_id = $1`, [apiId])).rows[0].n).toBe(1);
   });

@@ -5,11 +5,13 @@ import { processHealthEvents } from "./alerts.js";
 import { loadConfig } from "./config.js";
 import { createPool } from "./db.js";
 import { createGatewayClient } from "./gateway.js";
+import { createLeakCheck } from "./leakCheck.js";
 import { createStructuredCall } from "./llm/claude.js";
 import { createOpenAiStructuredCall } from "./llm/openai.js";
 import { startLoop } from "./loop.js";
 import { selectMode } from "./mode.js";
 import { describeStep } from "./onboarding/describeStep.js";
+import { watchDnsOnce } from "./onboarding/dnsWatch.js";
 import { driveOnce, type StateHandlers } from "./onboarding/driver.js";
 import { parseStep } from "./onboarding/parseStep.js";
 import { qaStep } from "./onboarding/qaStep.js";
@@ -45,6 +47,8 @@ const handlers: StateHandlers = {
 const inFlight = new Set<string>();
 startLoop("onboarding", 2_000, () => driveOnce(pool, handlers, inFlight));
 startLoop("health-alerts", 5_000, () => processHealthEvents(pool, config.webBaseUrl));
+// A Sokosumi seller's DNS record is looked up here, not on a web page they keep open.
+startLoop("dns-watch", 5_000, () => watchDnsOnce({ pool, gateway }));
 
 const soko = config.sokosumi ? createSokosumiClient(config.sokosumi) : null;
 let me: SokosumiCoworker | null = null;
@@ -61,6 +65,7 @@ if (soko && mode.kind === "sokosumi") {
   const inbox = createInbox({
     pool, soko, webBaseUrl: config.webBaseUrl, fetchSpec, llm, allowInsecure: process.env.ALLOW_INSECURE_UPSTREAM === "1",
     multiPartKeys: process.env.UPSTREAM_AUTH_V3 === "1",
+    leakCheck: createLeakCheck(config.webBaseUrl, config.internalToken),
   });
   startLoop("sokosumi-inbox", 5_000, () => inbox.poll());
   startLoop("sokosumi-outbox", 2_000, () => deliverMessages(pool, soko, config.webBaseUrl));

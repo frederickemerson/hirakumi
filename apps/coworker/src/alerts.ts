@@ -1,7 +1,7 @@
 import { formatHealthReasons, isOperatorOnly } from "@hirakumi/core";
 import type pg from "pg";
 import { withTx } from "./db.js";
-import { apiLink } from "./links.js";
+import { statusPageLink } from "./links.js";
 import { enqueueMessage } from "./messages.js";
 
 type Row = { id: string; api_id: string; to_health: "healthy" | "down"; reasons: unknown; at: Date; name: string };
@@ -41,7 +41,7 @@ async function operatorOnly(pool: pg.Pool, e: Row): Promise<boolean> {
 }
 
 function downBody(name: string, apiId: string, reasons: string[], first: Date, webBaseUrl: string): string {
-  return `Your API "${name}" is Down. Failing check: ${reasons.length ? reasons.join("; ") : "no details recorded"}. First failed test: ${formatUtc(first)}. Buyers are not charged while it is Down, and the Masumi registry will show it Offline at its next check. Details: ${apiLink(webBaseUrl, apiId)}`;
+  return `Your API "${name}" is Down. Failing check: ${reasons.length ? reasons.join("; ") : "no details recorded"}. First failed test: ${formatUtc(first)}. Buyers are not charged while it is Down, and the Masumi registry will show it Offline at its next check. Status page: ${statusPageLink(webBaseUrl, apiId)}`;
 }
 
 /** Turns unnotified health_events into seller messages; message + notified_at commit together. */
@@ -62,7 +62,7 @@ export async function processHealthEvents(pool: pg.Pool, webBaseUrl: string): Pr
       const first = (await firstFailureAt(pool, e.api_id, e.at)) ?? e.at;
       body = downBody(e.name, e.api_id, reasons, first, webBaseUrl);
     } else {
-      body = `Your API "${e.name}" is Live again (recovered at ${formatUtc(e.at)}). Details: ${apiLink(webBaseUrl, e.api_id)}`;
+      body = `Your API "${e.name}" is Live again (recovered at ${formatUtc(e.at)}). Status page: ${statusPageLink(webBaseUrl, e.api_id)}`;
     }
     await withTx(pool, async (c) => {
       await enqueueMessage(c, { apiId: e.api_id, body, dedupeKey: `health:${e.id}` });

@@ -93,7 +93,7 @@ describe("registerStep (registering → live)", () => {
     expect(msgs[1].body).toContain("Registry token: https://preprod.cardanoscan.io/token/agent_abc\n");
   });
 
-  it("sends a listing whose text promise only checks the status back to the review page, and registers once it has a phrase", async () => {
+  it("sends a listing whose text promise only checks the status back to priced, asks for the phrase, and registers once it has one", async () => {
     const apiId = await seedPublished();
     const opId = await seedOperation(db.pool, apiId, { opId: "getQuote" });
     const statusOnly = inferRuleFromResponses([{ status: 200, contentType: "text/plain", body: "1.5", latencyMs: 1 }]);
@@ -107,7 +107,9 @@ describe("registerStep (registering → live)", () => {
     const msgs = await messagesFor(db.pool, apiId);
     expect(msgs).toHaveLength(1);
     expect(msgs[0].body).toMatch(/getQuote needs a phrase every good answer contains/);
-    expect(msgs[0].body).toContain(`/apis/${apiId}/review`);
+    // A Sokosumi task (seedPublished): the phrase and the new publish link come by reply, with no web page.
+    expect(msgs[0].body).toContain("Reply `phrase <a word every good answer contains>`, then `publish` for a new link to publish.");
+    expect(msgs[0].body).not.toContain("/apis/");
     expect(msgs[0].task_status).toBe("INPUT_REQUIRED");
 
     // The seller adds a phrase and publishes again: it registers.

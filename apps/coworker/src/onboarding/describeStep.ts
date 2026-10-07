@@ -32,7 +32,7 @@ export async function describeStep(deps: DescribeDeps, apiId: string): Promise<S
       await enqueueMessage(c, {
         apiId,
         body: api?.sokosumi_task_id
-          ? chooseEndpointsPrompt(await listOps(c, apiId), sellable, deps.webBaseUrl, apiId)
+          ? chooseEndpointsPrompt(await listOps(c, apiId), sellable)
           : `Found ${ops.length} endpoints; ${sellable} look sellable (read-only). Pick the ones to sell and confirm they have no side effects: ${apiLink(deps.webBaseUrl, apiId)}`,
         taskStatus: "INPUT_REQUIRED",
         dedupeKey: `described:${apiId}`,

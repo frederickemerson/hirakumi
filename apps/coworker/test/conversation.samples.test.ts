@@ -60,7 +60,7 @@ async function run(task: Task, fetchSpec = notFound()) {
 }
 
 describe("a brief with a base URL and example requests (no OpenAPI file)", () => {
-  it("first-time seller: lists the endpoints from the lines and asks for the sign-in in the \"I don't\" mode", async () => {
+  it("first-time seller: lists the endpoints from the lines, asks for the one sign-in and keeps the intake for after it", async () => {
     const host = `${rand()}.example.dev`;
     const t = newTask(`My API: https://${host}/v1\n- GET /price?symbol=ADA\n- GET /coins/{id=cardano}?days?=7`);
     const { fetchSpec } = await run(t);
@@ -69,9 +69,11 @@ describe("a brief with a base URL and example requests (no OpenAPI file)", () =>
     expect(m.task_status).toBe("INPUT_REQUIRED");
     expect(m.body).toMatch(new RegExp(`^Step 1 of 7, Read your file: I read your example requests for https://${host}/v1 and found 2 endpoints:`));
     expect(m.body).toContain("1. GET /price (get_price): GET /price");
-    expect(m.body).toContain('choose "I don\'t" (no OpenAPI file) on this setup page and paste the same base URL and example requests');
+    expect(m.body).toMatch(/sign in once with your Cardano wallet to link this task to it \(one signature, no payment\): https:\/\/web\.test\/setup\?t=\S+&link=1\n/);
     expect(m.body).not.toMatch(/[–—]/);
     expect((await db.pool.query(`select 1 from apis where sokosumi_task_id = $1`, [t.id])).rowCount).toBe(0);
+    const { rows: [ct] } = await db.pool.query(`select pending_intake from coworker_tasks where task_id = $1`, [t.id]);
+    expect(ct.pending_intake).toContain("GET /price?symbol=ADA");
   });
 
   it("linked seller: creates a samples API with no OpenAPI link, and parse reads it", async () => {
@@ -155,15 +157,15 @@ describe("keys in comments", () => {
   });
 
   it.each([
-    ["described", false, "/ownership", "at the ownership step"],
-    ["endpoints_confirmed", false, "/ownership", "on its ownership page"],
-    ["ownership_verified", true, "/review", "on its review page"],
-    ["ownership_verified", false, "/review", "If the test calls need the key"],
-    ["rule_built", false, "/review", "on its review page"],
-    ["priced", false, "/review", "on its review page"],
-    ["registering", false, "/overview", "on its page"],
-    ["live", false, "/overview", "on its page"],
-  ])("a reply with a key at %s (failed: %s) points at the page with the key form and does not act on it", async (state, failed, page, words) => {
+    ["described", false, null, "when you sign to prove you own it, after you choose endpoints"],
+    ["endpoints_confirmed", false, null, "on the page where you sign to prove you own it"],
+    ["ownership_verified", true, "[[act:key]]", "The test calls then run again"],
+    ["ownership_verified", false, "[[act:key]]", "If the test calls need the key"],
+    ["rule_built", false, "[[act:key]]", "Add your API's key here"],
+    ["priced", false, "[[act:key]]", "Add your API's key here"],
+    ["registering", false, "[[act:key]]", "Add your API's key here"],
+    ["live", false, "[[act:key]]", "Add your API's key here"],
+  ])("a reply with a key at %s (failed: %s) points at the one-time key link and does not act on it", async (state, failed, link, words) => {
     const t = newTask();
     const sellerId = await linkSeller(t.userId);
     const { reply } = await run(t);
@@ -175,7 +177,9 @@ describe("keys in comments", () => {
     await reply(`here is my key X-API-Key: ${SECRET}`);
     const m = (await messagesForTask(t.id)).at(-1)!;
     expect(m.body).toContain(words);
-    expect(m.body).toMatch(new RegExp(`${WEB}/apis/${apiId}${page}$`));
+    if (link) expect(m.body.endsWith(link)).toBe(true);
+    else expect(m.body).not.toContain("[[act:");
+    expect(m.body).not.toContain(WEB);
     expect(m.body).not.toContain(SECRET);
     expect(m.body).not.toMatch(/[–—]/);
   });
@@ -185,7 +189,7 @@ describe("keys in comments", () => {
     const { reply } = await run(t);
     await reply(`here is my key X-API-Key: ${SECRET}`);
     const m = (await messagesForTask(t.id)).at(-1)!;
-    expect(m.body).toContain("You'll add your API's key on its ownership page. You'll get that page's link after you choose endpoints.");
+    expect(m.body).toContain("You'll add your API's key when you sign to prove you own it, after you choose endpoints.");
     expect(m.body).not.toContain(`${WEB}/apis/`);
   });
 });
@@ -207,13 +211,13 @@ describe("the ownership step for an API without an OpenAPI file", () => {
     const body = (await messagesForTask(t.id)).at(-1)?.body ?? "";
     const code: string = (await db.pool.query(`select token from challenges where api_id = $1 and kind = 'dns' and consumed_at is null`, [apiId])).rows[0].token;
     expect(body).toBe([
-      `Step 4 of 7, Prove ownership: Prove you own s.example.dev: add this DNS TXT record where your domain's DNS is managed (your API itself doesn't change), then sign once with your Cardano wallet (no payment): ${WEB}/apis/${apiId}/ownership`,
+      "Step 4 of 7, Prove ownership: Prove you own s.example.dev: add this DNS TXT record where your domain's DNS is managed (your API itself doesn't change):",
       "- Type: `TXT`",
       "- Name: `_hirakumi.s` (the full name is `_hirakumi.s.example.dev`)",
       `- Value: \`${code}\``,
       "",
-          "Open the link to finish: the page checks every 10 seconds and unlocks the wallet signature once the record is live.",
-      "Your API needs a key (a bearer token in the Authorization header): add it on the same page. Never paste it in a comment.",
+      "I look for it every 15 seconds and post here when I find it. Then you sign once with your Cardano wallet (no payment).",
+      "Your API needs a key (a bearer token in the Authorization header): you add it on the page where you sign. Never paste it in a comment.",
     ].join("\n"));
     await reply("what now?");
     const help = (await messagesForTask(t.id)).at(-1)?.body ?? "";
@@ -224,7 +228,7 @@ describe("the ownership step for an API without an OpenAPI file", () => {
 });
 
 describe("test calls refused for a missing key", () => {
-  it("a reply after QA failed at ownership_verified points at the key form on the review page, not at starting over", async () => {
+  it("a reply after QA failed at ownership_verified points at the one-time key link, not at starting over", async () => {
     const t = newTask();
     const sellerId = await linkSeller(t.userId);
     const { reply } = await run(t);
@@ -235,7 +239,7 @@ describe("test calls refused for a missing key", () => {
     await db.pool.query(`insert into onboard_steps (api_id, step, status, attempts, output) values ($1, 'qa', 'failed', 1, '{"error":"refused (HTTP 401)"}'::jsonb)`, [apiId]);
     await reply("what now?");
     const m = (await messagesForTask(t.id)).at(-1)!;
-    expect(m.body).toContain(`If your API needs a key, add it on the review page and the test calls run again: ${WEB}/apis/${apiId}/review`);
+    expect(m.body).toContain("If your API needs a key, add it here (sealed so only the Hirakumi gateway can read it) and the test calls run again: [[act:key]]");
     expect(m.body).not.toMatch(/^Onboarding stopped/);
     expect(m.body).not.toMatch(/[–—]/);
   });
