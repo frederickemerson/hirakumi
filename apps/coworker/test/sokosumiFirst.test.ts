@@ -183,7 +183,7 @@ describe("a first-time seller links the wallet once, then onboarding starts from
     const inbox = createInbox({ pool: db.pool, soko, webBaseUrl: WEB, fetchSpec });
     await inbox.poll();
     const first = (await db.pool.query(`select body from messages where task_id = $1 order by id`, [task.id])).rows;
-    expect(first.at(-1).body).toMatch(/sign in once with your Cardano wallet to link this task to it .*\/setup\?t=\S+&link=1/);
+    expect(first.at(-1).body).toMatch(/^Next: link your wallet\..*\/setup\?t=\S+&link=1/s);
     expect((await db.pool.query(`select 1 from apis where sokosumi_task_id = $1`, [task.id])).rowCount).toBe(0);
     setEvents([]);
     await inbox.poll(); // not linked yet: nothing happens

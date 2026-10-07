@@ -65,11 +65,12 @@ describe("a brief with a base URL and example requests (no OpenAPI file)", () =>
     const t = newTask(`My API: https://${host}/v1\n- GET /price?symbol=ADA\n- GET /coins/{id=cardano}?days?=7`);
     const { fetchSpec } = await run(t);
     expect(fetchSpec).toHaveBeenCalledWith(`https://${host}/v1`);
-    const [m] = await messagesForTask(t.id);
-    expect(m.task_status).toBe("INPUT_REQUIRED");
+    const [m, link] = await messagesForTask(t.id);
+    expect(m.task_status).toBe("RUNNING");
+    expect(link.task_status).toBe("INPUT_REQUIRED");
     expect(m.body).toMatch(new RegExp(`^Step 1 of 7, Read your file: I read your example requests for https://${host}/v1 and found 2 endpoints:`));
     expect(m.body).toContain("1. GET /price (get_price): GET /price");
-    expect(m.body).toMatch(/sign in once with your Cardano wallet to link this task to it \(one signature, no payment\): https:\/\/web\.test\/setup\?t=\S+&link=1\n/);
+    expect(link.body).toMatch(/^Next: link your wallet\..*\nhttps:\/\/web\.test\/setup\?t=\S+&link=1\n/s);
     expect(m.body).not.toMatch(/[–—]/);
     expect((await db.pool.query(`select 1 from apis where sokosumi_task_id = $1`, [t.id])).rowCount).toBe(0);
     const { rows: [ct] } = await db.pool.query(`select pending_intake from coworker_tasks where task_id = $1`, [t.id]);

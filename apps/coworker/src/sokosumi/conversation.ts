@@ -528,8 +528,6 @@ async function startIntake(deps: ConversationDeps, task: TaskRef, key: string, i
       ...list,
       `Suggested price: ${SUGGESTED_PRICE}. I write the promise (what a good answer looks like) from real test calls, which run after you prove you own the API.`,
       ...(parsed.authHint ? [`Your API needs a key (${describeAuthHint(parsed.authHint)}). You'll add it when you sign to prove you own the API. Never paste it in a comment.`] : []),
-      `Next, sign in once with your Cardano wallet to link this task to it (one signature, no payment): ${linkWalletLink(deps.webBaseUrl, task.setupToken)}`,
-      "Then I start right here. Everything happens in this task; you only open a link when your wallet has to sign.",
     ].join("\n");
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -538,7 +536,14 @@ async function startIntake(deps: ConversationDeps, task: TaskRef, key: string, i
   }
   // Read again once the wallet is linked (sokosumi/inbox.ts resumeLinkedIntakes), so the seller sends nothing twice.
   await deps.pool.query(`update coworker_tasks set pending_intake = $2 where task_id = $1`, [task.taskId, intake.source]);
-  await say(deps.pool, task, key, summary, { step: "Read your file", status: "INPUT_REQUIRED" });
+  await say(deps.pool, task, key, summary, { step: "Read your file", status: "RUNNING" });
+  // Its own comment, like every later signing step: one link, sign, close, and the task carries on here.
+  await say(deps.pool, task, `${key}:link-wallet`, [
+    "Next: link your wallet. Sign once with your Cardano wallet, or with Google or email (no payment), then close the tab. I continue right here.",
+    linkWalletLink(deps.webBaseUrl, task.setupToken),
+    "",
+    "Everything else happens in this task; you only open a link when your wallet has to sign.",
+  ].join("\n"), { status: "INPUT_REQUIRED" });
 }
 
 /**
