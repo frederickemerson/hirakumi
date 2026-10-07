@@ -5,17 +5,14 @@ import { useRef, useState, type ReactNode } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { DeleteApiButton } from "@/components/delete-api-button";
 import { EmptyState } from "@/components/states";
+import { StatusLight } from "@/components/status-light";
 import { toast } from "@/components/toast";
-import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
-import { accountTotals, passRatePct, type AccountApi, type ApiBadge } from "@/lib/account";
+import { accountTotals, passRatePct, type AccountApi } from "@/lib/account";
 import { postJson } from "@/lib/client-fetch";
 import { formatTime, RETIRE_COPY } from "@/lib/copy";
-import { STATUS_BADGE_VARIANT } from "@/lib/status-labels";
 import { formatTusdm } from "@/lib/money";
 import { cn } from "@/lib/utils";
-
-const BADGE_VARIANT = STATUS_BADGE_VARIANT;
 
 const COLLAPSE_MS = 220;
 
@@ -27,7 +24,7 @@ function motionAllowed(): boolean {
 
 /**
  * Totals and the seller's APIs, with Retire and Delete (any stage). The list is local state seeded by the server, so a
- * confirmed change shows at once (badge, actions and totals) without waiting on a page reload.
+ * confirmed change shows at once (status light, actions and totals) without waiting on a page reload.
  * `children` renders between the totals and the list (the account details).
  */
 export function AccountApis({ initial, children }: { initial: AccountApi[]; children?: ReactNode }) {
@@ -124,12 +121,12 @@ function ApiRow({ api: a, first, leaving, onDeleted, onRetire }: {
     >
       <div className="min-h-0 overflow-hidden">
         <div className={cn("space-y-4 p-4", !first && "border-t-2 border-ink")}>
-          <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-            <div className="min-w-0 space-y-1">
-              <h3 id={nameId} className="text-body-lg font-medium break-words">{a.name}</h3>
-              {a.badge.detail && <p className="text-caption text-graphite">{a.badge.detail}</p>}
+          <div className="min-w-0 space-y-1">
+            <div className="flex items-center gap-2.5">
+              <StatusLight tone={a.badge.tone} state={a.state} />
+              <h3 id={nameId} className="min-w-0 text-body-lg font-medium break-words">{a.name}</h3>
             </div>
-            <Badge variant={BADGE_VARIANT[a.badge.tone]}>{a.badge.label}</Badge>
+            {a.badge.detail && <p className="text-caption text-graphite">{a.badge.detail}</p>}
           </div>
 
           <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-body sm:grid-cols-4">

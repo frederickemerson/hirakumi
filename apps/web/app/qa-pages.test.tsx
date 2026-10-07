@@ -3,6 +3,7 @@ import { render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getSql } from "@/lib/db";
 import { createSessionToken } from "@/lib/session";
+import { statusLight } from "@/lib/status-labels";
 import { resetDb } from "@/test/db";
 import { getAccount } from "@/lib/repo/account";
 import { seedApi, seedOnboardStep, seedSeller } from "@/test/factories";
@@ -93,17 +94,20 @@ describe("one status label on /apis and /account (QA 11, 12)", () => {
     await seedOnboardStep(stopped.id, "describe", "failed");
     await seedApi(sellerId, "retired", { name: "Gamma API" });
     await seedApi(sellerId, "live", { name: "Delta API" });
-    const expected = { "Alpha API": "In progress", "Beta API": "Stopped", "Gamma API": "Retired", "Delta API": "Live" };
+    const expected = {
+      "Alpha API": "Setting up: Waiting for you to choose endpoints", "Beta API": "Stopped", "Gamma API": "Retired", "Delta API": "Running",
+    };
 
     const apis = render(await ApisPage());
     for (const [name, label] of Object.entries(expected)) {
       const row = screen.getByRole("link", { name }).closest("li")!;
-      expect(within(row).getByText(label)).toBeInTheDocument();
+      expect(within(row).getByRole("img", { name: label })).toBeInTheDocument();
     }
     apis.unmount();
     const account = await getAccount(getSql(), sellerId);
     for (const [name, label] of Object.entries(expected)) {
-      expect(account!.apis.find((a) => a.name === name)!.badge.label).toBe(label);
+      const a = account!.apis.find((x) => x.name === name)!;
+      expect(statusLight(a.badge.tone, a.state).label).toBe(label);
     }
     expect(described.id).toBeTruthy();
   });
