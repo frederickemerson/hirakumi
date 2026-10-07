@@ -59,6 +59,23 @@ describe("SetupForm without an OpenAPI file", () => {
   });
 });
 
+describe("SetupForm when an example request may hold a key", () => {
+  it("shows each warning and waits for the seller before opening the Endpoints step", async () => {
+    const warning = 'Line 2: "appid" may be your API\'s key. If it is, remove it from the example requests: buyers see every example value.';
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ apiId: "api_3", state: "intake", created: true, keyWarnings: [warning] }, 201)));
+    const user = userEvent.setup();
+    render(<SetupForm initialUrl="" samples />);
+    await user.click(screen.getByRole("radio", { name: "I don't" }));
+    await user.type(screen.getByLabelText("Base URL"), "https://api.example.com/v1");
+    await user.type(screen.getByLabelText("Example requests"), "GET /price?symbol=ADA");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByText(warning)).toBeInTheDocument();
+    expect(nav.push).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Continue to endpoints" }));
+    expect(nav.push).toHaveBeenCalledWith("/apis/api_3/endpoints");
+  });
+});
+
 describe("SetupForm with a Sokosumi setup token (review I5)", () => {
   it("sends the setup token with the OpenAPI link", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ apiId: "api_1", state: "intake", created: true }), { status: 201 }));

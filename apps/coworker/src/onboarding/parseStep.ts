@@ -60,7 +60,7 @@ export function apiBase(serverUrl: string | null, ref: string, allowInsecure = f
   if (base.search !== "" || base.hash !== "" || /[?#]/.test(serverUrl ?? "")) throw new PermanentError(`${what} has a ?query or #fragment. Use a plain base URL.`);
   if (/\{|%7b/i.test(serverUrl ?? "") || /%7b/i.test(base.pathname)) throw new PermanentError(`${what} has a {variable} with no default. Give it a default or write the full URL.`);
   if (AMBIGUOUS_PATH.test(base.pathname) || (serverUrl ?? "").includes("\\")) {
-    throw new PermanentError(`${what} has an encoded slash, dot or a ';' in its path. Use a plain path.`);
+    throw new PermanentError(`${what} has an encoded slash, dot or percent sign, a ';', a control character or a character outside plain ASCII in its path. Use a plain path.`);
   }
   // The ownership check requests exactly this base; an empty segment would make it a second spelling of another folder.
   if (base.pathname.includes("//")) throw new PermanentError(`${what} has two slashes in a row in its path. Use a plain path.`);

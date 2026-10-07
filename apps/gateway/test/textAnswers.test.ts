@@ -1,16 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import request from "supertest";
-import { inferRuleFromResponses, outputHash, ruleHash } from "@hirakumi/core";
+import { inferRuleFromResponses, outputHash, ruleHash, withRequiredPhrase } from "@hirakumi/core";
 import { JobRunner } from "../src/jobs";
 import { Monitor } from "../src/monitor";
 import { insertActiveToken, makeHarness, type Harness } from "./helpers";
 
-// An API without JSON: GET /prices.csv answers CSV. The rule is inferred the way the coworker's QA infers it.
+// An API without JSON: GET /prices.csv answers CSV. The rule is inferred the way the coworker's QA infers it, with the
+// phrase the seller confirmed before publishing.
 const CSV = "symbol,price\r\nADA,0.42\r\nBTC,60000\r\n";
-const rule = inferRuleFromResponses([
+const inferred = inferRuleFromResponses([
   { status: 200, contentType: "text/csv; charset=utf-8", body: CSV, latencyMs: 1 },
   { status: 200, contentType: "text/csv", body: "symbol,price\nETH,3000\n", latencyMs: 1 },
 ]);
+const rule = withRequiredPhrase(inferred, "symbol,price");
 
 let h: Harness;
 const internal = { authorization: "Bearer internal-test-token-0123456789" };
@@ -18,14 +20,14 @@ beforeEach(async () => {
   h = await makeHarness();
   await h.sql`update operations set path = '/prices.csv' where id = ${h.seeded.operationId}`;
   await h.sql`update rules set definition = ${h.sql.json(rule as never)}, hash = ${ruleHash(rule)},
-              plain_english = 'A CSV answer that starts with the line symbol,price.' where id = ${h.seeded.ruleId}`;
+              plain_english = 'A CSV answer that contains symbol,price.' where id = ${h.seeded.ruleId}`;
   h.stub.setFile("/prices.csv", CSV, { contentType: "text/csv; charset=utf-8" });
 });
 afterEach(async () => { await h.close(); });
 
 describe("an API that answers CSV", () => {
   it("the inferred rule is a text rule for text/csv", () => {
-    expect(rule).toMatchObject({ contentType: "text/csv", schema: { type: "string", minLength: 1, pattern: "^symbol,price\\r?\\n", not: { anyOf: expect.any(Array) } } });
+    expect(inferred).toMatchObject({ contentType: "text/csv", schema: { type: "string", minLength: 1, pattern: "\\S", not: { pattern: expect.any(String) } } });
   });
 
   it("an Excel-style CSV with a BOM is charged and returned without it, hashed as the buyer's res.text() reads it", async () => {
@@ -53,13 +55,13 @@ describe("an API that answers CSV", () => {
     }
   });
 
-  it("a short error text sent as CSV with 200 breaks the promise: 422 and no credit used", async () => {
+  it("a short error text sent as CSV with 200 lacks the phrase and breaks the promise: 422 and no credit used", async () => {
     for (const body of ["Rate limit exceeded", "404 Not Found\n", "<h1>Service Unavailable</h1>"]) {
       h.stub.setFile("/prices.csv", body, { contentType: "text/csv" });
       const { token } = await insertActiveToken(h.sql, h.seeded, 3);
       const r = await request(h.app).get(`/a/${h.seeded.apiId}/x/getPrice?symbol=ADA`).set("authorization", `Bearer ${token}`);
       expect(r.status, body).toBe(422);
-      expect(r.body.reasons, body).toContain("/ looks like an error response");
+      expect(r.body.reasons, body).toContain('/ does not contain "symbol,price"');
       expect(r.headers["x-credits-remaining"]).toBe("3");
     }
   });
@@ -104,7 +106,7 @@ describe("an API that answers CSV", () => {
     expect(receipts.body.calls[0]).toMatchObject({ verdict: "pass", charged: true, ruleHash: ruleHash(rule), outputHash: outputHash(id, CSV) });
   });
 
-  it("a CSV without the header line breaks the promise: 422 and no credit used", async () => {
+  it("a CSV without the confirmed phrase breaks the promise: 422 and no credit used", async () => {
     h.stub.setFile("/prices.csv", "error,rate limited\n", { contentType: "text/csv" });
     const { token } = await insertActiveToken(h.sql, h.seeded, 3);
     const r = await request(h.app).get(`/a/${h.seeded.apiId}/x/getPrice?symbol=ADA`).set("authorization", `Bearer ${token}`);

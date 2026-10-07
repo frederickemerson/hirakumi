@@ -34,13 +34,18 @@ export async function setUpstreamAuth(sql: Sql, a: { apiId: string; sellerId: st
 }
 
 /**
- * What buyers can see of an API's example values: the seller's example requests (apis.samples lines) and every
- * endpoint's input schema with its examples (operations.input_schema). A key found here is public already.
+ * What buyers can see of an API's example values: the seller's example requests (apis.samples lines), every
+ * endpoint's input schema with its examples (operations.input_schema, built from the OpenAPI file or the example
+ * requests), and the OpenAPI file's summaries and parameter descriptions as the parse step kept them
+ * (onboard_steps(step='parse').output.ops). A key found here is public already.
  */
 export async function publicExampleTexts(sql: Sql, apiId: string): Promise<string[]> {
   const [api] = await sql<{ lines: string | null }[]>`select samples->>'lines' as lines from apis where id = ${apiId}`;
   const ops = await sql<{ schema: string | null }[]>`select input_schema::text as schema from operations where api_id = ${apiId}`;
-  return [api?.lines ?? null, ...ops.map((o) => o.schema)].filter((t): t is string => typeof t === "string" && t !== "");
+  const [parsed] = await sql<{ ops: string | null }[]>`
+    select (output->'ops')::text as ops from onboard_steps where api_id = ${apiId} and step = 'parse'`;
+  return [api?.lines ?? null, ...ops.map((o) => o.schema), parsed?.ops ?? null]
+    .filter((t): t is string => typeof t === "string" && t !== "");
 }
 
 /** True when a key was stored and is now gone. */

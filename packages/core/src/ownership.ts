@@ -47,19 +47,27 @@ export function firstServerUrl(servers: unknown): string | null {
   });
 }
 
-/** A server may decode these and walk to another directory, so a path that has them proves nothing. */
-export const AMBIGUOUS_PATH = /%2f|%5c|%2e|;/i;
+/**
+ * A server may decode these and walk to another directory, so a path that has them proves nothing: an encoded "/",
+ * "\" or ".", a ";", an encoded "%" (decoded twice, "%252e" is "."), an encoded or raw control character or byte
+ * outside ASCII ("%c0%ae" is an overlong "." to some decoders, and "．" (U+FF0E) is "." after Unicode
+ * normalization), and a raw space.
+ */
+export const AMBIGUOUS_PATH = /%2f|%5c|%2e|%25|%[01][0-9a-f]|%7f|%[89a-f][0-9a-f]|;|[^\x21-\x7e]/i;
 
 /**
  * Why an endpoint path could step outside the folder its base path was proven for, or null when it is plain.
  * URLs collapse "." and ".." segments (also when written %2e, any case), and some servers also treat "\",
- * ";" or an encoded "/" or "\" as separators. Appended to a proven base path, any of these could reach
- * another tenant's folder on the same host.
+ * ";" or an encoded "/" or "\" as separators, decode "%25" twice, or read "%c0%ae" or "．" as ".". Appended to a
+ * proven base path, any of these could reach another tenant's folder on the same host.
  */
 export function unsafePathReason(path: string): string | null {
   if (path.includes("\\")) return "its path has a backslash";
   if (/%2f|%5c/i.test(path)) return "its path has an encoded slash";
   if (path.includes(";")) return "its path has a ';'";
+  if (/%25/.test(path)) return "its path has an encoded percent sign (%25)";
+  if (/[\x00-\x1f\x7f]|%[01][0-9a-f]|%7f/i.test(path)) return "its path has a control character";
+  if (/[^\x00-\x7f]|%[89a-f][0-9a-f]/i.test(path)) return "its path has a character outside plain ASCII";
   if (path.split("/").some((seg) => /^\.{1,2}$/.test(seg.replace(/%2e/gi, ".")))) return "its path has a dot segment (. or ..)";
   return null;
 }
@@ -139,7 +147,7 @@ export function ownershipCheckUrl(a: { origin: string; pathPrefix: string; code:
   }
   if (!prefix.startsWith("/") || /[?#]/.test(prefix)) return fail("The API's base path must be a plain path starting with /.");
   if (AMBIGUOUS_PATH.test(prefix) || prefix.includes("//") || unsafePathReason(prefix)) {
-    return fail("The API's base path has an encoded slash, dot, a ';' or a backslash. Use a plain path.");
+    return fail("The API's base path has an encoded slash, dot or percent sign, a ';', a backslash, a control character or a character outside plain ASCII. Use a plain path.");
   }
   let url: URL;
   try {

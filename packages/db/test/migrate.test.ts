@@ -19,7 +19,7 @@ describe("migrate", () => {
   it("is idempotent: a second run applies nothing", async () => {
     db = await createTestDb();
     expect(await migrate(db.sql)).toEqual([]);
-  });
+  }, 30_000); // replays every migration; slow under a parallel workspace run
 
   it("rejects non-preprod seller addresses", async () => {
     db = await createTestDb();

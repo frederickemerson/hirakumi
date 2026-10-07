@@ -4,7 +4,7 @@ import { inputHash, newId } from "@hirakumi/core";
 import { getJob, insertJob, type JobRow } from "@hirakumi/db";
 import { estimatedDowntimeSeconds } from "./config";
 import type { AppDeps } from "./deps";
-import { downBody, SELLER_BODY_HEADERS } from "./http";
+import { downBody, SELLER_BODY_HEADERS, sellingPausedBody } from "./http";
 import { escrowOperation } from "./registry";
 import { normalizeMip003Input } from "./upstream";
 
@@ -128,6 +128,10 @@ export function mip003Router(d: AppDeps): Router {
         });
         return;
       }
+      if (loaded.api.ownership_paused_at) {
+        res.status(503).json({ status: "unavailable", message: `${loaded.api.name} is not selling right now: its owner has to confirm the API again.` });
+        return;
+      }
       res.json({ status: "available", type: "masumi-agent", message: `${loaded.api.name} is Live. Every answer is checked against a published promise.` });
     } catch (e) { next(e); }
   });
@@ -165,6 +169,8 @@ export function mip003Router(d: AppDeps): Router {
       if (!checked.ok) { res.status(400).json({ error: "INVALID_INPUT", reasons: checked.reasons }); return; }
       const snap = d.health.get(loaded.api.id);
       if (snap?.health === "down") { res.status(503).json(downBody(d.config, snap)); return; }
+      const paused = sellingPausedBody(loaded.api);
+      if (paused) { res.status(503).json(paused); return; }
       if (!d.masumi) { res.status(503).json({ error: "escrow_unavailable", message: "Escrow payments are not configured on this gateway." }); return; }
       if (!loaded.api.agent_identifier) { res.status(503).json({ error: "agent_not_registered", message: "This API is not registered on Masumi yet." }); return; }
 

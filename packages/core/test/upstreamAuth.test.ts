@@ -198,8 +198,29 @@ describe("leaks in other encodings (normalised text and base64 tokens)", () => {
 
   it("redacts what it can locate, and withholds the whole text when the key is only found after decoding", () => {
     expect(redactUpstreamSecret("bad key abc%2Fdef%2Bghi%3Djkl here", value)).toBe("bad key [key] here");
-    expect(redactUpstreamSecret("bad key abc%2Fdef+ghi%3djkl here", value)).toBe(WITHHELD_TEXT);
+    expect(redactUpstreamSecret("bad key abc%2Fdef+ghi%3djkl here", value)).toBe("bad key [key] here"); // form-encoded, + for the space
+    expect(redactUpstreamSecret("bad key %61bc/def%2bghi=jkl here", value)).toBe(WITHHELD_TEXT);
     expect(redactUpstreamSecret("status 500 is outside 200-299", value)).toBe("status 500 is outside 200-299");
+  });
+
+  it("finds a query key whose + an upstream read as a space, and redacts that form", () => {
+    expect(answerLeaksSecret('{"echo":"abc/def ghi=jkl"}', c)).toBe(true);
+    expect(redactUpstreamSecret("you sent abc/def ghi=jkl", value)).toBe("you sent [key]");
+  });
+
+  it("finds the key hex encoded, lower or upper case, and redacts it", () => {
+    const hex = Buffer.from(SECRET).toString("hex");
+    const s = { in: "header" as const, name: "X-Key", value: SECRET };
+    for (const h of [hex, hex.toUpperCase()]) {
+      expect(answerLeaksSecret(`{"trace":"${h}"}`, s), h).toBe(true);
+      expect(redactUpstreamSecret(`trace ${h} end`, SECRET), h).toBe("trace [key] end");
+    }
+  });
+
+  it("decodes percent-encoding until the text stops changing, up to 8 rounds", () => {
+    const encoded = (rounds: number) => Array.from({ length: rounds }).reduce<string>((t) => encodeURIComponent(t), value);
+    for (const n of [4, 6, 8]) expect(answerLeaksSecret(`https://x/?k=${encoded(n)}`, c), String(n)).toBe(true);
+    expect(redactUpstreamSecret(`k=${encoded(6)}`, value)).toBe(WITHHELD_TEXT);
   });
 
   it("keyAppearsIn checks several texts the same way", () => {

@@ -176,19 +176,29 @@ const base64Forms = (s: string) => {
   const b64 = Buffer.from(s, "utf8").toString("base64");
   return [b64, b64.replace(/=+$/, ""), Buffer.from(s, "utf8").toString("base64url")];
 };
+/**
+ * The part as an upstream may have read it: a "+" in a query value decoded as a space (form encoding), and its bytes
+ * hex encoded (only for parts of MIN_SECRET_PART characters or more, so a short token's hex does not match ordinary
+ * digits). Matching ignores case, so the hex form also stands for upper case hex.
+ */
+const readForms = (s: string) => [
+  ...(s.includes("+") ? [s.replaceAll("+", " ")] : []),
+  ...(s.length >= MIN_SECRET_PART ? [Buffer.from(s, "utf8").toString("hex")] : []),
+];
 const htmlEscape = (s: string, quot: string, apos: string) =>
   s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', quot).replaceAll("'", apos);
 
 /**
  * The common ways the key (or one of its parts) is written in an answer or a message, found as they are so
- * redaction can replace them: as is and base64/base64url encoded, each of those as is, percent-encoded
+ * redaction can replace them: as is, base64/base64url encoded, hex encoded and with "+" read as a space (readForms),
+ * each of those as is, percent-encoded
  * (encodeURIComponent, or the form encoding URLSearchParams uses for the query), JSON-escaped (also with "\/", and
  * Go-style with & < > as \u0026 \u003c \u003e) and HTML/XML entity-escaped. Matching ignores case
  * (textLeaksSecret, redactUpstreamSecret), so a form stands for every casing of it. Longest first, so redaction
  * never leaves part of a longer form behind. Other encodings are found by normalising the text (textLeaksSecret).
  */
 export function upstreamSecretForms(value: string): string[] {
-  const forms = upstreamSecretParts(value).flatMap((part) => [part, ...base64Forms(part)]).flatMap((text) => {
+  const forms = upstreamSecretParts(value).flatMap((part) => [part, ...base64Forms(part), ...readForms(part)]).flatMap((text) => {
     const json = JSON.stringify(text).slice(1, -1);
     const goJson = json.replaceAll("&", "\\u0026").replaceAll("<", "\\u003c").replaceAll(">", "\\u003e");
     return [
@@ -200,9 +210,9 @@ export function upstreamSecretForms(value: string): string[] {
   return [...new Set(forms.map((f) => f.toLowerCase()))].filter((f) => f !== "").sort((a, b) => b.length - a.length);
 }
 
-/** The parts and their base64 forms, lowercased: what is looked for in normalised and base64-decoded text. */
+/** The parts, their base64 forms and readForms, lowercased: what is looked for in normalised and base64-decoded text. */
 const plainNeedles = (value: string) =>
-  [...new Set(upstreamSecretParts(value).flatMap((p) => [p, ...base64Forms(p)]).map((f) => f.toLowerCase()))].filter(Boolean);
+  [...new Set(upstreamSecretParts(value).flatMap((p) => [p, ...base64Forms(p), ...readForms(p)]).map((f) => f.toLowerCase()))].filter(Boolean);
 
 const NAMED_ENTITIES: Record<string, string> = {
   amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", plus: "+", sol: "/", equals: "=", colon: ":", num: "#", percnt: "%",
@@ -224,10 +234,13 @@ function decodeOnce(t: string): string {
     .replace(/%([0-7][0-9a-fA-F])/g, (_w, h: string) => String.fromCharCode(parseInt(h, 16)));
 }
 
-/** The text with common escapes undone, repeated a few times for double encoding. */
+/** Rounds of decoding before normaliseText stops: enough for any encoding a real upstream nests, and bounded. */
+const MAX_DECODE_ROUNDS = 8;
+
+/** The text with common escapes undone, repeated until it stops changing (at most MAX_DECODE_ROUNDS rounds). */
 function normaliseText(text: string): string {
   let t = text;
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < MAX_DECODE_ROUNDS; i++) {
     const next = decodeOnce(t);
     if (next === t) break;
     t = next;
@@ -256,8 +269,9 @@ function decodedBase64Tokens(texts: string[]): string[] {
  * True when text contains the key (or one of its parts), in any case. It looks for the forms of
  * upstreamSecretForms as they are, then in the text with escapes undone (mixed percent-encoding, \u00XX escapes of
  * every character as ASP.NET writes them, decimal and hex HTML entities), then inside base64 and base64url tokens
- * of the answer. This catches common encodings, not every one: an upstream can always transform the key in a way
- * no check foresees, so sending the key in a header (which answers echo less often than URLs) is the safer default.
+ * of the answer. This is defence in depth, not a complete check: it catches common encodings, not every one. An
+ * upstream can always transform the key in a way no check foresees, so sending the key in a header (which answers
+ * echo less often than URLs) is the safer default.
  */
 export function textLeaksSecret(text: string | null | undefined, value: string): boolean {
   if (!text) return false;

@@ -7,7 +7,7 @@ import {
 import { channelView } from "./channels";
 import { IOU_HEADER, SIGN_NEXT_HEADER, checkIou } from "./ious";
 import type { AppDeps } from "./deps";
-import { creditsRequiredBody, downBody, parseBearer, SELLER_BODY_HEADERS } from "./http";
+import { creditsRequiredBody, downBody, parseBearer, SELLER_BODY_HEADERS, sellingPausedBody } from "./http";
 import { runOperation, type OperationOutcome } from "./upstream";
 
 export function creditsRouter(d: AppDeps): Router {
@@ -52,7 +52,11 @@ export function creditsRouter(d: AppDeps): Router {
       const bearer = parseBearer(authorization);
       // A Bearer value that isn't a Hirakumi token is a client bug: say so instead of offering another pack.
       if (!bearer && /^\s*Bearer\s+\S/i.test(authorization ?? "")) { res.status(401).json({ error: "invalid_token" }); return; }
-      if (!bearer) { res.status(402).json(creditsRequiredBody(d.config, loaded, op.ruleRow)); return; }
+      const pausedBody = sellingPausedBody(loaded.api);
+      if (!bearer) {
+        if (pausedBody) { res.status(503).json(pausedBody); return; }
+        res.status(402).json(creditsRequiredBody(d.config, loaded, op.ruleRow)); return;
+      }
       // Escrow packs: the IOU gate (one DB transaction: row lock, allowance, credit, lease) replaces the plain reserve.
       const channel = await getChannelByToken(d.sql, loaded.api.id, sha256Hex(bearer));
       const callId = newId("call");
@@ -86,6 +90,7 @@ export function creditsRouter(d: AppDeps): Router {
         }
         // Contract v1.1 G4: a token whose pack payment hasn't settled yet is not usable.
         if (reservation.reason === "pending") { res.status(401).json({ error: "token_pending" }); return; }
+        if (pausedBody) { res.status(503).json(pausedBody); return; }
         res.status(402).json({ ...creditsRequiredBody(d.config, loaded, op.ruleRow), error: "credits_required" });
         return;
       }

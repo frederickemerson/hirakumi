@@ -12,7 +12,7 @@ export async function POST(req: Request, ctx: ApiRouteContext): Promise<Response
   const loaded = await loadOwnedApi(req, ctx);
   if (loaded instanceof Response) return loaded;
   const { api, sql } = loaded;
-  // The verification code is a challenge of kind 'header', which needs migration 0014.
+  // The verification code is a challenge of kind 'header', which needs migration 0015.
   const updating = await updatingResponse(sql);
   if (updating) return updating;
   if (api.state !== "endpoints_confirmed") return wrongStep(api);

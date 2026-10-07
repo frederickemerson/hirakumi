@@ -24,6 +24,13 @@ export function SetupForm({ initialUrl, setupToken, samples: samplesOn = false }
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Example requests that may hold a key: the API is listed, and the seller reads these before going on.
+  const [warned, setWarned] = useState<{ apiId: string; warnings: string[] } | null>(null);
+
+  function openEndpoints(apiId: string) {
+    startRouteProgress();
+    router.push(`/apis/${apiId}/endpoints`);
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -31,9 +38,13 @@ export function SetupForm({ initialUrl, setupToken, samples: samplesOn = false }
     setError(null);
     try {
       const intake = mode === "openapi" ? { openapiUrl: url } : { mode: "samples", baseUrl, samples };
-      const data = await postJson<{ apiId: string }>("/api/apis", { ...intake, name, ...(setupToken ? { setupToken } : {}) });
-      startRouteProgress();
-      router.push(`/apis/${data.apiId}/endpoints`);
+      const data = await postJson<{ apiId: string; keyWarnings?: string[] }>("/api/apis", { ...intake, name, ...(setupToken ? { setupToken } : {}) });
+      if (data.keyWarnings?.length) {
+        setWarned({ apiId: data.apiId, warnings: data.keyWarnings });
+        setBusy(false);
+        return;
+      }
+      openEndpoints(data.apiId);
     } catch (err) {
       setError(err instanceof RequestError ? err.message : "Something went wrong. Try again.");
       setBusy(false);
@@ -100,14 +111,26 @@ export function SetupForm({ initialUrl, setupToken, samples: samplesOn = false }
         <Input id="api-name" type="text" value={name} onChange={(e) => setName(e.target.value)} disabled={busy} />
       </div>
       {error && <InlineError>{error}</InlineError>}
-      <div className="flex flex-wrap items-center gap-4">
-        <Button type="submit" pending={busy} pendingLabel={mode === "openapi" ? "Checking your link…" : "Checking your requests…"}>Continue</Button>
-        {busy && (
-          <InlineStatus busy>
-            {mode === "openapi" ? "Reading your OpenAPI file" : "Reading your example requests"} <Elapsed prefix=" " className="text-graphite" />
-          </InlineStatus>
-        )}
-      </div>
+      {warned ? (
+        <div className="space-y-3" data-testid="key-warnings">
+          <ul className="list-disc space-y-1 pl-5 text-body">
+            {warned.warnings.map((w) => <li key={w}>{w}</li>)}
+          </ul>
+          <p className="text-body text-graphite">
+            If one of these is your API&apos;s key, issue a new key: these lines are saved, and buyers will see them. Hirakumi won&apos;t accept a key that appears in them.
+          </p>
+          <Button type="button" onClick={() => openEndpoints(warned.apiId)}>Continue to endpoints</Button>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-4">
+          <Button type="submit" pending={busy} pendingLabel={mode === "openapi" ? "Checking your link…" : "Checking your requests…"}>Continue</Button>
+          {busy && (
+            <InlineStatus busy>
+              {mode === "openapi" ? "Reading your OpenAPI file" : "Reading your example requests"} <Elapsed prefix=" " className="text-graphite" />
+            </InlineStatus>
+          )}
+        </div>
+      )}
     </form>
   );
 }

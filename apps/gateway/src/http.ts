@@ -45,6 +45,19 @@ export function downBody(cfg: Pick<GatewayConfig, "probeIntervalMs" | "threshold
   };
 }
 
+/**
+ * While the ownership re-check has paused new sales (apis.ownership_paused_at, monitor.ts recheckOwnership): no new
+ * offer, pack or job. Null when selling. Credits already bought keep working.
+ */
+export function sellingPausedBody(api: { ownership_paused_at: Date | null }) {
+  if (!api.ownership_paused_at) return null;
+  return {
+    error: "selling_paused" as const,
+    message: "New sales of this API are paused: Hirakumi could not confirm that the seller still controls it (the X-Hirakumi-Verify header at its base URL is missing). Nothing was charged. Credits you already bought still work.",
+    since: api.ownership_paused_at.toISOString(),
+  };
+}
+
 export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
   const e = err as { type?: string };
   if (e.type === "entity.parse.failed") { res.status(400).json({ error: "invalid_json" }); return; }

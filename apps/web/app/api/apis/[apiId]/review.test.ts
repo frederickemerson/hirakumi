@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { inferTextRule, withRequiredPhrase } from "@hirakumi/core";
+import { inferRuleFromResponses, inferTextRule, withRequiredPhrase } from "@hirakumi/core";
 import { getSql } from "@/lib/db";
 import { setGatewayForTests, type Gateway } from "@/lib/gateway";
-import { getSuggestedPhrases } from "@/lib/repo/rules";
+import { addRequiredPhrase, getSuggestedPhrases } from "@/lib/repo/rules";
 import type { Api, Seller } from "@/lib/types";
 import { resetDb } from "@/test/db";
 import { seedApi, seedOnboardStep, seedOperation, seedPack, seedRule, seedSeller } from "@/test/factories";
@@ -134,6 +134,24 @@ describe("pricing and publish", () => {
 
     // A later version with a phrase is the promise from now on, so publishing goes through.
     await seedRule(text.id, { definition: withRequiredPhrase(statusOnly, "USD"), version: 2 });
+    expect((await pub()).status).toBe(200);
+    expect(await state()).toBe("registering");
+  });
+
+  it.each([
+    ["a CSV with an error column", "text/csv", ["error,count\ntimeout,3\n", "error,count\ndns,1\n"], "error,count"],
+    ["an XML document with an <errors> root", "application/xml", ["<errors><item>disk full</item></errors>", "<errors><item>cpu hot</item></errors>"], "<errors>"],
+    ["a log API", "text/plain", ["2026-10-07T12:00:01Z ERROR db timeout\n", "2026-10-07T12:00:02Z FATAL out of memory\n"], "2026-10-07T"],
+    ["a news line", "text/plain", ["Fatal accidents fell 3%", "Fatal accidents rose 1%"], "Fatal accidents"],
+  ])("publishes %s once the seller confirms a phrase its answers contain", async (_name, ct, good, phrase) => {
+    await setup("priced");
+    await seedPack(api.id);
+    const text = await seedOperation(api.id, { opId: "getFeed", path: "/feed", enabled: true });
+    const answer = (body: string, status = 200) => ({ status, contentType: ct, body, latencyMs: 1 });
+    await seedRule(text.id, { definition: inferRuleFromResponses(good.map((b) => answer(b)), answer("unknown input", 404)) });
+    await seedOnboardStep(api.id, "qa", "done", { goodAnswers: { getFeed: good.map((body) => ({ body, complete: true })) } });
+    expect((await pub()).status).toBe(409);
+    expect(await addRequiredPhrase(getSql(), { apiId: api.id, sellerId: seller.id, operationId: text.id, phrase })).toMatchObject({ ok: true, version: 2 });
     expect((await pub()).status).toBe(200);
     expect(await state()).toBe("registering");
   });

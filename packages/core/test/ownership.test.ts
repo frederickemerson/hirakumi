@@ -5,6 +5,7 @@ import {
   matchVerifyHeader,
   newVerifyCode,
   ownershipCheckUrl,
+  unsafePathReason,
   urlCarriesCode,
   verifyCodesEqual,
 } from "../src/ownership";
@@ -71,6 +72,23 @@ describe("ownershipCheckUrl", () => {
       expect(url("https://h.com", p), p).toMatchObject({ ok: false });
     }
     expect(AMBIGUOUS_PATH.test("/a%2Fb")).toBe(true);
+  });
+  it("refuses a double-encoded, control or non-ASCII base path a server could decode into another folder", () => {
+    for (const p of [
+      "/%252e%252e/", "/a/%252e%252e/b", "/a%25", "/%252f", "/v1/%25", "/%c0%ae%c0%ae/", "/%C0%AE", "/．．/", "/a/．/b", "/ａpi",
+      "/a%00", "/a%09b", "/a%7f", "/a\tb", "/a\u0000b", "/caf%C3%A9",
+    ]) {
+      expect(url("https://h.com", p), JSON.stringify(p)).toMatchObject({ ok: false });
+      expect(unsafePathReason(p), JSON.stringify(p)).not.toBeNull();
+    }
+    for (const p of ["/a%20b", "/v1/%7Euser", "/team-a_b.c~d/v2"]) expect(url("https://h.com", p), p).toMatchObject({ ok: true });
+  });
+  it("names why an endpoint path is refused", () => {
+    expect(unsafePathReason("/a/%252e%252e/b")).toBe("its path has an encoded percent sign (%25)");
+    expect(unsafePathReason("/a%09b")).toBe("its path has a control character");
+    expect(unsafePathReason("/．．/x")).toBe("its path has a character outside plain ASCII");
+    expect(unsafePathReason("/%c0%ae%c0%ae/x")).toBe("its path has a character outside plain ASCII");
+    expect(unsafePathReason("/prices/{symbol}")).toBeNull();
   });
   it("refuses a URL that carries the code, or a run of it, in any form", () => {
     const secret = code.slice(4);

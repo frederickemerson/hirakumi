@@ -147,13 +147,17 @@ describe("before migration 0014", () => {
     expect(await deleteApi(getSql(), { apiId: api.id, sellerId: api.sellerId })).toMatchObject({ ok: true, recordsKept: true });
   });
 
-  it("picks the migration up within a minute, without a restart", async () => {
+  it("picks the migrations up within a minute, without a restart, once 0015 has run too", async () => {
     expect(await hasAnyApiSchema(getSql())).toBe(false);
     await getSql().unsafe(readFileSync(join(MIGRATIONS_DIR, "0014_any_api_samples.sql"), "utf8"));
     expect(await hasAnyApiSchema(getSql())).toBe(false); // cached
     const now = Date.now();
     const clock = vi.spyOn(Date, "now").mockReturnValue(now + 61_000);
     try {
+      // 0014 alone (as PR #5 shipped it) has no 'header' codes yet.
+      expect(await hasAnyApiSchema(getSql())).toBe(false);
+      await getSql().unsafe(readFileSync(join(MIGRATIONS_DIR, "0015_header_verify.sql"), "utf8"));
+      clock.mockReturnValue(now + 122_000);
       expect(await hasAnyApiSchema(getSql())).toBe(true);
     } finally {
       clock.mockRestore();

@@ -199,6 +199,7 @@ export function testConfig(over: Partial<GatewayConfig> = {}): GatewayConfig {
   return {
     port: 0, publicBaseUrl: "https://gw.test", internalToken: "internal-test-token-0123456789", demoMode: true,
     facilitatorUrl: "http://facilitator.invalid", databaseUrl: "unused", probeIntervalMs: 10_000,
+    ownershipRecheckMs: 6 * 3_600_000, ownershipRetryMs: 15 * 60_000,
     thresholds: { failsToDown: 2, passesToHeal: 2 }, l1Confirmations: 0, upstreamTimeoutMs: 500,
     escrow: { payByMs: 10 * 60_000, submitResultMs: 20 * 60_000, unit: "16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d" }, blockfrostProjectId: null, masumi: null,
     packMode: "direct", packEscrow: null, settlement: { ...DEFAULT_SETTLEMENT_POLICY }, startJobTrustedCidrs: [], tryLiveApis: [], upstreamAuthPrivateKey: null,
