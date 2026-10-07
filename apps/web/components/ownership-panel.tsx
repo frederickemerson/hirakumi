@@ -460,7 +460,24 @@ export function OwnershipPanel({ apiId, baseUrl, code, initiallyPassed, beforeSi
     try {
       setSign({ kind: "working", walletId, text: "Connecting to your wallet…" });
       const { api, addressHex } = await connectWallet(walletId);
-      const challenge = await postJson<{ challengeId: string; message: string }>(`/api/apis/${apiId}/ownership/wallet-challenge`, {});
+      const challengeUrl = `/api/apis/${apiId}/ownership/wallet-challenge`;
+      let challenge: { challengeId: string; message: string };
+      try {
+        challenge = await postJson(challengeUrl, {});
+      } catch (e) {
+        // 409: the header pass is older than VERIFY_PASS_TTL_MINUTES. Check the header again instead of a dead end.
+        if (!(e instanceof RequestError && e.status === 409)) throw e;
+        setSign({ kind: "working", walletId, text: "Checking your header again…" });
+        const again = await postJson<ChallengeCheck>(`/api/apis/${apiId}/ownership/spec-check`, {});
+        if (!again.ok) {
+          setPassed(false);
+          setCheck({ kind: "failed", result: again });
+          setLastCheckedAt(Date.now());
+          setSign({ kind: "error", text: "Your API no longer sends your code. Add the header back, then sign." });
+          return;
+        }
+        challenge = await postJson(challengeUrl, {});
+      }
       setSign({ kind: "working", walletId, text: "Approve this message in your wallet. It costs nothing and moves no funds.", message: challenge.message });
       const sig = await signText(api, addressHex, challenge.message);
       setSign({ kind: "working", walletId, text: "Signature received. Checking it…" });

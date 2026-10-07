@@ -407,6 +407,44 @@ describe("OwnershipPanel: check now and signing", () => {
     expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({ challengeId: "ch_1", address: "00beef", signature: "84a1", key: "a401" });
   });
 
+  it("a header pass that expired while the page was open is checked again, then signing goes on", async () => {
+    installWallet();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(PASS))
+      .mockResolvedValueOnce(jsonResponse({ error: "Check your X-Hirakumi-Verify header first." }, 409))
+      .mockResolvedValueOnce(jsonResponse(PASS))
+      .mockResolvedValueOnce(jsonResponse({ challengeId: "ch_2", message: "Hirakumi ownership\napi: api_1" }))
+      .mockResolvedValueOnce(jsonResponse({ state: "ownership_verified" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(panel());
+    expect(await screen.findByText("Found your code.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Sign with eternl" }));
+    await vi.waitFor(() => expect(nav.push).toHaveBeenCalledWith("/apis/api_1/review"));
+    expect(fetchMock.mock.calls.map((c) => String(c[0]))).toEqual([
+      "/api/apis/api_1/ownership/spec-check", "/api/apis/api_1/ownership/wallet-challenge",
+      "/api/apis/api_1/ownership/spec-check", "/api/apis/api_1/ownership/wallet-challenge", "/api/apis/api_1/ownership/verify",
+    ]);
+  });
+
+  it("an expired pass whose header is gone sends the seller back to step 1, not a dead end", async () => {
+    installWallet();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(PASS))
+      .mockResolvedValueOnce(jsonResponse({ error: "Check your X-Hirakumi-Verify header first." }, 409))
+      .mockResolvedValue(jsonResponse(MISSING));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(panel());
+    expect(await screen.findByText("Found your code.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Sign with eternl" }));
+    expect(await screen.findByText(/no longer sends your code/)).toBeInTheDocument();
+    const step1 = screen.getByRole("listitem", { name: "Add your code" });
+    expect(within(step1).queryByText("✓")).toBeNull();
+    expect(screen.getByRole("button", { name: "Sign with eternl" })).toBeDisabled();
+    expect(nav.push).not.toHaveBeenCalled();
+  });
+
   it("never flashes 'no wallet' before the wallets are found, and shows each wallet's icon", async () => {
     const view = render(panel(true));
     expect(screen.queryByText("No Cardano wallet found in this browser.")).toBeNull();

@@ -1,9 +1,14 @@
 /** Thrown with a message that is safe to show the seller verbatim. */
-export class RequestError extends Error {}
+export class RequestError extends Error {
+  /** The HTTP status, when the server answered. */
+  constructor(message: string, readonly status?: number) {
+    super(message);
+  }
+}
 
 async function handle<T>(res: Response): Promise<T> {
   const data = (await res.json().catch(() => ({}))) as T & { error?: string };
-  if (!res.ok) throw new RequestError(data.error ?? "Something went wrong. Try again.");
+  if (!res.ok) throw new RequestError(data.error ?? "Something went wrong. Try again.", res.status);
   return data;
 }
 
