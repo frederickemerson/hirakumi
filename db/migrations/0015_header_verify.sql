@@ -21,3 +21,12 @@ create unique index if not exists challenges_header_open_per_api on challenges (
 
 -- apis.upstream_auth (0014) is unchanged, but its sealed value is now "hks2...": bound to the API's id, placement and
 -- name, origin and path prefix (@hirakumi/core upstreamAuth.ts), so a changed address means saving the key again.
+
+-- Ownership re-check (apps/gateway monitor.ts): APIs proven with a 'header' code are checked again from time to time.
+-- ownership_failures: checks in a row without the code (a network error neither counts nor resets). Two pause new
+-- sales: ownership_paused_at and ownership_pause_reason are set until the header is back. ownership_next_check_at:
+-- when the next check is due (jittered).
+alter table apis add column if not exists ownership_failures int not null default 0;
+alter table apis add column if not exists ownership_paused_at timestamptz;
+alter table apis add column if not exists ownership_pause_reason text;
+alter table apis add column if not exists ownership_next_check_at timestamptz;

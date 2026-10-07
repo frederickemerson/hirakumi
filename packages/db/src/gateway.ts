@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import { newId, type RuleDefinition, type StoredUpstreamAuth } from "@hirakumi/core";
 import type { Sql } from "./client";
@@ -14,6 +15,9 @@ export type ApiRow = {
   pay_to: string;
   /** Sealed key for APIs that need one (@hirakumi/core upstreamAuth.ts); only the gateway can open it. */
   upstream_auth: StoredUpstreamAuth | null;
+  /** Set while new sales are paused because the ownership re-check failed twice in a row (migration 0015). */
+  ownership_paused_at: Date | null;
+  ownership_pause_reason: string | null;
 };
 export type OperationRow = {
   id: string; api_id: string; op_id: string; method: string; path: string;
@@ -26,7 +30,8 @@ export type ApiBundle = { api: ApiRow; operations: OperationRow[]; rules: RuleRo
 export async function loadApiBundle(sql: Sql, apiId: string): Promise<ApiBundle | null> {
   const [api] = await sql<ApiRow[]>`
     select a.id, a.seller_id, a.name, a.origin, a.path_prefix, a.state, a.health, a.health_checked_at,
-           a.escrow_op_id, a.agent_identifier, a.upstream_auth, s.cardano_addr as pay_to
+           a.escrow_op_id, a.agent_identifier, a.upstream_auth, a.ownership_paused_at, a.ownership_pause_reason,
+           s.cardano_addr as pay_to
     from apis a join sellers s on s.id = a.seller_id
     where a.id = ${apiId}`;
   if (!api) return null;
@@ -349,4 +354,81 @@ export async function getReceipts(sql: Sql, apiId: string, tokenHash: string, li
       inputHash: c.input_hash, outputHash: c.output_hash,
     })),
   };
+}
+
+/**
+ * An API whose ownership is checked again: proven with a 'header' code (the code passed the check and was consumed
+ * when the seller signed), and registering or live. APIs proven the old way (a code in the OpenAPI file) have no
+ * such code and are never re-checked. token is the code the seller's API must keep sending.
+ */
+export type OwnershipRecheckTarget = {
+  id: string; origin: string; path_prefix: string; token: string;
+  failures: number; paused_at: Date | null; next_check_at: Date | null;
+};
+
+export async function listOwnershipRecheckTargets(sql: Sql): Promise<OwnershipRecheckTarget[]> {
+  return sql<OwnershipRecheckTarget[]>`
+    select a.id, a.origin, a.path_prefix, c.token, a.ownership_failures as failures,
+           a.ownership_paused_at as paused_at, a.ownership_next_check_at as next_check_at
+    from apis a
+    join lateral (
+      select token from challenges c
+      where c.api_id = a.id and c.kind = 'header' and c.consumed_at is not null and c.proof ? 'passedAt'
+      order by c.consumed_at desc, c.id desc limit 1
+    ) c on true
+    where a.state in ('registering', 'live')
+    order by a.id`;
+}
+
+/** The first check of an API: only schedules it (at), so a deploy does not check every API at once. */
+export async function scheduleOwnershipRecheck(sql: Sql, apiId: string, at: Date): Promise<void> {
+  await sql`update apis set ownership_next_check_at = ${at} where id = ${apiId} and ownership_next_check_at is null`;
+}
+
+export type OwnershipRecheckOutcome = "pass" | "fail" | "error";
+export type OwnershipRecheckResult = { failures: number; paused: boolean; changed: boolean };
+
+/** Checks in a row without the code that pause new sales. */
+export const OWNERSHIP_FAILS_TO_PAUSE = 2;
+
+/**
+ * Records one re-check in one transaction (the row is locked, so two gateways never count one check twice). pass:
+ * the count starts again and a pause ends. fail (header missing or another code): one more in a row, and the
+ * second pauses new sales. error (the server could not be reached): nothing changes but the next check time. A
+ * pause or its end is told to the seller (messages: the dashboard chat and the Sokosumi task).
+ */
+export async function recordOwnershipRecheck(
+  sql: Sql, a: { apiId: string; outcome: OwnershipRecheckOutcome; detail: string; nextAt: Date; pausedMessage: string; restoredMessage: string },
+): Promise<OwnershipRecheckResult> {
+  return sql.begin(async (tx) => {
+    const [row] = await tx<{ failures: number; paused_at: Date | null; reason: string | null }[]>`
+      select ownership_failures as failures, ownership_paused_at as paused_at, ownership_pause_reason as reason
+      from apis where id = ${a.apiId} for update`;
+    if (!row) return { failures: 0, paused: false, changed: false };
+    let failures = row.failures;
+    let paused = row.paused_at !== null;
+    let changed = false;
+    if (a.outcome === "pass") {
+      failures = 0;
+      if (paused) { paused = false; changed = true; }
+    } else if (a.outcome === "fail") {
+      failures += 1;
+      if (!paused && failures >= OWNERSHIP_FAILS_TO_PAUSE) { paused = true; changed = true; }
+    }
+    const pausedAt = paused ? (row.paused_at ?? new Date()) : null;
+    const reason = paused ? (changed ? a.detail : row.reason) : null;
+    await tx`
+      update apis set ownership_failures = ${failures}, ownership_next_check_at = ${a.nextAt},
+        ownership_paused_at = ${pausedAt}, ownership_pause_reason = ${reason}
+      where id = ${a.apiId}`;
+    if (changed) {
+      await tx`
+        insert into messages (api_id, seller_id, task_id, author, body, dedupe_key)
+        select id, seller_id, sokosumi_task_id, 'coworker', ${paused ? a.pausedMessage : a.restoredMessage},
+               ${`ownership_${paused ? "paused" : "restored"}:${a.apiId}:${Date.now()}:${randomUUID()}`}
+        from apis where id = ${a.apiId}
+        on conflict (dedupe_key) do nothing`;
+    }
+    return { failures, paused, changed };
+  });
 }

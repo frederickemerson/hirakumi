@@ -12,6 +12,10 @@ export type GatewayConfig = {
   facilitatorUrl: string;
   databaseUrl: string;
   probeIntervalMs: number;
+  /** How often an API proven with the X-Hirakumi-Verify header is checked again (jittered by 10%). */
+  ownershipRecheckMs: number;
+  /** How soon it is checked again after a failed or unreachable check, so two failures in a row come quickly. */
+  ownershipRetryMs: number;
   thresholds: HealthThresholds;
   l1Confirmations: number;
   upstreamTimeoutMs: number;
@@ -91,6 +95,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     facilitatorUrl: required("FACILITATOR_URL"),
     databaseUrl: required("DATABASE_URL"),
     probeIntervalMs: demoMode ? 10_000 : 120_000,
+    ownershipRecheckMs: 6 * 3_600_000,
+    ownershipRetryMs: 15 * 60_000,
     thresholds: demoMode ? { failsToDown: 2, passesToHeal: 2 } : { failsToDown: 3, passesToHeal: 2 },
     // Spec §8: block inclusion. Task 0 confirms the hosted facilitator range includes 0.
     l1Confirmations: 0,

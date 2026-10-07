@@ -12,7 +12,7 @@ import {
 import { PACK_ESCROW } from "@hirakumi/escrow";
 import { buyerKeys, escrowExtra, hybridBuyerKeys, quoteFor, quoteKey, settlementPreference, verifyChannelLock, type BuyerKeys } from "./escrowPacks";
 import type { AppDeps } from "./deps";
-import { downBody, ruleUrl } from "./http";
+import { downBody, ruleUrl, sellingPausedBody } from "./http";
 import { primaryRule, type LoadedApi } from "./registry";
 import { canEscrow, settlementFor, type PackSettlement } from "./settlement";
 
@@ -264,6 +264,8 @@ export function packRouter(d: AppDeps): Router {
       if (!pack) { res.status(404).json({ error: "pack_not_found" }); return; }
       const snap = d.health.get(loaded.api.id);
       if (snap?.health === "down") { res.status(503).json(downBody(d.config, snap)); return; }
+      const paused = sellingPausedBody(loaded.api);
+      if (paused) { res.status(503).json(paused); return; }
       if (!primaryRule(loaded)) { res.status(503).json({ error: "promise_not_published" }); return; }
       // A buyer who demands escrow gets escrow or a refusal, never a quiet direct offer.
       const preference = settlementPreference((n) => req.header(n));
