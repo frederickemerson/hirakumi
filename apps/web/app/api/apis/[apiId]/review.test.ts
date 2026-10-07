@@ -1,13 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { inferRuleFromResponses, inferTextRule, withRequiredPhrase } from "@hirakumi/core";
 import { getSql } from "@/lib/db";
+import { setExposureFetchForTests } from "@/lib/exposure";
 import { setGatewayForTests, type Gateway } from "@/lib/gateway";
 import { addRequiredPhrase, getSuggestedPhrases } from "@/lib/repo/rules";
 import type { Api, Seller } from "@/lib/types";
 import { resetDb } from "@/test/db";
-import { seedApi, seedOnboardStep, seedOperation, seedPack, seedRule, seedSeller } from "@/test/factories";
+import { seedApi, seedOnboardStep, seedOperation, seedPack, seedRule, seedSeller, seedTestInput } from "@/test/factories";
 import { cookieFor, ctx, jsonRequest } from "@/test/requests";
 import { POST as pricing } from "./pricing/route";
+import { POST as exposureCheck } from "./exposure/route";
 import { POST as publish } from "./publish/route";
 
 let seller: Seller;
@@ -27,6 +29,9 @@ function price(body: unknown, cookie = cookieFor(seller)) {
 function pub(cookie = cookieFor(seller)) {
   return publish(jsonRequest(`/api/apis/${api.id}/publish`, { cookie, body: {} }), ctx(api.id));
 }
+const answerWithoutKey = vi.fn(async () => ({ status: 401, contentType: "application/json", body: '{"error":"missing key"}', latencyMs: 1 }));
+const goodAnswer = () => ({ status: 200, contentType: "application/json", body: JSON.stringify({ price: 1, last_updated: new Date().toISOString() }), latencyMs: 1 });
+
 async function state() {
   const [row] = await getSql()<{ state: string }[]>`select state from apis where id = ${api.id}`;
   return row.state;
@@ -36,9 +41,15 @@ describe("pricing and publish", () => {
   beforeEach(async () => {
     await resetDb();
     reloadApi.mockClear();
+    answerWithoutKey.mockClear();
     setGatewayForTests({ checkChallenge: vi.fn(), reloadApi, getHealth: vi.fn(), getSettlement: vi.fn(async () => []) } as Gateway);
+    // The leak check: the seller's API refuses calls without its key, unless a test says otherwise.
+    setExposureFetchForTests(answerWithoutKey);
   });
-  afterEach(() => setGatewayForTests(null));
+  afterEach(() => {
+    setGatewayForTests(null);
+    setExposureFetchForTests(null);
+  });
 
   it("stores 2.5 tUSDM as 2500000 micros and moves to priced", async () => {
     await setup("rule_built");
@@ -110,6 +121,79 @@ describe("pricing and publish", () => {
     const res = await pub();
     expect(res.status).toBe(200);
     expect(await state()).toBe("registering");
+  });
+
+  it("refuses to publish an API anyone can call for free without its key, naming the URL, and stores the result", async () => {
+    await setup("priced");
+    await seedPack(api.id);
+    const [op] = await getSql()<{ id: string }[]>`select id from operations where api_id = ${api.id}`;
+    await seedTestInput(op.id, { symbol: "ADA" });
+    answerWithoutKey.mockResolvedValueOnce(goodAnswer());
+    const res = await pub();
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: `Anyone can call this API for free at https://price.example.dev${api.pathPrefix}/price?symbol=ADA, so nobody would pay through Hirakumi. ` +
+        "Make your API require a key and add it on this page.",
+    });
+    expect(await state()).toBe("priced");
+    expect(reloadApi).not.toHaveBeenCalled();
+    const [row] = await getSql()<{ exposure: string }[]>`select exposure from apis where id = ${api.id}`;
+    expect(row.exposure).toBe("open");
+  });
+
+  it("runs the check again at publish time: a stored 'protected' does not let an open API through", async () => {
+    await setup("priced");
+    await seedPack(api.id);
+    await getSql()`update apis set exposure = 'protected', exposure_checked_at = now() where id = ${api.id}`;
+    answerWithoutKey.mockResolvedValueOnce(goodAnswer());
+    expect((await pub()).status).toBe(409);
+    expect(await state()).toBe("priced");
+  });
+
+  it("a check that can't reach the API blocks publishing with a retry message, never passing silently", async () => {
+    await setup("priced");
+    await seedPack(api.id);
+    answerWithoutKey.mockRejectedValueOnce(new Error("ECONNREFUSED"));
+    const res = await pub();
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toBe(
+      `We couldn't confirm that your API refuses calls without its key, so it can't be published yet. ` +
+        `GET https://price.example.dev${api.pathPrefix}/price could not be reached. Check again in a minute.`,
+    );
+    expect(await state()).toBe("priced");
+    // The retry: once the API refuses calls without its key, publishing goes through.
+    expect((await pub()).status).toBe(200);
+    expect(await state()).toBe("registering");
+    const [row] = await getSql()<{ exposure: string }[]>`select exposure from apis where id = ${api.id}`;
+    expect(row.exposure).toBe("protected");
+  });
+
+  it("\"Check again\" runs the check and returns the result with what blocks publishing", async () => {
+    await setup("priced");
+    answerWithoutKey.mockResolvedValueOnce(goodAnswer());
+    const check = (cookie = cookieFor(seller)) =>
+      exposureCheck(jsonRequest(`/api/apis/${api.id}/exposure`, { cookie, body: {} }), ctx(api.id));
+    const open = await check();
+    expect(open.status).toBe(200);
+    expect(await open.json()).toMatchObject({ exposure: "open", message: expect.stringMatching(/^Anyone can call this API for free at /) });
+    const fixed = await check();
+    expect(await fixed.json()).toMatchObject({ exposure: "protected", message: null, endpoints: [{ exposure: "protected" }] });
+    expect((await check(cookieFor(await seedSeller()))).status).toBe(404);
+  });
+
+  it("\"Check again\" is refused before the test calls finished", async () => {
+    await setup("ownership_verified");
+    const res = await exposureCheck(jsonRequest(`/api/apis/${api.id}/exposure`, { cookie: cookieFor(seller), body: {} }), ctx(api.id));
+    expect(res.status).toBe(409);
+    expect(answerWithoutKey).not.toHaveBeenCalled();
+  });
+
+  it("a live listing is not unpublished by an open result", async () => {
+    await setup("live");
+    answerWithoutKey.mockResolvedValueOnce(goodAnswer());
+    const res = await exposureCheck(jsonRequest(`/api/apis/${api.id}/exposure`, { cookie: cookieFor(seller), body: {} }), ctx(api.id));
+    expect(((await res.json()) as { exposure: string }).exposure).toBe("open");
+    expect(await state()).toBe("live");
   });
 
   it("two concurrent publishes: exactly one succeeds", async () => {

@@ -17,7 +17,7 @@ export const UPDATING = "This part of Hirakumi is being updated. Try again in a 
 const RECHECK_MS = 60_000;
 
 type Check = { ready: boolean; at: number; pending: Promise<boolean> | null };
-const g = globalThis as unknown as { __hirakumiAnyApiSchema?: Check; __hirakumiDnsVerifySchema?: Check; __hirakumiFrontDoorSchema?: Check };
+const g = globalThis as unknown as { __hirakumiAnyApiSchema?: Check; __hirakumiDnsVerifySchema?: Check; __hirakumiExposureSchema?: Check; __hirakumiFrontDoorSchema?: Check };
 
 /**
  * True once migrations 0014 and 0015 have run: apis.intake_kind exists (0014) and so does the index that keeps one
@@ -59,6 +59,30 @@ export async function hasDnsVerifySchema(sql: Sql): Promise<boolean> {
         select exists (
           select 1 from pg_indexes
           where schemaname = current_schema() and indexname = 'challenges_dns_open_per_api') as ready`;
+      c.ready = row?.ready === true;
+      c.at = Date.now();
+      return c.ready;
+    } finally {
+      c.pending = null;
+    }
+  })();
+  return c.pending;
+}
+
+/**
+ * True once migration 0019 has run: apis.exposure exists, where the leak check stores its result. Before that the
+ * publish gate still runs the check (it never relies on a stored result); only storing and showing it wait.
+ * Cached the same way as hasAnyApiSchema.
+ */
+export async function hasExposureSchema(sql: Sql): Promise<boolean> {
+  const c = (g.__hirakumiExposureSchema ??= { ready: false, at: 0, pending: null });
+  if (c.ready || (c.at && Date.now() - c.at < RECHECK_MS)) return c.ready;
+  c.pending ??= (async () => {
+    try {
+      const [row] = await sql<{ ready: boolean }[]>`
+        select exists (
+          select 1 from information_schema.columns
+          where table_schema = current_schema() and table_name = 'apis' and column_name = 'exposure_checked_at') as ready`;
       c.ready = row?.ready === true;
       c.at = Date.now();
       return c.ready;
@@ -116,5 +140,6 @@ export async function samplesIntakeOpen(sql: Sql): Promise<boolean> {
 export function resetSchemaCheck(): void {
   g.__hirakumiAnyApiSchema = undefined;
   g.__hirakumiDnsVerifySchema = undefined;
+  g.__hirakumiExposureSchema = undefined;
   g.__hirakumiFrontDoorSchema = undefined;
 }

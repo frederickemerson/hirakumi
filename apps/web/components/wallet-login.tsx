@@ -7,7 +7,7 @@ import { InlineError, InlineStatus } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PhoneWalletConnect } from "@/components/phone-wallet-connect";
-import { GetAWallet, MobileNote, useIsMobile, useWallets, WalletIcon } from "@/components/wallet-picker";
+import { BROWSER_WALLET_TOO, GetAWallet, MobileNote, onlyEmailWallet, useIsMobile, useWallets, WalletIcon } from "@/components/wallet-picker";
 import { setAuth } from "@/lib/auth-client";
 import { postJson } from "@/lib/client-fetch";
 import { shortAddress } from "@/lib/copy";
@@ -15,7 +15,9 @@ import { startRouteProgress } from "@/lib/route-progress";
 import {
   checkPreprodFunds,
   connectWallet,
+  needsAnotherClick,
   signText,
+  walletAction,
   walletAddresses,
   walletErrorMessage,
   type Cip30Api,
@@ -27,6 +29,7 @@ type Phase =
   | { kind: "idle" }
   | { kind: "working"; text: string; walletId: string }
   | { kind: "no_funds"; walletId: string }
+  | { kind: "again"; text: string }
   | { kind: "error"; text: string };
 
 export function WalletLogin({ next }: { next: string }) {
@@ -51,7 +54,7 @@ export function WalletLogin({ next }: { next: string }) {
       }
       await finishSignIn(walletId);
     } catch (e) {
-      setPhase({ kind: "error", text: walletErrorMessage(e) });
+      setPhase(needsAnotherClick(e) ? { kind: "again", text: e.message } : { kind: "error", text: walletErrorMessage(e) });
     }
   }
 
@@ -105,12 +108,14 @@ export function WalletLogin({ next }: { next: string }) {
               onClick={() => signIn(w.id)}
             >
               {!(busy && phase.walletId === w.id) && <WalletIcon icon={w.icon} />}
-              <span>Log in with {w.name}</span>
+              <span>{walletAction("Log in", w)}</span>
             </Button>
           </li>
         ))}
       </ul>
       {!mobile && <PhoneWalletConnect onConnected={(id) => void signIn(id)} />}
+      {onlyEmailWallet(wallets) && <GetAWallet title={BROWSER_WALLET_TOO} />}
+      {phase.kind === "again" && <InlineStatus>{phase.text}</InlineStatus>}
       {phase.kind === "working" && (
         <InlineStatus busy>
           {phase.text} <Elapsed prefix=" " className="text-graphite" />

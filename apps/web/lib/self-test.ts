@@ -126,20 +126,24 @@ export function createSelfTestHandlers(d: SelfTestDeps) {
       })(o.api.id);
     },
 
-    /** POST .../try/pay/prepare { utxos, changeAddress }: the price and the unsigned payment for the wallet. */
+    /**
+     * POST .../try/pay/prepare { utxos?, changeAddress }: the price and the unsigned payment for the wallet. No utxos:
+     * the wallet can't list them (the email wallet), so the builder reads them at changeAddress.
+     */
     async prepare(req: Request, ctx: ApiRouteContext): Promise<Response> {
       const o = await ownedLive(req, ctx);
       if (o instanceof Response) return o;
       const b = await readJson(req);
       const utxos = b?.utxos;
-      if (!Array.isArray(utxos) || utxos.length === 0 || utxos.length > 300 || !utxos.every((u) => hex(u, 40_000)) || !hex(b?.changeAddress, 200)) {
+      const usableUtxos = utxos === undefined || (Array.isArray(utxos) && utxos.length > 0 && utxos.length <= 300 && utxos.every((u) => hex(u, 40_000)));
+      if (!usableUtxos || !hex(b?.changeAddress, 200)) {
         return errorJson(400, "Connect your wallet again. It sent no usable funds.");
       }
       if (!d.allowBuy(`pay:${o.sellerId}`)) return errorJson(429, "One payment at a time, please. Wait a moment and try again.");
       const t = await target(o, d.gatewayBase);
       if (t instanceof Response) return t;
       try {
-        const p = await prepareSelfPayment({ fetchImpl: d.fetchImpl, build: d.build }, t, { utxos: utxos as string[], changeAddress: b!.changeAddress as string });
+        const p = await prepareSelfPayment({ fetchImpl: d.fetchImpl, build: d.build }, t, { utxos: utxos === undefined ? null : (utxos as string[]), changeAddress: b!.changeAddress as string });
         return json({ tx: p.tx, nonce: p.nonce, feeLovelace: p.feeLovelace, priceMicros: p.priceMicros, calls: p.calls });
       } catch (e) {
         return payError(e);

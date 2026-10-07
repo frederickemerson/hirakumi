@@ -5,19 +5,19 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { askHirakumi } from "@/components/ask-hirakumi";
 import { CopyButton } from "@/components/copy-button";
 import { Elapsed, useElapsed } from "@/components/elapsed";
-import { InlineError } from "@/components/states";
+import { InlineError, InlineStatus } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { PhoneWalletConnect } from "@/components/phone-wallet-connect";
-import { GetAWallet, useWallets, WalletIcon } from "@/components/wallet-picker";
+import { BROWSER_WALLET_TOO, GetAWallet, onlyEmailWallet, useWallets, WalletIcon } from "@/components/wallet-picker";
 import { postJson, RequestError } from "@/lib/client-fetch";
 import { DNS_HELP_QUESTION } from "@/lib/ask/shared";
 import { providerName, providerWhere, relativeName, type DnsSetup } from "@/lib/dns-provider";
 import type { ChallengeCheck } from "@/lib/gateway";
 import { startRouteProgress } from "@/lib/route-progress";
-import { connectWallet, signText, walletErrorMessage } from "@/lib/wallet-client";
+import { connectWallet, needsAnotherClick, signText, walletAction, walletErrorMessage } from "@/lib/wallet-client";
 import { cn } from "@/lib/utils";
 
 /** How often the page looks up the seller's DNS record while it is visible. */
@@ -48,8 +48,8 @@ const checkUrl = (apiId: string) => `/api/apis/${apiId}/ownership/dns-check`;
 type CheckState =
   | { kind: "waiting" }
   | { kind: "failed"; result: ChallengeCheck }
-  | { kind: "error"; text: string };
-type SignState = { kind: "idle" } | { kind: "working"; walletId: string; text: string; message?: string } | { kind: "error"; text: string };
+  | { kind: "again"; text: string } | { kind: "error"; text: string };
+type SignState = { kind: "idle" } | { kind: "working"; walletId: string; text: string; message?: string } | { kind: "again"; text: string } | { kind: "error"; text: string };
 
 /**
  * Not there yet is the normal state while DNS catches up, and a DNS server that didn't answer is retried: both wait.
@@ -298,7 +298,7 @@ export function OwnershipPanel({ apiId, host, recordName, code, initiallyPassed,
       startRouteProgress();
       router.push(`/apis/${apiId}/review`);
     } catch (e) {
-      setSign({ kind: "error", text: walletErrorMessage(e) });
+      setSign(needsAnotherClick(e) ? { kind: "again", text: e.message } : { kind: "error", text: walletErrorMessage(e) });
     }
   }
 
@@ -387,18 +387,20 @@ export function OwnershipPanel({ apiId, host, recordName, code, initiallyPassed,
               {wallets.map((w) => (
                 <Button key={w.id} disabled={!passed || signing || signed} pending={signing && sign.walletId === w.id} onClick={() => runSign(w.id)}>
                   {!(signing && sign.walletId === w.id) && <WalletIcon icon={w.icon} />}
-                  Sign with {w.name}
+                  {walletAction("Sign", w)}
                 </Button>
               ))}
               {passed && !signed && <PhoneWalletConnect onConnected={(id) => runSign(id)} />}
             </div>
           )}
+          {wallets && onlyEmailWallet(wallets) && <GetAWallet title={BROWSER_WALLET_TOO} />}
           {sign.kind === "working" && (
             <div role="status" aria-live="polite" className="space-y-2 border-l-4 border-sky pl-3 text-body">
               <p>{sign.text} <Elapsed prefix=" " className="text-graphite" /></p>
               {sign.message && <pre className="whitespace-pre-wrap rounded-[2px] bg-ink p-3 text-caption text-cream">{sign.message}</pre>}
             </div>
           )}
+          {sign.kind === "again" && <InlineStatus>{sign.text}</InlineStatus>}
           {sign.kind === "error" && <InlineError>{sign.text}</InlineError>}
         </div>
       </li>

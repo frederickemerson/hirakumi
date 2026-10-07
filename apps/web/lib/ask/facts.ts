@@ -14,6 +14,7 @@ import { type EXTRA_QUESTIONS, type LANDING_QUESTIONS, type SUGGESTED_QUESTIONS,
  * - app/apis/[apiId]/review/page.tsx (at least 5 test calls per endpoint)
  * - components/upstream-auth-form.tsx and @hirakumi/core upstreamAuth.ts (API keys: sealed for the gateway, never shown)
  * - @hirakumi/core rules.ts (JSON and text answers; binary answers are refused)
+ * - lib/exposure.ts and app/api/apis/[apiId]/publish/route.ts (the leak check: publishing needs calls without the key refused)
  */
 
 const FACTS = `
@@ -48,6 +49,7 @@ OWNERSHIP PROOF AND THE WALLET
 - Keep the record in place while the API is listed. Hirakumi checks it again every few hours; if it is missing twice in a row, new sales pause until it is back. Credits buyers already bought keep working.
 - A passing check counts for 30 minutes. Within that time the seller signs one message with their wallet, and that signature sets the payout address where buyers pay.
 - Any CIP-30 wallet on preprod works, such as Lace or Eternl. The wallet address is the seller's account and the place buyers pay.
+- Sellers can also sign in with email or Google ("Continue with email or Google", a non-custodial UTXOS wallet on preprod), no browser extension needed. It signs the same messages and payments, and a new one starts empty, so it needs test ADA from the faucet before paying.
 - Signing in and proving ownership only sign a message. Signing costs nothing and moves no funds. It is not a transaction.
 
 APIS THAT NEED A KEY
@@ -56,6 +58,7 @@ APIS THAT NEED A KEY
 - The gateway sends the key only to this API's own address, the proven origin and folder, and never follows redirects. An answer that contains the key is withheld from the buyer. That check catches the key as is and in common encodings, not every possible one, so a header is safer than a query parameter: a key in the address can leak in logs and error messages.
 - After saving, the key is never shown again. The seller only sees its name, where it goes and its last 4 characters. To change it they replace it.
 - If the test calls get 401 or 403, the API needs a key that Hirakumi doesn't have yet. The review page then shows the key form: saving or removing the key there runs the test calls again.
+- Publishing needs the API to refuse calls without its key, because an API anyone can call for free would never sell. When the seller publishes, Hirakumi calls each endpoint once without the key; if one gives a good answer, publishing is refused until the API requires a key and the key is added on the review page. If the check can't reach the API, publishing waits until "Check again" on the review page gets an answer. Listings already live stay live.
 
 ANSWER FORMATS
 - JSON answers are checked field by field against the promise.
