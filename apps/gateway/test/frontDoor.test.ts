@@ -348,7 +348,7 @@ describe("monitor re-check of front-door hosts", () => {
     expect((await call()).status).toBe(421);
     const [msg] = await h.sql<{ body: string }[]>`select body from messages where api_id = ${h.seeded.apiId}`;
     expect(msg.body).toContain(`_hirakumi.${HOST}`);
-    expect(msg.body).not.toMatch(/[–—]/);
+    expect(msg.body).not.toMatch(/[\u2013\u2014]/);
     // Native sales go on.
     expect((await request(app).get(`/a/${h.seeded.apiId}/x/getPrice?symbol=ADA`)).status).toBe(402);
     h.dns.set(`_hirakumi.${HOST}`, ["hkv_code"]);
