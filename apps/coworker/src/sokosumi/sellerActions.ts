@@ -148,6 +148,27 @@ export async function linkedSeller(db: Db, sokosumiUserId: string): Promise<stri
   return rows.length === 1 ? rows[0].id : null;
 }
 
+/** The wallet this Sokosumi account is linked to (linkedSeller's cardano_addr), or null when it is not linked. */
+export async function linkedWallet(db: Db, sokosumiUserId: string): Promise<string | null> {
+  const sellerId = await linkedSeller(db, sokosumiUserId);
+  if (!sellerId) return null;
+  const { rows } = await db.query<{ cardano_addr: string }>(`select cardano_addr from sellers where id = $1`, [sellerId]);
+  return rows[0]?.cardano_addr ?? null;
+}
+
+/**
+ * The wallet that owns this API (apis.seller_id), when that seller is linked to a Sokosumi account. The API's pages
+ * only open for this wallet, so it is the one a link to them names.
+ */
+export async function apiOwnerWallet(db: Db, apiId: string): Promise<string | null> {
+  const { rows } = await db.query<{ cardano_addr: string }>(
+    `select s.cardano_addr from apis a join sellers s on s.id = a.seller_id where a.id = $1 and s.sokosumi_user_id is not null`, [apiId]);
+  return rows[0]?.cardano_addr ?? null;
+}
+
+/** How a comment names a wallet: its last 6 characters, as a Markdown code span. */
+export const walletTail = (addr: string) => `\`…${addr.slice(-6)}\``;
+
 /**
  * Creates the task's API for a linked seller; the driver then reads and describes it. With samples (any API, no
  * OpenAPI file), openapiUrl is null. origin is a placeholder until the parse step reads servers[0].
