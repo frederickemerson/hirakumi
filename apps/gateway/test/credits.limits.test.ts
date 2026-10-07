@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import request from "supertest";
 import {
-  generateUpstreamAuthKeys, KEY_FORBIDDEN_TEXT, KEY_REFUSED_TEXT, sealUpstreamBag, sealUpstreamSecret, type StoredUpstreamAuth,
+  generateUpstreamAuthKeys, KEY_FORBIDDEN_TEXT, KEY_REFUSED_TEXT, sealUpstreamBag, sealUpstreamSecret, sha256Hex, type StoredUpstreamAuth,
 } from "@hirakumi/core";
 import { FAILED_CALLS_LIMIT } from "../src/credits";
 import { anotherBase, insertActiveToken, makeHarness, seedLiveApi, type Harness, type Seeded } from "./helpers";
@@ -164,5 +164,28 @@ describe("free failed calls per token", () => {
     const t = await insertActiveToken(h.sql, s, 5);
     for (let i = 0; i < FAILED_CALLS_LIMIT.max; i++) expect((await call(s.apiId, t.token)).status).toBe(503);
     expect((await call(s.apiId, t.token)).status).toBe(429);
+  });
+});
+
+describe("the shared Try pack (audit 10)", () => {
+  const insertTry = async (token: { token: string }, selfTestSellerId: string | null) => {
+    await h.sql`
+      insert into try_tokens (id, api_id, status, token, token_hash, self_test_seller_id)
+      values (${`try_${Math.random().toString(36).slice(2)}`}, ${h.seeded.apiId}, 'active', ${token.token}, ${sha256Hex(token.token)}, ${selfTestSellerId})`;
+  };
+
+  it("the showcase token is never refused for failures: one visitor can't block it for everyone", async () => {
+    h.stub.setMode("empty");
+    const t = await insertActiveToken(h.sql, h.seeded, FAILED_CALLS_LIMIT.max * 2);
+    await insertTry(t, null);
+    for (let i = 0; i < FAILED_CALLS_LIMIT.max + 3; i++) expect((await call(h.seeded.apiId, t.token)).status).toBe(422);
+  });
+
+  it("a seller's self-test pack is limited like any token", async () => {
+    h.stub.setMode("empty");
+    const t = await insertActiveToken(h.sql, h.seeded, FAILED_CALLS_LIMIT.max * 2);
+    await insertTry(t, h.seeded.sellerId);
+    for (let i = 0; i < FAILED_CALLS_LIMIT.max; i++) expect((await call(h.seeded.apiId, t.token)).status).toBe(422);
+    expect((await call(h.seeded.apiId, t.token)).status).toBe(429);
   });
 });

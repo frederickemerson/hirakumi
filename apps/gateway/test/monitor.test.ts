@@ -3,7 +3,8 @@ import request from "supertest";
 import {
   generateUpstreamAuthKeys, KEY_REFUSED_TEXT, newId, OPERATOR_KEYS_UNAVAILABLE, sealUpstreamSecret, type StoredUpstreamSecret,
 } from "@hirakumi/core";
-import { Monitor } from "../src/monitor";
+import { ApiRegistry } from "../src/registry";
+import { Monitor, RATE_LIMITED_ROUNDS_TO_FAIL, RATE_LIMITED_TOO_LONG_TEXT } from "../src/monitor";
 import { makeHarness, PRICE_INPUT_SCHEMA, PRICE_RULE, type Harness } from "./helpers";
 
 let h: Harness; let m: Monitor;
@@ -137,6 +138,52 @@ describe("Monitor and the API's key (3 fails → Down)", () => {
     const [api] = await h.sql<{ health: string; health_checked_at: Date | null }[]>`select health, health_checked_at from apis`;
     expect(api).toMatchObject({ health: "healthy" });
     expect(api.health_checked_at).not.toBeNull();
+  });
+
+  it("a 429 probe row is stored as inconclusive (verdict n/a), not as a failing check (audit 3)", async () => {
+    rateLimited();
+    await m.probeApi(h.seeded.apiId);
+    const rows = await h.sql<{ execution: string; verdict: string }[]>`select execution, verdict from calls where kind = 'probe'`;
+    expect(rows).toEqual([{ execution: "upstream_ok", verdict: "n/a" }]);
+  });
+
+  it("an API that only ever answers 429 turns Down once that has gone on for RATE_LIMITED_ROUNDS_TO_FAIL rounds (audit 8)", async () => {
+    rateLimited();
+    for (let i = 0; i < RATE_LIMITED_ROUNDS_TO_FAIL - 1; i++) expect(await m.probeApi(h.seeded.apiId)).toBeNull();
+    expect(h.health.get(h.seeded.apiId)?.health ?? "healthy").toBe("healthy");
+    // From round RATE_LIMITED_ROUNDS_TO_FAIL on, each all-429 round counts as failing: Down after failsToDown of them.
+    for (let i = 1; i < h.config.thresholds.failsToDown; i++) expect(await m.probeApi(h.seeded.apiId)).toBeNull();
+    const t = await m.probeApi(h.seeded.apiId);
+    expect(t).toMatchObject({ from: "healthy", to: "down" });
+    expect(t!.reasons).toEqual([{ op: "*", reason: RATE_LIMITED_TOO_LONG_TEXT }]);
+  });
+
+  it("a round that is not all 429 starts the rate-limited count again (audit 8)", async () => {
+    rateLimited();
+    for (let i = 0; i < RATE_LIMITED_ROUNDS_TO_FAIL - 1; i++) await m.probeApi(h.seeded.apiId);
+    h.stub.setFile("/price", JSON.stringify({ symbol: "ADA", price: 0.42, updatedAt: new Date().toISOString() }));
+    await m.probeApi(h.seeded.apiId);
+    rateLimited();
+    for (let i = 0; i < RATE_LIMITED_ROUNDS_TO_FAIL - 1; i++) expect(await m.probeApi(h.seeded.apiId)).toBeNull();
+    expect(h.health.get(h.seeded.apiId)?.lastReasons ?? []).toEqual([]);
+  });
+
+  it("our keys come back while it stays Down for a refused key: one down to down event after 3 seller rounds (audit 3)", async () => {
+    await keyed(null);
+    for (let i = 0; i < 3; i++) await m.probeApi(h.seeded.apiId);
+    expect(h.health.get(h.seeded.apiId)?.health).toBe("down");
+    // The operator fixes the gateway's key; the registry reloads, and the seller's key is refused.
+    h.registry = new ApiRegistry(h.sql, h.health, keys.privateKey);
+    h.registry.invalidate(h.seeded.apiId);
+    m = new Monitor({ sql: h.sql, registry: h.registry, health: h.health, config: h.config });
+    h.stub.setFile("/price", '{"error":"unauthorized"}', { status: 401 });
+    expect(await m.probeApi(h.seeded.apiId)).toBeNull();
+    expect(await m.probeApi(h.seeded.apiId)).toBeNull();
+    const t = await m.probeApi(h.seeded.apiId);
+    expect(t).toMatchObject({ from: "down", to: "down" });
+    expect(t!.reasons[0]).toMatchObject({ op: "getPrice", reason: KEY_REFUSED_TEXT });
+    expect((await events()).map((e) => `${e.from_health}>${e.to_health}`)).toEqual(["healthy>down", "down>down"]);
+    expect(await m.probeApi(h.seeded.apiId)).toBeNull();
   });
 
   it("one op answering 429 and another failing: only the failing op's reason counts", async () => {

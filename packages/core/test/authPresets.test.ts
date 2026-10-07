@@ -81,9 +81,9 @@ describe("renderPreset", () => {
     }
   });
 
-  it("rows: refuses a word-before-the-key value whose key or Basic password is under 8 characters", () => {
+  it("rows: refuses a well-known scheme word value whose key or Basic password is under 8 characters", () => {
     const row0 = { in: "header", name: "X-K0", value: KEY };
-    for (const value of ["Bearer abcd", "SSWS abc1234", `Basic ${Buffer.from("alice:short").toString("base64")}`]) {
+    for (const value of ["Bearer abcd", "Token abc1234", `Basic ${Buffer.from("alice:short").toString("base64")}`]) {
       expect(() => renderPreset("twoHeaders", { rows: [row0, { in: "header", name: "Authorization", value }] }), value).toThrow(/too short/);
     }
     expect(renderPreset("twoHeaders", { rows: [row0, { in: "header", name: "Authorization", value: "SSWS 00abcDEF1234567890" }] })).toMatchObject({ kind: "hks3" });
@@ -100,6 +100,14 @@ describe("renderPreset", () => {
     expect(() => renderPreset("oauth", {})).toThrow(UpstreamAuthError);
     expect(() => renderPreset("bearer", null)).toThrow(UpstreamAuthError);
     expect(() => renderPreset("twoHeaders", { rows: "x" })).toThrow(UpstreamAuthError);
+  });
+});
+
+describe("renderPreset rows: secrets with a space (audit 6)", () => {
+  it("accepts a secret that merely contains a space, and still refuses a short key after a scheme word", () => {
+    const rows = (value: string) => ({ rows: [{ in: "header", name: "X-Key", value }, { in: "header", name: "X-Other", value: KEY }] });
+    expect(renderPreset("twoHeaders", rows("ab+cd/ef gh=ij"))).toMatchObject({ kind: "hks3" });
+    expect(() => renderPreset("twoHeaders", rows("Bearer abc"))).toThrow(UpstreamAuthError);
   });
 });
 

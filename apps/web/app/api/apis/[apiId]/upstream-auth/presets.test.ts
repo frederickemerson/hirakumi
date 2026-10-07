@@ -169,6 +169,19 @@ describe("upstream auth presets and the key check", () => {
     expect(await storedRow()).toBeNull();
   });
 
+  it("refuses a bag whose bare key, typed after a scheme word, is in the examples: the gateway's own leak set counts (audit 2)", async () => {
+    const op = await seedOperation(api.id);
+    await getSql()`update operations set input_schema = ${getSql().json({ properties: { k: { type: "string", examples: [KEY] } } })} where id = ${op.id}`;
+    // The seller typed "Bearer <key>" into the value: the leak list holds the whole value, the gateway derives the key.
+    const res = await save({
+      preset: "twoHeaders",
+      fields: { rows: [{ in: "header", name: "Authorization", value: `Bearer ${KEY}` }, { in: "header", name: "X-Client", value: "client_0123456789" }] },
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toMatch(/appears in your example requests/);
+    expect(await storedRow()).toBeNull();
+  });
+
   it("checks the sealed key before saving and refuses a key the API refused, on both the simple form and presets", async () => {
     const refused: KeyCheck = { opened: true, class: "refused", status: 401, op: "getPrice", reasons: ["The API refused its key (HTTP 401)."] };
     checkKey.mockResolvedValue(refused);

@@ -112,16 +112,17 @@ describe("loadConfig: the upstream-auth key pair", () => {
     expect(c).toMatchObject({ upstreamAuthPrivateKey: keys.privateKey, upstreamAuthKeyProblem: null });
   });
 
-  it("a mismatched or unparseable private key is not used, is logged, and never stops the gateway", () => {
+  it("an unparseable private key is not used; a mismatch is logged but the private key stays in use (audit 4)", () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    // The gateway never uses UPSTREAM_AUTH_PUBLIC_KEY: a stale one must not take every keyed API Down.
     expect(loadConfig({ ...env, UPSTREAM_AUTH_PRIVATE_KEY: other.privateKey, UPSTREAM_AUTH_PUBLIC_KEY: keys.publicKey }))
-      .toMatchObject({ upstreamAuthPrivateKey: null, upstreamAuthKeyProblem: "mismatch" });
+      .toMatchObject({ upstreamAuthPrivateKey: other.privateKey, upstreamAuthKeyProblem: "mismatch" });
     for (const bad of ["not-a-key", Buffer.from("garbage bytes").toString("base64")]) {
       expect(loadConfig({ ...env, UPSTREAM_AUTH_PRIVATE_KEY: bad, UPSTREAM_AUTH_PUBLIC_KEY: keys.publicKey }))
         .toMatchObject({ upstreamAuthPrivateKey: null, upstreamAuthKeyProblem: "unparseable" });
     }
     expect(err).toHaveBeenCalledTimes(3);
-    for (const [line] of err.mock.calls) expect(String(line)).not.toContain(other.privateKey);
+    for (const [line] of err.mock.calls) expect(String(line)).not.toContain(other.privateKey.slice(-24));
   });
 
   it("without a public key the private key is used as before; without either, keys are off", () => {

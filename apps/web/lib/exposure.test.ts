@@ -79,6 +79,20 @@ describe("the leak check", () => {
     expect(await stored(api.id)).toMatchObject({ exposure: "open", exposureCheckedAt: expect.any(Date) });
   });
 
+  it("sends no part of a key in several parts (hks3), and no accept-encoding, so it calls exactly as a stranger would", async () => {
+    const origin = await upstream({ "/price": { status: 401, body: '{"error":"missing key"}' } });
+    const api = await apiWith(origin, [{ path: "/price", input: { symbol: "ADA" } }]);
+    const bag = { v: 3, parts: [{ in: "header", name: "apikey", hint: "WXYZ" }, { in: "query", name: "project", hint: "" }], sealed: "hks3.x" };
+    await getSql()`update apis set upstream_auth = ${getSql().json(bag)} where id = ${api.id}`;
+
+    const report = (await checkExposure(getSql(), api.id))!;
+    expect(report.exposure).toBe("protected");
+    expect(seen).toHaveLength(1);
+    expect(seen[0].url).toBe(`${api.pathPrefix}/price?symbol=ADA`);
+    expect(seen[0].headers.apikey).toBeUndefined();
+    expect(seen[0].headers["accept-encoding"]).toBeUndefined();
+  });
+
   it("is protected when every endpoint refuses without the key (401, 403, or a 200 that breaks the promise)", async () => {
     const origin = await upstream({
       "/a": { status: 401, body: '{"error":"missing key"}' },

@@ -92,7 +92,7 @@ export class ApiRegistry {
   private async load(apiId: string): Promise<LoadedApi | null> {
     const b = await loadApiBundle(this.sql, apiId);
     if (!b) return null;
-    this.health.seed(b.api.id, b.api.health, b.api.health_checked_at);
+    this.health.seed(b.api.id, b.api.health, b.api.health_checked_at, b.downReasons);
     const rulesByOp = new Map(b.rules.map((r) => [r.operation_id, r]));
     const ops = new Map<string, LoadedOp>();
     for (const row of b.operations) {

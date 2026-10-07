@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   generateUpstreamAuthKeys, isUpstreamBag, MAX_UPSTREAM_LEAK_NEEDLES, openUpstreamBag, openUpstreamSecret, publicKeyFromPrivate, sealUpstreamBag,
-  UpstreamAddressChangedError, UpstreamAuthError, upstreamBagContext, validateUpstreamBag,
+  schemeSecretTooShort, UpstreamAddressChangedError, UpstreamAuthError, upstreamBagContext, validateUpstreamBag,
   type UpstreamBag, type UpstreamBagContext, type UpstreamPartPlacement,
 } from "../src/upstreamAuth";
 
@@ -139,7 +139,27 @@ describe("validateUpstreamBag", () => {
       values: [`Bearer ${KEY}`, "Token tok_12345678"], fixed: [], leak: [],
     });
     expect(v.leakParts).toEqual([`Bearer ${KEY}`, "Token tok_12345678", KEY, "tok_12345678"]);
-    const short = validateUpstreamBag([{ in: "header", name: "Authorization" }], { values: ["Bearer abc1234"], fixed: [], leak: [] });
-    expect(short.leakParts).toEqual(["Bearer abc1234"]);
+  });
+
+  it("refuses a secret part whose key after a well-known scheme word is under 8 characters, even with leak [] (audit 5)", () => {
+    for (const value of ["Bearer abcdefg", "Token abc1234", "ApiKey abcd", `Basic ${b64("user:short")}`]) {
+      expect(() => validateUpstreamBag([{ in: "header", name: "Authorization" }], { values: [value], fixed: [], leak: [] }))
+        .toThrow(UpstreamAuthError);
+    }
+    // Fixed text is public by choice and isn't looked at.
+    expect(() => validateUpstreamBag([{ in: "header", name: "X-Key" }, { in: "header", name: "X-Mode" }], { values: [KEY, "Token ab"], fixed: [1], leak: [] }))
+      .not.toThrow();
+  });
+
+  it("looks for the key after a well-known scheme word at the same floor as a single key (audit 5)", () => {
+    const v = validateUpstreamBag([{ in: "header", name: "Authorization" }], { values: ["Bearer abcdefgh"], fixed: [], leak: [] });
+    expect(v.leakParts).toContain("abcdefgh");
+  });
+
+  it("only a well-known scheme word makes a key 'after a word': a secret with a space is whole (audit 6)", () => {
+    expect(schemeSecretTooShort("ab+cd/ef gh=ij")).toBe(false);
+    expect(schemeSecretTooShort("Bearer abc")).toBe(true);
+    expect(schemeSecretTooShort("token abcdefgh")).toBe(false);
+    expect(() => validateUpstreamBag([{ in: "header", name: "X-Key" }], { values: ["ab+cd/ef gh=ij"], fixed: [], leak: [] })).not.toThrow();
   });
 });

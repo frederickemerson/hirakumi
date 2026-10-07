@@ -133,7 +133,8 @@ export async function listIncidents(sql: Sql, apiId: string, limit = 5): Promise
       from calls k
       where k.api_id = d.api_id and k.created_at >= d.at and k.created_at < coalesce(u.up_at, now())
     ) c on true
-    where d.api_id = ${apiId} and d.to_health = 'down'
+    -- A "down" to "down" event only says who is to blame now (apps/gateway health.ts): the same incident.
+    where d.api_id = ${apiId} and d.to_health = 'down' and d.from_health <> 'down'
     order by d.at desc
     limit ${limit}`;
 }

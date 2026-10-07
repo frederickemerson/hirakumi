@@ -74,3 +74,26 @@ describe("createFailureCounter", () => {
     expect((await waiters).every((r) => "retryAfter" in r)).toBe(true);
   });
 });
+
+describe("createFailureCounter.begin: a bounded wait (audit 7)", () => {
+  it("refuses a call that waited maxWaitMs for a running one, and the late end() still frees places", async () => {
+    const c = createFailureCounter(1, 60_000);
+    const first = await c.begin("t");
+    expect("end" in first).toBe(true);
+    const started = Date.now();
+    const second = await c.begin("t", 50);
+    expect(second).toEqual({ retryAfter: 1 });
+    expect(Date.now() - started).toBeLessThan(1_000);
+    (first as { end(passed: boolean): void }).end(true);
+    const third = await c.begin("t", 50);
+    expect("end" in third).toBe(true);
+  });
+
+  it("a waiter woken before its deadline goes on", async () => {
+    const c = createFailureCounter(1, 60_000);
+    const first = (await c.begin("t")) as { end(passed: boolean): void };
+    const waiting = c.begin("t", 1_000);
+    setTimeout(() => first.end(true), 20);
+    expect("end" in (await waiting)).toBe(true);
+  });
+});

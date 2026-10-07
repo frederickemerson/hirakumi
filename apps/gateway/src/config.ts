@@ -50,8 +50,9 @@ export type GatewayConfig = {
    */
   upstreamAuthPrivateKey: string | null;
   /**
-   * Why UPSTREAM_AUTH_PRIVATE_KEY was set but not used: it doesn't parse, or it isn't the half of
-   * UPSTREAM_AUTH_PUBLIC_KEY. The gateway still starts; keyed APIs turn Down with an operator reason. Null when fine.
+   * What is wrong with UPSTREAM_AUTH_PRIVATE_KEY, logged at start. "unparseable": it can't be used, so keyed APIs
+   * turn Down with an operator reason. "mismatch": it isn't the half of UPSTREAM_AUTH_PUBLIC_KEY, which the gateway
+   * itself never uses, so the private key stays in use (whether stored keys open is what counts). Null when fine.
    */
   upstreamAuthKeyProblem: UpstreamAuthKeyProblem | null;
   /** WEB_BASE_URL: the web app, for the listing link in a front-door 402 (<web>/p/<apiId>). Unset: no listingUrl. */
@@ -160,9 +161,12 @@ export function upstreamAuthKeyFrom(env: NodeJS.ProcessEnv): Pick<GatewayConfig,
     console.error("[config] UPSTREAM_AUTH_PRIVATE_KEY does not parse: APIs that need a key are blocked until it is fixed");
     return { upstreamAuthPrivateKey: null, upstreamAuthKeyProblem: "unparseable" };
   }
+  // The gateway never uses the public key: a stale UPSTREAM_AUTH_PUBLIC_KEY in its env must not take every keyed API
+  // Down. Keys sealed with the web app's public key either open with this private key or don't (row credentialError,
+  // and check-key's opened:false at save), which is the authoritative signal.
   if (publicKey && derived !== publicKey) {
-    console.error("[config] UPSTREAM_AUTH_PRIVATE_KEY is not the half of UPSTREAM_AUTH_PUBLIC_KEY: APIs that need a key are blocked until it is fixed");
-    return { upstreamAuthPrivateKey: null, upstreamAuthKeyProblem: "mismatch" };
+    console.error("[config] UPSTREAM_AUTH_PRIVATE_KEY is not the half of UPSTREAM_AUTH_PUBLIC_KEY: keys sealed with that public key won't open. Still using the private key.");
+    return { upstreamAuthPrivateKey: privateKey, upstreamAuthKeyProblem: "mismatch" };
   }
   return { upstreamAuthPrivateKey: privateKey, upstreamAuthKeyProblem: null };
 }

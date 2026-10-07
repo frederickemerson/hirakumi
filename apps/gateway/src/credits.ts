@@ -1,7 +1,8 @@
 import { Router, type Request, type Response } from "express";
 import { inputHash, newId, outputHash, sha256Hex } from "@hirakumi/core";
 import {
-  finishChannelCall, gateChannelCall, getChannelByToken, getReceipts, insertCall, markExhaustedIfEmpty, releaseCredit, reserveCredit,
+  finishChannelCall, gateChannelCall, getChannelByToken, getReceipts, insertCall, isShowcaseTryToken, markExhaustedIfEmpty, releaseCredit,
+  reserveCredit,
   type Reservation,
 } from "@hirakumi/db";
 import { channelView } from "./channels";
@@ -139,7 +140,10 @@ export async function handlePaidCall(
       message: `Too many failed calls with this token in the last minute. Try again in ${retryAfter} seconds.`,
     });
   };
-  const blocked = failures.blocked(failureKey);
+  // The public Try pack is one token for every visitor: one visitor's failures must not refuse it for all. The web
+  // app's Try routes limit it per visitor and per hour already.
+  const limited = !(await isShowcaseTryToken(d.sql, loaded.api.id, tokenHash));
+  const blocked = limited ? failures.blocked(failureKey) : null;
   if (blocked) { tooManyFailed(blocked.retryAfter); return; }
   const callId = newId("call");
   let reservation: Reservation;
@@ -180,7 +184,7 @@ export async function handlePaidCall(
   const tokenId = reservation.tokenId;
   // Calls still running count toward the limit too: past it this waits for one to end, and is refused (with the
   // credit given back) if that leaves the token at the limit. pending.end() records whether this call failed.
-  const pending = await failures.begin(failureKey);
+  const pending = limited ? await failures.begin(failureKey) : { end: () => {} };
   if ("retryAfter" in pending) {
     await releaseCredit(d.sql, tokenId);
     await finish(false);
