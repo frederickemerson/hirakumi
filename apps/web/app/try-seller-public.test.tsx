@@ -89,7 +89,7 @@ describe("the seller's Try it live page", () => {
     render(await Page({ params: Promise.resolve({ apiId }) }));
     expect(screen.getByTestId("who-pays")).toHaveTextContent(/first test is free/);
     expect(screen.getByTestId("who-pays")).toHaveTextContent("3 free tests left");
-    expect(screen.getByRole("button", { name: "Buy a pack live" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run your free test" })).toBeInTheDocument();
   });
 
   it("free test used: the seller's wallet pays, and the page says where the money goes", async () => {
@@ -98,7 +98,7 @@ describe("the seller's Try it live page", () => {
     await getSql()`insert into try_tokens (id, api_id, status, self_test_seller_id) values ('try_used', ${apiId}, 'failed', ${session.sellerId})`;
     render(await Page({ params: Promise.resolve({ apiId }) }));
     expect(screen.getByTestId("who-pays")).toHaveTextContent(SELF_PAY_LINE);
-    expect(screen.queryByRole("button", { name: "Buy a pack live" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Run your free test" })).toBeNull();
     expect(screen.getByTestId("wallet-pay")).toHaveTextContent(/Pay with your wallet/);
   });
 
