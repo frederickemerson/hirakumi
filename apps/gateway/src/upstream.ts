@@ -4,6 +4,9 @@ import {
 import type { ApiRow, OperationRow } from "@hirakumi/db";
 import type { LoadedOp, UpstreamAccess } from "./registry";
 
+/** Sent on every upstream call; a request that carries it is never routed out again (loop guard). */
+export const HOP_HEADER = "x-hirakumi-hop";
+
 /** The API as an upstream call needs it. Access is optional: an API without it needs no key. */
 export type UpstreamApi = Pick<ApiRow, "origin" | "path_prefix"> & Partial<UpstreamAccess>;
 
@@ -76,7 +79,9 @@ export function buildUpstreamRequest(
   }
   if (api.credentialError) throw new Error(`blocked: ${api.credentialError}`);
   const method = op.method.toUpperCase();
-  const headers: Record<string, string> = { accept: acceptFor(ruleContentType), "user-agent": "hirakumi-gateway/0.1" };
+  // The hop header marks every call the gateway makes: if an origin ever routes back to the front door, the front
+  // door answers 508 instead of calling itself again (frontDoor.ts).
+  const headers: Record<string, string> = { accept: acceptFor(ruleContentType), "user-agent": "hirakumi-gateway/0.1", [HOP_HEADER]: "1" };
   // Shared input convention (P3 contract addition 3): `{name}` fields fill the path, a field named
   // `body` is the JSON request body, and every other field is a query parameter, for any method.
   const { body, ...query } = rest;

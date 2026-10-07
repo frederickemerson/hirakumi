@@ -1,19 +1,26 @@
 import {
-  insertCall, listMonitoredApiIds, listOwnershipRecheckTargets, loadProbeInputs, recordHealthTransition, recordOwnershipRecheck,
+  insertCall, listDomainRecheckTargets, listMonitoredApiIds, recordDomainRecheck, scheduleDomainRecheck, type DomainRecheckOutcome,
+  type DomainRecheckTarget, type DomainStatus, listOwnershipRecheckTargets, loadProbeInputs, recordHealthTransition, recordOwnershipRecheck,
   scheduleOwnershipRecheck, touchHealthCheck, type OwnershipRecheckOutcome, type OwnershipRecheckTarget, type Sql,
 } from "@hirakumi/db";
 import type { GatewayConfig } from "./config";
 import type { HealthReason, HealthTracker, HealthTransition } from "./health";
-import type { TxtLookup } from "@hirakumi/core";
+import { isNoRecordError, matchVerifyTxt, type TxtLookup } from "@hirakumi/core";
+import { addressResolverVia, checkRouted, type AddressResolver, type DomainRegistry } from "./domains";
 import { probeVerifyDns, probeVerifyHeader, txtLookupVia, type DnsReason, type OwnershipReason } from "./ownership";
 import type { ApiRegistry } from "./registry";
 import { runOperation } from "./upstream";
 
 export type MonitorDeps = {
   sql: Sql; registry: ApiRegistry; health: HealthTracker;
-  config: Pick<GatewayConfig, "probeIntervalMs" | "upstreamTimeoutMs" | "ownershipRecheckMs" | "ownershipRetryMs" | "dnsResolvers">;
+  config: Pick<GatewayConfig, "probeIntervalMs" | "upstreamTimeoutMs" | "ownershipRecheckMs" | "ownershipRetryMs" | "dnsResolvers">
+    & Partial<Pick<GatewayConfig, "edgeIps" | "domainRecheckMs">>;
   /** TXT lookups; unset: config.dnsResolvers. Tests pass a fake. */
   txtLookup?: TxtLookup;
+  /** A, AAAA and CNAME lookups for the front-door re-check; unset: config.dnsResolvers. Tests pass a fake. */
+  addressResolver?: AddressResolver;
+  /** Front-door hosts, forgotten when a re-check changes one. */
+  domains?: DomainRegistry;
   /** 0 to 1; tests pass a fixed value. */
   random?: () => number;
 };
@@ -34,6 +41,17 @@ export const RESTORED_MESSAGE = (kind: "dns" | "header" = "dns") =>
   kind === "dns"
     ? "Your API's _hirakumi TXT record is back, so Hirakumi is selling it again."
     : "Your API's X-Hirakumi-Verify header is back, so Hirakumi is selling it again.";
+
+/** What the seller is told when a front-door re-check changes their hostname's status. Plain words, no dashes. */
+export const DOMAIN_MESSAGES = (host: string, detail: string): Partial<Record<DomainStatus, string>> => ({
+  disabled:
+    `Hirakumi stopped answering ${host} for your API: two checks in a row did not find your code in the TXT record at _hirakumi.${host}. ` +
+    `Callers there get an error now. Sales on Hirakumi's own URL go on. Put the record back and ${host} works again at the next check.`,
+  detached:
+    `${host} no longer points at Hirakumi (${detail}), so it is no longer your API's front door. Sales on Hirakumi's own URL go on. ` +
+    "To use the front door again, open Protect your API and connect it again.",
+  active: `Your _hirakumi TXT record for ${host} is back, so Hirakumi answers ${host} again.`,
+});
 
 export class Monitor {
   private timer: NodeJS.Timeout | undefined;
@@ -59,6 +77,7 @@ export class Monitor {
       const ids = await listMonitoredApiIds(this.d.sql);
       await Promise.all(ids.map((id) => this.probeApi(id).catch((e) => console.error(`[monitor] ${id}:`, e))));
       await this.recheckDue();
+      await this.recheckDomainsDue();
     } catch (e) {
       // A background loop must never reject: Node would exit and the health counters would be lost.
       console.error("[monitor] tick failed:", e);
@@ -134,6 +153,65 @@ export class Monitor {
         await this.recheckOwnership(t.id, now).catch((e) => console.error(`[monitor] ownership ${t.id}:`, e));
       }
     }
+  }
+
+  /**
+   * Front-door hosts, every domainRecheckMs (6 h) with jitter: the _hirakumi TXT at the host still holds the proven
+   * code of an API on it, and an active host still resolves only to EDGE_IPS. Two TXT misses in a row disable the
+   * host (421, no certificate); two "points elsewhere" detach it. A DNS timeout neither counts nor resets. None of
+   * this touches sales on Hirakumi's own URLs.
+   */
+  async recheckDomainsDue(now: Date = new Date()): Promise<void> {
+    const interval = this.d.config.domainRecheckMs ?? 6 * 3_600_000;
+    let targets: DomainRecheckTarget[];
+    try {
+      targets = await listDomainRecheckTargets(this.d.sql);
+    } catch (e) {
+      console.error("[monitor] domain targets:", e);
+      return;
+    }
+    for (const t of targets) {
+      if (t.nextCheckAt === null) {
+        const r = this.d.random?.() ?? Math.random();
+        await scheduleDomainRecheck(this.d.sql, t.host, new Date(now.getTime() + Math.max(1, Math.round(interval * r))));
+      } else if (t.nextCheckAt.getTime() <= now.getTime()) {
+        await this.recheckDomain(t, now).catch((e) => console.error(`[monitor] domain ${t.host}:`, e));
+      }
+    }
+  }
+
+  async recheckDomain(t: DomainRecheckTarget, now: Date = new Date()): Promise<{ outcome: DomainRecheckOutcome; status: DomainStatus; changed: boolean }> {
+    const interval = this.d.config.domainRecheckMs ?? 6 * 3_600_000;
+    const lookup = this.d.txtLookup ?? txtLookupVia(this.d.config.dnsResolvers);
+    let outcome: DomainRecheckOutcome = "pass";
+    let detail = "";
+    const name = `_hirakumi.${t.host}`;
+    let records: string[][] | null = null;
+    try {
+      records = await lookup(name);
+    } catch (e) {
+      if (isNoRecordError(e)) records = [];
+      else { outcome = "error"; detail = `DNS did not answer for ${name}.`; }
+    }
+    if (records && !t.codes.some((code) => matchVerifyTxt(records!, code) === "match")) {
+      outcome = "txt_missing";
+      detail = records.length ? `the TXT record at ${name} has no code of an API on this host` : `no TXT record at ${name}`;
+    }
+    if (outcome === "pass" && t.status !== "pending_dns") {
+      const routed = await checkRouted(this.d.addressResolver ?? addressResolverVia(this.d.config.dnsResolvers), t.host, this.d.config.edgeIps ?? []);
+      if (routed.outcome === "error") outcome = "error";
+      else if (routed.outcome === "not_routed") outcome = "not_routed";
+      detail = routed.detail;
+    }
+    const r = await recordDomainRecheck(this.d.sql, {
+      host: t.host, outcome, detail, messages: DOMAIN_MESSAGES(t.host, detail),
+      nextAt: this.nextAt(now, outcome === "pass" ? interval : this.d.config.ownershipRetryMs),
+    });
+    if (r.changed) {
+      console.log(`[monitor] front door ${t.host} ${t.status} -> ${r.status} (${outcome})`);
+      this.d.domains?.invalidate(t.host);
+    }
+    return { outcome, status: r.status, changed: r.changed };
   }
 
   /**
