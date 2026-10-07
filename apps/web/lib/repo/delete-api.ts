@@ -2,6 +2,8 @@ import type postgres from "postgres";
 import { recordsKeptReason } from "../api-delete";
 import type { Sql } from "../db";
 import type { ApiState } from "../types";
+import { undoMessage, undoSteps } from "../front-door";
+import { detachFrontDoor, postUndoMessage } from "./front-door";
 import { hasAnyApiSchema } from "./schema";
 
 type Tx = postgres.TransactionSql;
@@ -50,7 +52,11 @@ export const DELETED_TASK_MESSAGE = "You deleted this API. Nothing was published
 export const DELETED_REGISTERING_TASK_MESSAGE = "You deleted this API. It won't go on the market.";
 
 export type DeleteApiResult =
-  | { ok: true; name: string; recordsKept: boolean; wasServing: boolean }
+  | {
+    ok: true; name: string; recordsKept: boolean; wasServing: boolean;
+    /** The front-door host it was detached from (the gateway forgets it), and what the seller undoes on their side. */
+    frontDoorHost: string | null; undo: string[];
+  }
   | { ok: false; status: 404; error: string };
 
 /**
@@ -70,6 +76,12 @@ export async function deleteApi(sql: Sql, a: { apiId: string; sellerId: string }
     const [facts] = await tx<{ registerStarted: boolean; sold: boolean }[]>`
       select ${registerStartedSql(tx, a.apiId)} as register_started, ${soldSql(tx, a.apiId)} as sold`;
     const recordsKept = recordsKeptReason({ state: api.state, agentIdentifier: api.agentIdentifier, ...facts }) !== null;
+    // The whole monetization layer goes: the front door is detached before the row changes or is erased.
+    const hadKey = (await hasAnyApiSchema(tx))
+      ? (await tx<{ has: boolean }[]>`select upstream_auth is not null as has from apis where id = ${a.apiId}`)[0]?.has === true
+      : false;
+    const frontDoorHost = await detachFrontDoor(tx, a.apiId);
+    const undo = undoSteps({ frontDoorHost, hadKey });
     if (recordsKept) {
       // Before migration 0014 there is no upstream_auth column, so no key to drop (lib/repo/schema.ts).
       if (await hasAnyApiSchema(tx)) {
@@ -91,6 +103,9 @@ export async function deleteApi(sql: Sql, a: { apiId: string; sellerId: string }
         values (null, ${a.sellerId}, ${api.sokosumiTaskId}, 'coworker', ${body}, 'FAILED', ${`deleted:${a.apiId}`})
         on conflict (dedupe_key) do nothing`;
     }
-    return { ok: true, name: api.name, recordsKept, wasServing: api.state === "live" || api.state === "registering" };
+    if (undo.length) {
+      await postUndoMessage(tx, { apiId: recordsKept ? a.apiId : null, sellerId: a.sellerId, body: undoMessage(api.name, undo) });
+    }
+    return { ok: true, name: api.name, recordsKept, wasServing: api.state === "live" || api.state === "registering", frontDoorHost, undo };
   });
 }

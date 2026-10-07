@@ -17,7 +17,7 @@ export const UPDATING = "This part of Hirakumi is being updated. Try again in a 
 const RECHECK_MS = 60_000;
 
 type Check = { ready: boolean; at: number; pending: Promise<boolean> | null };
-const g = globalThis as unknown as { __hirakumiAnyApiSchema?: Check; __hirakumiDnsVerifySchema?: Check };
+const g = globalThis as unknown as { __hirakumiAnyApiSchema?: Check; __hirakumiDnsVerifySchema?: Check; __hirakumiFrontDoorSchema?: Check };
 
 /**
  * True once migrations 0014 and 0015 have run: apis.intake_kind exists (0014) and so does the index that keeps one
@@ -69,6 +69,34 @@ export async function hasDnsVerifySchema(sql: Sql): Promise<boolean> {
   return c.pending;
 }
 
+/**
+ * True once migration 0020 has run: apis.public_host and api_domains (the front door). Before it, the protect page
+ * hides the front door and retire and delete have no domain to detach. Cached the same way as hasAnyApiSchema.
+ */
+export async function hasFrontDoorSchema(sql: Sql | postgres.TransactionSql): Promise<boolean> {
+  const c = (g.__hirakumiFrontDoorSchema ??= { ready: false, at: 0, pending: null });
+  if (c.ready || (c.at && Date.now() - c.at < RECHECK_MS)) return c.ready;
+  c.pending ??= (async () => {
+    try {
+      const [row] = await sql<{ ready: boolean }[]>`
+        select exists (
+          select 1 from information_schema.columns
+          where table_schema = current_schema() and table_name = 'apis' and column_name = 'public_host') as ready`;
+      c.ready = row?.ready === true;
+      c.at = Date.now();
+      return c.ready;
+    } finally {
+      c.pending = null;
+    }
+  })();
+  return c.pending;
+}
+
+/** For the front-door routes: a 503 until migration 0020 has run, else null. */
+export async function frontDoorUpdatingResponse(sql: Sql): Promise<Response | null> {
+  return (await hasFrontDoorSchema(sql)) ? null : errorJson(503, UPDATING);
+}
+
 /** For the ownership routes: a 503 until migrations 0014, 0015 and 0018 have run, else null. */
 export async function ownershipUpdatingResponse(sql: Sql): Promise<Response | null> {
   return (await hasDnsVerifySchema(sql)) ? null : errorJson(503, UPDATING);
@@ -88,4 +116,5 @@ export async function samplesIntakeOpen(sql: Sql): Promise<boolean> {
 export function resetSchemaCheck(): void {
   g.__hirakumiAnyApiSchema = undefined;
   g.__hirakumiDnsVerifySchema = undefined;
+  g.__hirakumiFrontDoorSchema = undefined;
 }
