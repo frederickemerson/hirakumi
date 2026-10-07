@@ -60,6 +60,8 @@ services:
         condition: service_healthy
     expose:
       - "4021"
+      # Caddy's on-demand TLS ask (front door). Never published on the host.
+      - "4022"
 
   coworker:
     build:
