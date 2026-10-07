@@ -1,6 +1,6 @@
 # Mika's FX Rates (demo seller)
 
-A read-only foreign exchange API used as the second demo seller for Hirakumi, served at `mika.$PUBLIC_DOMAIN`. `GET /openapi.json` is the spec Hirakumi reads.
+A read-only foreign exchange API used as a demo seller for Hirakumi, served at `mika.$PUBLIC_DOMAIN`. `GET /openapi.json` is the spec Hirakumi reads.
 
 - `GET /rate?from=USD&to=EUR` → `{"from":"USD","to":"EUR","rate":0.889506,"asOf":"2026-10-07T01:51:01.627Z"}`
 - `GET /convert?from=USD&to=JPY&amount=100` → `{"from":"USD","to":"JPY","amount":100,"result":15834.6,"rate":158.346,"asOf":"…"}`
@@ -11,9 +11,9 @@ Currencies: USD, EUR, GBP, JPY, SGD, CHF, AUD, CAD, INR, CNY, HKD, KRW. Rates ha
 
 Coinbase's public exchange rates (no key), cached for 30 s per base currency. They are undated, so `asOf` is when we fetched them. When Coinbase fails, ExchangeRate-API's open endpoint, which updates about once a day: `asOf` is then its own last update, so a freshness promise sees old data as old. A rate is never invented: the last real table is served with its real `asOf`, or 503 when there is none.
 
-## Break switch and ownership code
+## Break switch
 
-Same as `sellers/price-api` (see its README): `POST /admin/break {"mode":"ok"|"empty"|"stale"}` with `Authorization: Bearer $ADMIN_TOKEN` (`empty` answers `{}`, `stale` dates every rate two hours back), and the `X-Hirakumi-Verify` header on every answer from `HIRAKUMI_CHALLENGE` or `PUT /admin/challenge/api_xxx`.
+Same as `sellers/price-api` (see its README): `POST /admin/break {"mode":"ok"|"empty"|"stale"}` with `Authorization: Bearer $ADMIN_TOKEN` (`empty` answers `{}`, `stale` dates every rate two hours back). Ownership is a DNS TXT record at the host; the optional `X-Hirakumi-Verify` header (`HIRAKUMI_CHALLENGE` or `PUT /admin/challenge/api_xxx`) serves listings proven before DNS.
 
 ## Env
 
