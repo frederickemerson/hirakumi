@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { answerLeaksSecret, compileRule, inferTextRule, type UpstreamCredential } from "@hirakumi/core";
+import { answerLeaksSecret, compileRule, inferTextRule, withRequiredPhrase, type UpstreamCredential } from "@hirakumi/core";
 import { compileInputValidator, type LoadedOp } from "../src/registry";
 import { buildUpstreamRequest, leaksSecret, normalizeMip003Input, redactSecret, runOperation, secretForms } from "../src/upstream";
 import { PRICE_INPUT_SCHEMA, PRICE_RULE, startStubUpstream, type StubUpstream } from "./helpers";
@@ -247,7 +247,7 @@ describe("the seller's key", () => {
 
 describe("text answers", () => {
   const csvOp = (): LoadedOp => {
-    const rule = inferTextRule("text/csv", ["symbol,price\nADA,0.42\n", "symbol,price\nBTC,60000\n"]);
+    const rule = withRequiredPhrase(inferTextRule("text/csv", ["symbol,price\nADA,0.42\n", "symbol,price\nBTC,60000\n"]), "symbol,price");
     return {
       row: { id: "op_csv", api_id: "api_x", op_id: "getCsv", method: "GET", path: "/prices.csv", input_schema: { type: "object" }, description: null, enabled: true },
       ruleRow: null, rule: compileRule(rule), validateInput: compileInputValidator({ type: "object" }),
@@ -259,7 +259,7 @@ describe("text answers", () => {
     expect(o).toMatchObject({ execution: "upstream_ok", verdict: "pass", reasons: [] });
     expect(o.result).toMatchObject({ contentType: "text/csv; charset=utf-8", body: "symbol,price\r\nADA,0.42\r\n" });
   });
-  it("fails a CSV answer without the header line, or with another content type", async () => {
+  it("fails a CSV answer without the confirmed phrase, or with another content type", async () => {
     stub.setFile("/prices.csv", "oops\n", { contentType: "text/csv" });
     expect(await runOperation({ origin: stub.origin, path_prefix: "/" }, csvOp(), {}, { timeoutMs: 500 })).toMatchObject({ execution: "upstream_ok", verdict: "fail" });
     stub.setFile("/prices.csv", "symbol,price\nADA,1\n", { contentType: "text/plain" });

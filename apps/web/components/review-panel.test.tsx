@@ -61,7 +61,7 @@ describe("ReviewPanel", () => {
     const user = userEvent.setup();
     render(<ReviewPanel apiId="api_1" state="priced" promises={[statusOnly]} pack={null} suggestedPhrases={{ op_2: "Last price:" }} />);
     expect(screen.getByLabelText("Every good answer contains (required)")).toHaveValue("Last price:");
-    expect(screen.getByText("We found this in every good test answer and not in the wrong one. Check it or change it.")).toBeInTheDocument();
+    expect(screen.getByText("We found this in every good test answer and not in the answer to a wrong request. Keep it only if every answer will always contain it: not a date, a version or a count.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Add phrase" }));
     await vi.waitFor(() => expect(nav.refresh).toHaveBeenCalled());
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ operationId: "op_2", phrase: "Last price:" });

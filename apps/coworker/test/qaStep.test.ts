@@ -1,4 +1,4 @@
-import { inferRuleFromResponses } from "@hirakumi/core";
+import { inferRuleFromResponses, withRequiredPhrase } from "@hirakumi/core";
 import { fallbackRuleText } from "../src/llm/ruleText.js";
 import { phraseLines, qaSummaryLine } from "../src/onboarding/qaStep.js";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -111,14 +111,14 @@ describe("qaStep for a text answer with no header line (status-only)", () => {
     return { apiId, preview };
   };
 
-  it("stores the suggested phrase and tells the seller every good answer will have to contain it", async () => {
+  it("stores the suggested phrase and asks the seller to confirm it before publishing", async () => {
     const { apiId } = await run((s) => `Price of ${s}: 1 USD`, true);
     // The different good answers too, so the review page can check a phrase the seller types against them.
     const output = (await getStep(db.pool, apiId, "qa"))?.output;
     expect(output).toMatchObject({ suggestedPhrases: { getPrice: "Price of" } });
     expect(output?.goodAnswers).toEqual({ getPrice: [{ body: "Price of ADA: 1 USD", complete: true }, { body: "Price of BTC: 1 USD", complete: true }] });
     const body = (await messagesFor(db.pool, apiId)).at(-1)?.body ?? "";
-    expect(body).toContain('This is a status-only promise: it does not check the content. Every good answer will have to contain "Price of". Change it on the review page. Suggested price:');
+    expect(body).toContain('This is a status-only promise: it does not check the content. Before you publish, confirm the phrase "Price of" on the review page or type another. Every good answer must contain it, so it can\'t be a date, a version or a count. Suggested price:');
     // The rule itself is unchanged: the seller confirms the phrase on the review page, which writes a new version.
     expect((await db.pool.query(`select count(*)::int as n from rules r join operations o on o.id = r.operation_id where o.api_id = $1`, [apiId])).rows[0].n).toBe(1);
   });
@@ -145,13 +145,13 @@ describe("qaStep for a text answer with no header line (status-only)", () => {
 describe("phraseLines", () => {
   const answer = (contentType: string, body: string) => ({ status: 200, contentType, body, latencyMs: 1 });
   const statusOnly = inferRuleFromResponses([answer("text/plain", "1.5")]);
-  const csv = inferRuleFromResponses([answer("text/csv", "a,b\n1,2\n"), answer("text/csv", "a,b\n3,4\n")]);
+  const csv = withRequiredPhrase(inferRuleFromResponses([answer("text/csv", "a,b\n1,2\n"), answer("text/csv", "a,b\n3,4\n")]), "a,b");
   const json = inferRuleFromResponses([answer("application/json", '{"price":1}')]);
 
   it("asks only about status-only text promises, naming the endpoint when there are several", () => {
     expect(phraseLines([{ opId: "a", rule: csv }, { opId: "b", rule: json }], {})).toEqual([]);
     expect(phraseLines([{ opId: "a", rule: statusOnly }, { opId: "b", rule: csv }, { opId: "c", rule: statusOnly }], { a: 'say "hi"' })).toEqual([
-      'For a, every good answer will have to contain "say \\"hi\\"". Change it on the review page.',
+      'For a, confirm the phrase "say \\"hi\\"" on the review page or type another. Every good answer must contain it, so it can\'t be a date, a version or a count.',
       "The promise for c only checks the status, so it needs a phrase before you can publish. Add one on the review page: a word or label every good answer contains, like Price or Symbol. Capital letters don't matter.",
     ]);
   });

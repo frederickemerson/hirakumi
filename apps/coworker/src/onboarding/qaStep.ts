@@ -202,14 +202,18 @@ export function qaSummaryLine(summaries: OpQaSummary[]): string {
 /**
  * What the seller must do about status-only text promises (core isStatusOnlyRule) before publishing, one line per
  * such operation: confirm or change the suggested phrase, or type one when QA found none. Publishing is refused
- * until each has a phrase.
+ * until each has a phrase. A suggestion is never saved on its own: answers gathered within seconds can't show that
+ * it stays the same, the seller can.
  */
 export function phraseLines(ops: { opId: string; rule: RuleDefinition }[], suggested: SuggestedPhrases): string[] {
   const statusOnly = ops.filter((o) => isStatusOnlyRule(o.rule));
   const one = ops.length === 1;
   return statusOnly.map(({ opId }) => {
     const phrase = suggested[opId];
-    if (phrase) return `${one ? "Every" : `For ${opId}, every`} good answer will have to contain ${JSON.stringify(phrase)}. Change it on the review page.`;
+    if (phrase) {
+      return `${one ? "Before you publish, confirm" : `For ${opId}, confirm`} the phrase ${JSON.stringify(phrase)} on the review page or type another. ` +
+        "Every good answer must contain it, so it can't be a date, a version or a count.";
+    }
     return `${one ? "This promise" : `The promise for ${opId}`} only checks the status, so it needs a phrase before you can publish. ` +
       "Add one on the review page: a word or label every good answer contains, like Price or Symbol. Capital letters don't matter.";
   });
