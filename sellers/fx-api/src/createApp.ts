@@ -14,6 +14,8 @@ export type AppDeps = {
   modes: ModeStore;
   now: () => number;
   adminToken: string | undefined;
+  /** API_KEY: when set, /rate and /convert answer only calls that send it in X-API-Key (the seller's own key). */
+  apiKey?: string;
   /** Hirakumi ownership codes by API id; the latest one set is sent as the X-Hirakumi-Verify header (see challenge.ts). */
   verifyCodes: Record<string, string>;
   publicUrl: string;
@@ -50,6 +52,15 @@ export function createApp(deps: AppDeps): Express {
     const given = header.startsWith("Bearer ") ? header.slice(7) : "";
     if (!sameSecret(deps.adminToken, given)) {
       res.status(401).json({ error: "unauthorized" });
+      return;
+    }
+    next();
+  };
+
+  // A paid API refuses strangers: with API_KEY set, the data routes need it (Hirakumi's gateway sends it).
+  const requireKey = (req: Request, res: Response, next: NextFunction) => {
+    if (deps.apiKey && !sameSecret(deps.apiKey, req.get("x-api-key") ?? "")) {
+      res.status(401).json({ error: "api_key_required", message: "Send your API key in the X-API-Key header" });
       return;
     }
     next();
@@ -99,10 +110,10 @@ export function createApp(deps: AppDeps): Express {
 
   app.get("/openapi.json", (_req, res) => {
     // no-store: a cache must not keep an answer with an old X-Hirakumi-Verify code.
-    res.set("Cache-Control", "no-store").json(buildOpenApi(deps.publicUrl, deps.title ?? DEFAULT_TITLE));
+    res.set("Cache-Control", "no-store").json(buildOpenApi(deps.publicUrl, deps.title ?? DEFAULT_TITLE, Boolean(deps.apiKey)));
   });
 
-  app.get("/rate", async (req, res) => {
+  app.get("/rate", requireKey, async (req, res) => {
     const p = pair(req, res);
     if (!p) return;
     const q = await quote(res, p.from, p.to);
@@ -110,7 +121,7 @@ export function createApp(deps: AppDeps): Express {
     res.json({ from: p.from, to: p.to, rate: q.rate, asOf: q.asOf });
   });
 
-  app.get("/convert", async (req, res) => {
+  app.get("/convert", requireKey, async (req, res) => {
     const p = pair(req, res);
     if (!p) return;
     const raw = typeof req.query.amount === "string" ? req.query.amount.trim() : "";
