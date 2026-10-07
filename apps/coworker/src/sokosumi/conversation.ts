@@ -1,4 +1,4 @@
-import { apiBaseUrl, normalizeSamplesBase, parseSampleLines, SampleError, specFromSamples, UpstreamTimeoutError, UpstreamTooLargeError } from "@hirakumi/core";
+import { apiBaseUrl, normalizeSamplesBase, parseSampleLinesWithWarnings, SampleError, specFromSamples, UpstreamTimeoutError, UpstreamTooLargeError } from "@hirakumi/core";
 import type pg from "pg";
 import type { Db } from "../db.js";
 import { PermanentError } from "../errors.js";
@@ -366,10 +366,11 @@ async function handleSamples(deps: ConversationDeps, task: TaskRef, intake: Samp
     return;
   }
   let base: ReturnType<typeof normalizeSamplesBase>;
-  let samples: ReturnType<typeof parseSampleLines>;
+  let samples: ReturnType<typeof parseSampleLinesWithWarnings>["samples"];
+  let keyWarnings: string[];
   try {
     base = normalizeSamplesBase(intake.base, deps.allowInsecure);
-    samples = parseSampleLines(intake.lines);
+    ({ samples, warnings: keyWarnings } = parseSampleLinesWithWarnings(intake.lines));
   } catch (e) {
     if (!(e instanceof SampleError)) throw e;
     await say(deps.pool, task, key, `${e.message} Reply with your API's base URL and example requests, one per line, for example GET /price?symbol=ADA`,
@@ -385,6 +386,8 @@ async function handleSamples(deps: ConversationDeps, task: TaskRef, intake: Samp
     specText: async () => JSON.stringify(specFromSamples({ title: base.hostname, base: base.base, samples })),
     setupHint: `choose "I don't" (no OpenAPI file) on this setup page and paste the same base URL and example requests`,
     retryHint: "Reply with the corrected base URL and example requests to try again.",
+    // Lines that may hold a key are read with a warning: a name or a value's shape can't prove a key.
+    ...(keyWarnings.length ? { note: `${keyWarnings.join(" ")} ` } : {}),
   });
 }
 

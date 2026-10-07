@@ -119,7 +119,9 @@ describe("upstream auth", () => {
   });
 
   it("refuses a key buyers can already see in the example requests or an endpoint's examples", async () => {
-    const message = "This key appears in your example requests or endpoint examples, where buyers can see it. Remove it there first.";
+    const message =
+      "This key appears in your example requests, your OpenAPI file or your endpoints' examples, where buyers can see it. " +
+      "Remove the API, list it again without the key in them, then add the key here.";
     const fromSamples = await seedApi(seller.id, "endpoints_confirmed", {
       origin: "https://keyed.example.dev", samples: { base: "https://keyed.example.dev", lines: `GET /price?symbol=ADA&k=${encodeURIComponent(KEY)}` },
     });
@@ -135,6 +137,15 @@ describe("upstream auth", () => {
     expect(await fromExamples.json()).toEqual({ error: message });
     expect(await storedRow()).toBeNull();
     expect(reload).not.toHaveBeenCalled();
+
+    // In the OpenAPI file's text as the parse step stored it (a parameter description, say).
+    const fromSpec = await seedApi(seller.id, "endpoints_confirmed", { origin: "https://spec.example.dev" });
+    await seedOnboardStep(fromSpec.id, "parse", "done", {
+      ops: [{ opId: "getPrice", parameters: [{ name: "appid", in: "query", description: `Use appid=${KEY.toUpperCase()} to try it` }] }],
+    });
+    const fromFile = await save({ in: "query", name: "appid", value: KEY }, cookie, fromSpec.id);
+    expect(fromFile.status).toBe(400);
+    expect(await fromFile.json()).toEqual({ error: message });
 
     // A different key is fine.
     expect((await save({ in: "header", name: "X-API-Key", value: "another-key-1234567890-ABCD" })).status).toBe(200);

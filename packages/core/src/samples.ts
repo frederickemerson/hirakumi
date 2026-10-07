@@ -35,7 +35,7 @@ export type Sample = {
 
 export class SampleError extends Error {}
 
-const KEY_ADVICE = "Remove it from the example requests. After you prove ownership, add the key on the ownership page, where only the Hirakumi gateway can read it.";
+const KEY_ADVICE = "If it is, remove it from the example requests: buyers see every example value. After you prove ownership, add the key on the ownership page, where only the Hirakumi gateway can read it.";
 
 const METHODS = new Set<SampleMethod>(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 const NAME = /^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/;
@@ -66,9 +66,17 @@ export function normalizeSamplesBase(raw: unknown, allowInsecure = false): { bas
   return { base, origin: u.origin, hostname: u.hostname };
 }
 
-function parseLine(line: string, n: number): Sample {
+function parseLine(line: string, n: number, warnings: string[]): Sample {
   const fail = (msg: string): never => {
     throw new SampleError(`Line ${n}: ${msg}`);
+  };
+  // A name or a value's shape can't prove a key (key=BTC is a ticker, appid=12 a number), so these only warn. The
+  // exact key is refused when the seller saves it (keyAppearsIn in the web app's upstream-auth route).
+  let warned = false;
+  const warn = (msg: string) => {
+    if (warned) return;
+    warned = true;
+    warnings.push(`Line ${n}: ${msg}`);
   };
   const decode = (s: string, what: string): string => {
     try {
@@ -81,7 +89,7 @@ function parseLine(line: string, n: number): Sample {
   // or a value that holds a key under its name. key=BTC, appid=12 and use_auth=true are ordinary inputs.
   const keyParam = (name: string, value: string) => {
     if ((isUnambiguousKeyParamName(name) && value.length >= 8) || paramHoldsSecret(name, value)) {
-      fail(`"${name}" looks like your API's key. ${KEY_ADVICE}`);
+      warn(`"${name}" may be your API's key. ${KEY_ADVICE}`);
     }
   };
   let rest = line.trim();
@@ -153,17 +161,26 @@ function parseLine(line: string, n: number): Sample {
     }
   }
   // Named key parameters were refused above with their name; this catches a key under any other name or in the body.
-  if (looksLikeSecret(line)) fail(`this line looks like it has a key, token or password in it. ${KEY_ADVICE}`);
+  if (looksLikeSecret(line)) warn(`this line may have a key, token or password in it. ${KEY_ADVICE}`);
   return { method, path, pathParams, query, ...(body !== undefined ? { body } : {}) };
 }
 
-/** One sample per non-empty line. Lines starting with # are comments. */
-export function parseSampleLines(text: unknown): Sample[] {
+/**
+ * One sample per non-empty line (lines starting with # are comments), and a warning for each line that may hold a
+ * key ("Line 2: ..."), for the seller to read before going on.
+ */
+export function parseSampleLinesWithWarnings(text: unknown): { samples: Sample[]; warnings: string[] } {
   if (typeof text !== "string" || text.trim() === "") throw new SampleError("Add at least one example request, for example GET /price?symbol=ADA");
   const lines = text.split(/\r?\n/).map((l, i) => ({ l: l.trim(), n: i + 1 })).filter(({ l }) => l && !l.startsWith("#"));
   if (lines.length === 0) throw new SampleError("Add at least one example request, for example GET /price?symbol=ADA");
   if (lines.length > MAX_SAMPLE_LINES) throw new SampleError(`Give at most ${MAX_SAMPLE_LINES} example requests.`);
-  return lines.map(({ l, n }) => parseLine(l, n));
+  const warnings: string[] = [];
+  return { samples: lines.map(({ l, n }) => parseLine(l, n, warnings)), warnings };
+}
+
+/** One sample per non-empty line. Lines starting with # are comments. */
+export function parseSampleLines(text: unknown): Sample[] {
+  return parseSampleLinesWithWarnings(text).samples;
 }
 
 type Json = Record<string, unknown>;

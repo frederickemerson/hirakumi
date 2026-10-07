@@ -128,18 +128,22 @@ describe("POST /api/apis (Setup)", () => {
       expect(row).toBeDefined();
     });
 
-    it("refuses a key in the example requests, so it is neither stored nor shown to buyers", async () => {
+    it("takes example requests that may hold a key, with a warning per line that never repeats the value", async () => {
       const seller = await seedSeller();
       const res = await POST(jsonRequest("/api/apis", {
-        cookie: cookieFor(seller), body: samplesBody({ samples: "GET /price?symbol=ADA&apikey=a1b2c3d4e5f6g7h8i9j0" }),
+        cookie: cookieFor(seller), body: samplesBody({ samples: "GET /price?symbol=ADA\nGET /price?symbol=ADA&apikey=a1b2c3d4e5f6g7h8i9j0\nGET /weather?appid=1234567890" }),
       }));
-      expect(res.status).toBe(400);
-      const body = (await res.json()) as { error: string };
-      expect(body.error).toMatch(/^Line 1: "apikey" looks like your API's key/);
-      expect(body.error).toMatch(/ownership page/);
-      expect(body.error).not.toContain("a1b2c3d4e5f6g7h8i9j0");
-      const rows = await getSql()`select 1 from apis where seller_id = ${seller.id}`;
-      expect(rows).toHaveLength(0);
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as { keyWarnings: string[] };
+      expect(body.keyWarnings).toEqual([
+        expect.stringMatching(/^Line 2: "apikey" may be your API's key\. .*ownership page/),
+        expect.stringMatching(/^Line 3: "appid" may be your API's key/),
+      ]);
+      expect(JSON.stringify(body)).not.toContain("a1b2c3d4e5f6g7h8i9j0");
+      const ordinary = await POST(jsonRequest("/api/apis", {
+        cookie: cookieFor(seller), body: samplesBody({ baseUrl: "https://other.example.dev", samples: "GET /price?key=BTC" }),
+      }));
+      expect(((await ordinary.json()) as { keyWarnings: string[] }).keyWarnings).toEqual([]);
     });
 
     it("accepts crypto inputs named token, such as a contract address", async () => {

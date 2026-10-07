@@ -9,7 +9,9 @@ import { loadOwnedApi } from "@/lib/route-helpers";
 const RETIRED = "This API was removed from the market, so its key can't change.";
 const GONE = "This API was removed or deleted while you saved, so its key wasn't saved. Reload the page.";
 const NOT_SET_UP = "Adding a key isn't set up on Hirakumi right now. Try again later.";
-const KEY_IS_PUBLIC = "This key appears in your example requests or endpoint examples, where buyers can see it. Remove it there first.";
+const KEY_IS_PUBLIC =
+  "This key appears in your example requests, your OpenAPI file or your endpoints' examples, where buyers can see it. " +
+  "Remove the API, list it again without the key in them, then add the key here.";
 
 /**
  * The key the gateway sends to the seller's API. It is sealed here to the gateway's public key, so only the
@@ -33,7 +35,8 @@ export async function POST(req: Request, ctx: ApiRouteContext): Promise<Response
     if (e instanceof UpstreamAuthError) return errorJson(400, e.message);
     throw e;
   }
-  // A key buyers can already read in the examples would be public whatever the gateway does with it.
+  // The only moment the server holds the key in plain text: a key buyers can already read in the examples would be
+  // public whatever the gateway does with it. The exact key and its encodings (keyAppearsIn), not a guess by name.
   if (keyAppearsIn(credential.value, await publicExampleTexts(sql, api.id))) return errorJson(400, KEY_IS_PUBLIC);
   const publicKey = env.upstreamAuthPublicKey();
   if (!publicKey) return errorJson(503, NOT_SET_UP);

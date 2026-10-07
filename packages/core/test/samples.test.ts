@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ownershipCheckUrl } from "../src/ownership";
-import { normalizeSamplesBase, parseSampleLines, SampleError, schemaOfExample, specFromSamples } from "../src/samples";
+import { normalizeSamplesBase, parseSampleLines, parseSampleLinesWithWarnings, SampleError, schemaOfExample, specFromSamples } from "../src/samples";
 
 // Made up, and split so secret scanners do not read it as a real HubSpot key.
 const FAKE_HUBSPOT_KEY = ["pat", "na1", "11111111-2222-3333-4444-555555555555"].join("-");
@@ -107,31 +107,41 @@ describe("values the gateway can't send", () => {
 });
 
 describe("a key in the example requests", () => {
-  // Every value becomes a public input example for buyers and the lines are stored as typed, so a key is refused.
+  // Every value becomes a public input example for buyers. A name or a value's shape can't prove a key, so these are
+  // warnings; the exact key is refused when the seller saves it (apps/web upstream-auth route, keyAppearsIn).
   it.each([
-    ["GET /price?symbol=ADA&apikey=a1b2c3d4e5f6g7h8i9j0", /"apikey" looks like your API's key/],
-    ["GET /price?symbol=ADA&api_key=YOUR_KEY", /"api_key" looks like your API's key/],
-    ["GET /items/{key=a1b2c3d4e5f6g7}", /"key" looks like your API's key/],
-    ["GET /price?symbol=ADA&k=sk_live_abcdefghijkl1234", /"k" looks like your API's key/],
+    ["GET /price?symbol=ADA&apikey=a1b2c3d4e5f6g7h8i9j0", /"apikey" may be your API's key/],
+    ["GET /price?symbol=ADA&api_key=YOUR_KEY", /"api_key" may be your API's key/],
+    ["GET /items/{key=a1b2c3d4e5f6g7}", /"key" may be your API's key/],
+    ["GET /price?symbol=ADA&k=sk_live_abcdefghijkl1234", /"k" may be your API's key/],
     // Key-shaped values under names that say nothing: random hex, and known prefixes.
-    ["GET /price?symbol=ADA&k=7f3a9c1e0b2d4f6a8c9e1b3d5f7a9c2e", /"k" looks like your API's key/],
-    ["GET /price?symbol=ADA&x=live_8aK2pQ7rT9vW1yZ3", /"x" looks like your API's key/],
-    ["GET /items/{x=test_9fK2pQ7rT9vW1yZ3}", /"x" looks like your API's key/],
-    ["GET /price?appid=1234567890", /"appid" looks like your API's key/],
-    ["GET /price?access_token=abcdefgh", /"access_token" looks like your API's key/],
-    ['POST /search {"q": "ada", "api_key": "a1b2c3d4e5f6g7h8"}', /looks like it has a key, token or password/],
+    ["GET /price?symbol=ADA&k=7f3a9c1e0b2d4f6a8c9e1b3d5f7a9c2e", /"k" may be your API's key/],
+    ["GET /price?symbol=ADA&x=live_8aK2pQ7rT9vW1yZ3", /"x" may be your API's key/],
+    ["GET /items/{x=test_9fK2pQ7rT9vW1yZ3}", /"x" may be your API's key/],
+    ["GET /price?appid=1234567890", /"appid" may be your API's key/],
+    ["GET /price?access_token=abcdefgh", /"access_token" may be your API's key/],
+    ['POST /search {"q": "ada", "api_key": "a1b2c3d4e5f6g7h8"}', /may have a key, token or password in it/],
     // Key names from real APIs.
-    ["GET /simple/price?ids=cardano&x_cg_demo_api_key=CG-q1W2e3R4t5Y6u7I8o9P0aSdF", /"x_cg_demo_api_key" looks like your API's key/],
-    ["GET /v1/cryptocurrency/listings/latest?CMC_PRO_API_KEY=3f1c2a4b-5d6e-4f70-8a9b-0c1d2e3f4a5b", /"CMC_PRO_API_KEY" looks like your API's key/],
-    ["GET /v2/translate?text=hi&auth_key=3f1c2a4b-5d6e-4f70-8a9b-0c1d2e3f4a5b:fx", /"auth_key" looks like your API's key/],
-    ["GET /x?subscription-key=0123456789abcdef0123456789abcdef", /"subscription-key" looks like your API's key/],
-    [`GET /contacts?hapikey=${FAKE_HUBSPOT_KEY}`, /"hapikey" looks like your API's key/],
-    ["GET /x?x-api-token=a1b2c3d4e5f6g7h8", /"x-api-token" looks like your API's key/],
-    ["GET /x?token=sk_live_abcdefghijkl1234", /"token" looks like your API's key/],
-  ])("refuses %j and says where the key goes", (line, msg) => {
-    expect(() => parseSampleLines(line)).toThrow(SampleError);
-    expect(() => parseSampleLines(line)).toThrow(msg);
-    expect(() => parseSampleLines(line)).toThrow(/add the key on the ownership page/);
+    ["GET /simple/price?ids=cardano&x_cg_demo_api_key=CG-q1W2e3R4t5Y6u7I8o9P0aSdF", /"x_cg_demo_api_key" may be your API's key/],
+    ["GET /v1/cryptocurrency/listings/latest?CMC_PRO_API_KEY=3f1c2a4b-5d6e-4f70-8a9b-0c1d2e3f4a5b", /"CMC_PRO_API_KEY" may be your API's key/],
+    ["GET /v2/translate?text=hi&auth_key=3f1c2a4b-5d6e-4f70-8a9b-0c1d2e3f4a5b:fx", /"auth_key" may be your API's key/],
+    ["GET /x?subscription-key=0123456789abcdef0123456789abcdef", /"subscription-key" may be your API's key/],
+    [`GET /contacts?hapikey=${FAKE_HUBSPOT_KEY}`, /"hapikey" may be your API's key/],
+    ["GET /x?x-api-token=a1b2c3d4e5f6g7h8", /"x-api-token" may be your API's key/],
+    ["GET /x?token=sk_live_abcdefghijkl1234", /"token" may be your API's key/],
+  ])("warns about %j, says where the key goes, and still reads the line", (line, msg) => {
+    expect(() => parseSampleLines(line)).not.toThrow();
+    const { samples, warnings } = parseSampleLinesWithWarnings(line);
+    expect(samples).toHaveLength(1);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/^Line 1: /);
+    expect(warnings[0]).toMatch(msg);
+    expect(warnings[0]).toMatch(/add the key on the ownership page/);
+  });
+
+  it("warns once per line, naming each line", () => {
+    const { warnings } = parseSampleLinesWithWarnings("GET /price?symbol=ADA\nGET /price?appid=1234567890&api_key=a1b2c3d4e5f6g7h8");
+    expect(warnings).toEqual([expect.stringMatching(/^Line 2: "appid" may be your API's key/)]);
   });
 
   it("keeps ordinary crypto inputs named token or signature", () => {
@@ -151,7 +161,7 @@ describe("a key in the example requests", () => {
     "GET /tx?hash=5e1a3b9c0d7f2e4a6b8c1d3e5f7a9b0c2d4e6f8a1b3c5d7e9f0a2b4c6d8e0f1a", "GET /orders/{id=550e8400-e29b-41d4-a716-446655440000}",
     "GET /pairs?symbol=BTCUSDT2024&cursor=eyJwYWdlIjoyfQ1a2b3c4d", "GET /price?api_key=demo",
   ])("keeps on-chain ids and ordinary names: %j", (line) => {
-    expect(() => parseSampleLines(line)).not.toThrow();
+    expect(parseSampleLinesWithWarnings(line).warnings).toEqual([]);
   });
 });
 

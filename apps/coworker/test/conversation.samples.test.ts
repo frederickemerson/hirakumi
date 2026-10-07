@@ -128,10 +128,12 @@ describe("a brief with a base URL and example requests (no OpenAPI file)", () =>
     expect(m.body).toMatch(/I read your example requests for https:\/\/api.example.dev and found 2 endpoints/);
   });
 
-  it("a key parameter with a placeholder value is refused with where the key goes", async () => {
+  it("a key parameter with a placeholder value is read, with a warning that says where the key goes", async () => {
     const t = newTask("https://api.example.dev\nGET /price?symbol=ADA&api_key=YOUR_KEY");
     await run(t);
-    expect((await messagesForTask(t.id))[0].body).toMatch(/^Step 1 of 7, Read your file: Line 1: "api_key" looks like your API's key\. .*ownership page/);
+    const [m] = await messagesForTask(t.id);
+    expect(m.body).toMatch(/^Step 1 of 7, Read your file: Line 1: "api_key" may be your API's key\. .*ownership page/);
+    expect(m.body).toMatch(/I read your example requests for https:\/\/api.example.dev and found 1 endpoints/);
   });
 
   it("the greeting without a link offers the no-OpenAPI route", async () => {
