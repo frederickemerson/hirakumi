@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runPackDemo, type PackDemoOptions } from "../src/packBuyer.js";
 import { PendingStore, TokenStore } from "../src/tokenStore.js";
-import { PackPurchaseError } from "../src/payClient.js";
+import { PackPurchaseError, type SignedHook } from "../src/payClient.js";
 import { NoAffordablePackError } from "../src/gatewayClient.js";
 import { fakeGateway, GW, API, TOKEN, MASUMI_UNIT } from "./fakeGateway.js";
 
@@ -23,7 +23,7 @@ function deps(
     lines,
     tokens,
     pending,
-    buyPack: vi.fn(async (_url: string) => ({ token: TOKEN, credits: 5, apiId: API, txHash: "ab".repeat(32) })),
+    buyPack: vi.fn(async (_url: string, _expected?: unknown, _hooks?: { onSigned?: SignedHook }) => ({ token: TOKEN, credits: 5, apiId: API, txHash: "ab".repeat(32) })),
     make() {
       return {
         fetch: gw.fetch,
@@ -139,6 +139,29 @@ describe("runPackDemo when settlement times out", () => {
     await expect(runPackDemo(h.make(), opts())).rejects.toBeInstanceOf(PackPurchaseError);
     expect(h.pending.get(API)).toMatchObject({ packId: "pk_demo", paymentSignature: "SIGNED_PAYMENT", recoverySecret: "BUYER_SECRET" });
     expect(h.lines.join("\n")).toContain("Run the same command again");
+  });
+
+  it("saves the payment as soon as it is signed, so a lost connection after paying can't lead to paying twice", async () => {
+    const gw = fakeGateway({ modes: ["pass"] });
+    const h = deps(gw);
+    h.buyPack.mockImplementationOnce(async (_url: string, _e?: unknown, hooks?: { onSigned?: SignedHook }) => {
+      await hooks?.onSigned?.({ paymentSignature: "SIGNED_PAYMENT", recoverySecret: "BUYER_SECRET" });
+      throw new PackPurchaseError(0, "fetch failed: socket hang up");
+    });
+    await expect(runPackDemo(h.make(), opts())).rejects.toBeInstanceOf(PackPurchaseError);
+    expect(h.pending.get(API)).toMatchObject({ packId: "pk_demo", paymentSignature: "SIGNED_PAYMENT", recoverySecret: "BUYER_SECRET" });
+    expect(h.lines.join("\n")).toContain("Run the same command again");
+  });
+
+  it("clears the saved payment once the purchase succeeds", async () => {
+    const gw = fakeGateway({ modes: ["pass"] });
+    const h = deps(gw);
+    h.buyPack.mockImplementationOnce(async (_url: string, _e?: unknown, hooks?: { onSigned?: SignedHook }) => {
+      await hooks?.onSigned?.({ paymentSignature: "SIGNED_PAYMENT", recoverySecret: "BUYER_SECRET" });
+      return { token: TOKEN, credits: 5, apiId: API, txHash: "ab".repeat(32) };
+    });
+    await runPackDemo(h.make(), opts({ calls: 1 }));
+    expect(h.pending.get(API)).toBeUndefined();
   });
 
   it("recovers a saved payment with the same signature on the next run", async () => {

@@ -9,7 +9,7 @@ import { runEscrowJob } from "../escrowBuyer.js";
 
 const { values } = parseArgs({ args: cliArgs(), options: { api: { type: "string" }, symbol: { type: "string", default: "ADA" }, query: { type: "string", multiple: true } } });
 if (!values.api) {
-  console.error("Usage: pnpm --filter @hirakumi/buyer escrow -- --api <apiId> [--symbol ADA | --query name=value ...]");
+  console.error("Usage: pnpm --filter @hirakumi/buyer run escrow -- --api <apiId> [--symbol ADA | --query name=value ...]");
   process.exit(1);
 }
 const masumi = { baseUrl: need("BUYER_PAYMENT_SERVICE_URL"), token: need("BUYER_PAYMENT_SERVICE_TOKEN"), network: "Preprod" as const };
@@ -35,4 +35,6 @@ const result = await runEscrowJob(
     timeoutMs: 30 * 60_000,
   },
 );
+// 2: the job completed but its output doesn't match the MIP-004 hash the seller submitted (dispute it).
+if (result.outcome === "completed" && !result.outputVerified) process.exit(2);
 process.exit(result.outcome === "completed" || result.outcome === "failed" ? 0 : 1);

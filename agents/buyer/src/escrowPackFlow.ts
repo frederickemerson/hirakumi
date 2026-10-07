@@ -195,6 +195,11 @@ export async function runEscrowPack(deps: EscrowFlowDeps, o: EscrowFlowOptions):
     } else if (r.kind === "dispute") {
       s.disputed = true;
       s.stoppedFor = "dispute";
+      if (c.direct) {
+        // A direct pack paid the seller up front: there is nothing to withhold or close, only to stop and report.
+        deps.log(`#${i} PROMISE DISPUTE: the gateway served this as a pass but our check fails (${r.reasons.join("; ")}). Stopping; this is a direct pack: there is no escrow channel to close. The call is in the receipts at /a/${o.apiId}/receipts.`);
+        break;
+      }
       deps.log(`#${i} PROMISE DISPUTE: the gateway served this as a pass but our check fails (${r.reasons.join("; ")}). Not signing; closing.`);
       const closed = await requestEscrowClose(deps.fetch, o.gatewayUrl, c);
       deps.log(`Close requested: HTTP ${closed.status}`);

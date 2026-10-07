@@ -1,10 +1,10 @@
 import { callOperation, choosePack, formatAnswer, formatMicros, type CallOutcome, type CreditsRequired, type FetchLike } from "./gatewayClient.js";
-import { PackPurchaseError, type PackPurchase } from "./payClient.js";
+import { PackPurchaseError, type PackPurchase, type SignedHook } from "./payClient.js";
 import type { PendingPayment, PendingStore, TokenStore } from "./tokenStore.js";
 
 export type PackDemoDeps = {
   fetch: FetchLike;
-  buyPack: (buyUrl: string, expected: { amount: bigint }) => Promise<PackPurchase>;
+  buyPack: (buyUrl: string, expected: { amount: bigint }, hooks?: { onSigned?: SignedHook }) => Promise<PackPurchase>;
   tokens: TokenStore;
   pending: PendingStore;
   log: (line: string) => void;
@@ -95,15 +95,23 @@ export async function runPackDemo(deps: PackDemoDeps, o: PackDemoOptions): Promi
     deps.log(`Buying pack ${pack.packId}: ${pack.calls} calls for ${formatMicros(pack.price)} tUSDM, one Cardano preprod payment (about 20-60s)...`);
     const started = deps.now();
     let p: PackPurchase;
+    // Saved the moment the payment is signed, before it is sent: whatever happens next (a timeout, a dropped
+    // connection, a crash), the next run recovers it instead of paying again. /recover answers 404 if it never arrived.
+    let saved = false;
+    const save = (paymentSignature: string, recoverySecret: string) => {
+      deps.pending.put(o.apiId, { packId: pack.packId, paymentSignature, recoverySecret, at: new Date(deps.now()).toISOString() });
+      saved = true;
+    };
     try {
-      p = await deps.buyPack(pack.buyUrl, { amount: BigInt(pack.price) });
+      p = await deps.buyPack(pack.buyUrl, { amount: BigInt(pack.price) }, { onSigned: (x) => save(x.paymentSignature, x.recoverySecret) });
     } catch (e) {
-      if (e instanceof PackPurchaseError && e.settlementFailed && e.paymentSignature && e.recoverySecret) {
-        deps.pending.put(o.apiId, { packId: pack.packId, paymentSignature: e.paymentSignature, recoverySecret: e.recoverySecret, at: new Date(deps.now()).toISOString() });
+      if (!saved && e instanceof PackPurchaseError && e.paymentSignature && e.recoverySecret) save(e.paymentSignature, e.recoverySecret);
+      if (saved) {
         deps.log("The payment didn't confirm in time, but it may still land on-chain. It is saved: Run the same command again in a minute to recover your credits. You won't pay twice.");
       }
       throw e;
     }
+    deps.pending.delete(o.apiId);
     deps.log(
       `Paid in ${((deps.now() - started) / 1000).toFixed(1)}s: ${p.credits} credits.` +
         (p.txHash ? ` Tx https://preprod.cardanoscan.io/transaction/${p.txHash}` : " (no receipt header)"),

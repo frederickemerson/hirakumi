@@ -50,6 +50,14 @@ describe("runEscrowPack against a hybrid gateway", () => {
     expect(logs.join("\n")).toContain("Settlement: direct, because: small pack, proven seller.");
   });
 
+  it("direct: a 200 that fails our check is reported as a dispute, not a crash (there is no channel to close)", async () => {
+    const logs: string[] = [];
+    const g = maliciousEscrowGateway({ lock: () => direct(), calls: [() => json(200, { error: "rate limited" })] });
+    const s = await runEscrowPack(deps(g, tmpStore(), logs), flowOpts(1));
+    expect(s).toMatchObject({ channelId: null, disputed: true, stoppedFor: "dispute" });
+    expect(logs.join("\n")).toContain("direct pack: there is no escrow channel to close");
+  });
+
   it("direct above our direct cap is refused (even under the escrow cap): nothing paid", async () => {
     const g = maliciousEscrowGateway({ listing: [{ packId: "pk_demo", calls: 100, price: "6000000" }], lock: () => direct("6000000") });
     await expect(runEscrowPack(deps(g), { ...flowOpts(0), maxPackMicros: 10_000_000n })).rejects.toThrow(/direct cap/);

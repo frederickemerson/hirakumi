@@ -25,7 +25,7 @@ const { values } = parseArgs({ args: cliArgs(),
   },
 });
 if (!values.api) {
-  console.error("Usage: pnpm --filter @hirakumi/buyer pack -- --api <apiId> [--op getPrice] [--symbol ADA | --query name=value ...] [--calls 20] [--interval 2000] [--fresh] [--escrow] [--escrow --close --pack <packId> [--wait]]");
+  console.error("Usage: pnpm --filter @hirakumi/buyer run pack -- --api <apiId> [--op getPrice] [--symbol ADA | --query name=value ...] [--calls 20] [--interval 2000] [--fresh] [--escrow] [--escrow --close --pack <packId> [--wait]]");
   process.exit(1);
 }
 const query = queryArgs(values.query, values.symbol);

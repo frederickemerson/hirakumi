@@ -2,8 +2,8 @@
 // facilitator, Blockfrost, the operator wallet as closer) on a throwaway Postgres schema, a stub price API,
 // and the ChannelWatcher. Drive it with the buyer agent:
 //
-//   pnpm --filter @hirakumi/buyer pack -- --api <apiId> --escrow --calls 3
-//   pnpm --filter @hirakumi/buyer pack -- --api <apiId> --escrow --close --wait
+//   pnpm --filter @hirakumi/buyer run pack -- --api <apiId> --escrow --calls 3
+//   pnpm --filter @hirakumi/buyer run pack -- --api <apiId> --escrow --close --wait
 //
 // Env: ENV_FILE / ESCROW_RUN_SECRETS as for run.ts; E2E_PORT (default 4599); E2E_FEE_BPS (default 300);
 // E2E_PACK_MODE (escrow, default, or hybrid: the seeded API is new and its pack 2 tUSDM, so the policy picks escrow).
