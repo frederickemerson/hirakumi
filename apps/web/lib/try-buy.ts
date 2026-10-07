@@ -5,6 +5,16 @@ import { visitorKey } from "./try-handler";
 const TIMEOUT_MS = 110_000;
 
 /**
+ * ?resume=<purchaseId|latest>: where a pending purchase stands, never a new one. "" without it; null for a bad
+ * value, which is refused, never dropped (dropping it would turn a status check into a purchase).
+ */
+function resumeQuery(req: Request): string | null {
+  const v = new URL(req.url).searchParams.get("resume");
+  if (v === null) return "";
+  return /^(latest|try_[A-Za-z0-9_-]{1,64})$/.test(v) ? `?resume=${v}` : null;
+}
+
+/**
  * "Buy a pack live": asks the gateway (server-side, with INTERNAL_TOKEN) to buy a real pack from Hirakumi's
  * demo wallet and passes its progress stream through. The wallet's key and every limit live on the gateway.
  */
@@ -20,10 +30,12 @@ export function createBuyHandler(d: {
   const doFetch = d.fetchImpl ?? fetch;
   return async (req: Request, apiId: string): Promise<Response> => {
     if (!sameOrigin(req)) return errorJson(403, "Cross-site request refused.");
+    const resume = resumeQuery(req);
+    if (resume === null) return errorJson(400, "resume must be a purchase id or latest.");
     if (!d.allow(visitorKey(req))) return errorJson(429, "One purchase at a time, please. Wait a moment and try again.");
     let res: Response;
     try {
-      res = await doFetch(`${d.gatewayInternalUrl.replace(/\/+$/, "")}${path(apiId)}`, {
+      res = await doFetch(`${d.gatewayInternalUrl.replace(/\/+$/, "")}${path(apiId)}${resume}`, {
         method: "POST",
         headers: { authorization: `Bearer ${d.internalToken}`, accept: "application/x-ndjson" },
         signal: AbortSignal.timeout(TIMEOUT_MS),

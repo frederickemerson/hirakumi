@@ -14,8 +14,11 @@ export const SUGGESTED_QUESTIONS = [
   "What does an agent pay?",
 ] as const;
 
+/** What the ownership step's help button asks when the DNS provider is unknown. Answered offline too. */
+export const DNS_HELP_QUESTION = "How do I add the _hirakumi TXT record for my API?";
+
 /** More questions the offline FAQ answers word for word (not shown as starting chips). */
-export const EXTRA_QUESTIONS = ["What does a promise look like?", "Do I need a wallet?"] as const;
+export const EXTRA_QUESTIONS = ["What does a promise look like?", "Do I need a wallet?", DNS_HELP_QUESTION] as const;
 
 /** The landing page FAQ, answered word for word offline too. */
 export const LANDING_QUESTIONS = [

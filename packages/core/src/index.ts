@@ -7,6 +7,7 @@ export * from "./rules";
 export * from "./fetch";
 export * from "./health";
 export * from "./ownership";
+export * from "./dnsVerify";
 export * from "./listingBase";
 export * from "./settlement";
 export * from "./samples";

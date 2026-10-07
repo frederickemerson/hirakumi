@@ -1,5 +1,6 @@
 import type { FacilitatorClient } from "@x402/core/server";
 import type { Sql } from "@hirakumi/db";
+import type { TxtLookup } from "@hirakumi/core";
 import type { EscrowPurchase, OfferCheck, SignedHook } from "@hirakumi/buyer";
 import type { GatewayConfig } from "./config";
 import type { HealthTracker } from "./health";
@@ -18,6 +19,8 @@ export type AppDeps = {
   paymentTxHash?: (payload: Record<string, unknown>) => string | null;
   /** PACK_MODE=escrow: reads (and, with an operator key, writes) the chain. Null → locks are verified later. */
   escrowChain?: EscrowChain | null;
+  /** TXT lookups for the ownership proof. Unset: the resolvers in config.dnsResolvers. Injected by tests. */
+  txtLookup?: TxtLookup;
   /** "Try it live" purchases from Hirakumi's demo buyer wallet. Unset or null: the demo buy route answers 503. */
   demoBuyer?: DemoBuyer | null;
 };

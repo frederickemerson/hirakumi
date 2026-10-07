@@ -46,6 +46,8 @@ type Purchase =
   | { phase: "settling"; startedAt: number; settlingAt: number }
   | { phase: "settled"; startedAt: number; ms: number; txHash: string | null; credits: number; recovered: boolean }
   | { phase: "ready"; txHash: string | null; credits: number }
+  /** Not confirmed yet, never an error: the console keeps asking until it is settled or failed. */
+  | { phase: "pending"; startedAt: number; message: string }
   | { phase: "failed"; startedAt: number; message: string; spent: boolean };
 
 /* The outcome card takes the verdict's colour from the house palette: mint kept, canary refused, coral down. */
@@ -59,13 +61,16 @@ const KIND_STYLE: Record<TryKind, string> = {
   error: "bg-coral/40",
 };
 
-const VERDICT_LABEL: Record<TryReceipt["verdict"], string> = { kept: "Kept", not_kept: "Not kept", no_charge: "No charge" };
+const VERDICT_LABEL: Record<TryReceipt["verdict"], string> = { kept: "Kept", not_kept: "Not kept", no_charge: "No charge", pending: "Pending" };
 
 const FIELD =
   "block w-full rounded-[2px] border-2 border-ink bg-frost text-body text-ink outline-none transition-colors duration-100 focus-visible:border-sky";
 
 /** No event from the purchase for this long means the connection is gone (a payment takes 20 to 60 s). */
 const BUY_STALL_MS = 100_000;
+/** While a payment is pending, how often the console asks where it stands. */
+export const RESUME_EVERY_MS = 10_000;
+const PENDING_MESSAGE = "The payment is sent and waiting for Cardano to confirm it. It is saved, so it is never paid twice.";
 const CALL_TIMEOUT_MS = 35_000;
 
 /** Each block of a fresh result rises in turn, 60 ms apart (CSS animate-rise; still under reduced motion). */
@@ -76,7 +81,7 @@ function prefersReducedMotion(): boolean {
   return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReason = null, liveBuy = false, paths, noPackNote, noPackHint, buyNote, buyLabel, onPackChange }: {
+export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReason = null, liveBuy = false, paths, noPackNote, noPackHint, buyNote, buyLabel, onPackChange, resumeEveryMs = RESUME_EVERY_MS }: {
   apiId: string;
   ops: TryOp[];
   /** A pack with credits left when the page loaded, or null: then the first step is "Buy a pack live". */
@@ -99,6 +104,8 @@ export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReas
   noPackHint?: string;
   /** Told when the pack's credits change or it runs out (null). */
   onPackChange?: (pack: TryPackView | null) => void;
+  /** Tests shorten the wait between checks of a pending payment. */
+  resumeEveryMs?: number;
 }) {
   const callPath = paths?.call ?? `/api/try/${encodeURIComponent(apiId)}`;
   const buyPath = paths?.buy ?? `/api/try/${encodeURIComponent(apiId)}/buy`;
@@ -125,7 +132,11 @@ export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReas
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const slot = useRef<HTMLDivElement>(null);
 
-  useEffect(() => () => { if (timer.current) clearInterval(timer.current); }, []);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; if (timer.current) clearInterval(timer.current); };
+  }, []);
 
   if (!op) return <p className="text-body text-graphite">This API has no endpoints open for buyers yet.</p>;
 
@@ -181,6 +192,55 @@ export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReas
     }
   }
 
+  /**
+   * Reads one buy stream. The outcome is final (bought or failed), or pending: the payment may have left and is
+   * not confirmed, or the stream was lost mid-way. purchaseId is the gateway's id for it, when it said.
+   */
+  async function readPurchase(res: Response, startedAt: number, touch: () => void): Promise<
+    { kind: "bought"; pack: TryPackView } | { kind: "failed" } | { kind: "pending"; purchaseId: string | null }
+  > {
+    let purchaseId: string | null = null;
+    try {
+      for await (const e of readBuyEvents(res.body!)) {
+        touch();
+        if (e.phase === "paying") purchaseId = e.purchaseId ?? null;
+        const next = applyEvent(e, startedAt);
+        if (next) setPurchase(next);
+        if (e.phase === "settling" && e.settlement) setSettlement(e.settlement);
+        if (e.phase === "settled" || e.phase === "ready") {
+          return { kind: "bought", pack: { credits: e.credits, txHash: e.txHash, pending: e.phase === "ready" ? e.pending : false } };
+        }
+        if (e.phase === "pending") return { kind: "pending", purchaseId: e.purchaseId };
+        if (e.phase === "failed") return { kind: "failed" };
+      }
+    } catch {
+      // The connection dropped: the outcome is unknown, so the purchase is followed below.
+    }
+    setPurchase({ phase: "pending", startedAt, message: PENDING_MESSAGE });
+    return { kind: "pending", purchaseId };
+  }
+
+  /** Asks where a pending purchase stands until it is settled or failed. Never buys a second time. */
+  async function follow(purchaseId: string | null, startedAt: number): Promise<TryPackView | null> {
+    const url = `${buyPath}?resume=${encodeURIComponent(purchaseId ?? "latest")}`;
+    while (mounted.current) {
+      await new Promise((r) => setTimeout(r, resumeEveryMs));
+      if (!mounted.current) return null;
+      let res: Response;
+      try {
+        res = await fetch(url, { method: "POST", signal: AbortSignal.timeout(BUY_STALL_MS) });
+      } catch {
+        continue; // no answer yet is not an answer: still pending
+      }
+      if (!res.ok || !res.body) continue;
+      const r = await readPurchase(res, startedAt, () => {});
+      if (r.kind === "bought") return r.pack;
+      if (r.kind === "failed") return null;
+      purchaseId = r.purchaseId ?? purchaseId;
+    }
+    return null;
+  }
+
   /** Real x402 purchase on Cardano preprod from the demo wallet, then the first call with the new pack. */
   async function buy(input: Record<string, unknown>): Promise<void> {
     const startedAt = Date.now();
@@ -191,29 +251,26 @@ export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReas
     let stall = setTimeout(() => controller.abort(), BUY_STALL_MS);
     const touch = () => { clearTimeout(stall); stall = setTimeout(() => controller.abort(), BUY_STALL_MS); };
     let bought: TryPackView | null = null;
-    let finished = false;
     try {
-      const res = await fetch(buyPath, { method: "POST", signal: controller.signal });
-      if (!res.ok || !res.body) {
+      const res = await fetch(buyPath, { method: "POST", signal: controller.signal }).catch(() => null);
+      if (res && (!res.ok || !res.body)) {
+        // A refusal before any payment (limits, funds, Down): final, and nothing was paid.
         const data = (await res.json().catch(() => ({}))) as { error?: string };
         setPurchase(null);
         setError(data.error ?? `The purchase failed (HTTP ${res.status}).`);
         return;
       }
-      for await (const e of readBuyEvents(res.body)) {
-        touch();
-        const next = applyEvent(e, startedAt);
-        if (next) setPurchase(next);
-        if (e.phase === "settling" && e.settlement) setSettlement(e.settlement);
-        if (e.phase === "settled" || e.phase === "ready") {
-          bought = { credits: e.credits, txHash: e.txHash, pending: e.phase === "ready" ? e.pending : false };
-          finished = true;
-        }
-        if (e.phase === "failed") finished = true;
+      let r: Awaited<ReturnType<typeof readPurchase>>;
+      if (res) {
+        r = await readPurchase(res, startedAt, touch);
+      } else {
+        // No answer at all: whether a purchase started is unknown, so follow the newest one.
+        setPurchase({ phase: "pending", startedAt, message: PENDING_MESSAGE });
+        r = { kind: "pending", purchaseId: null };
       }
-      if (!finished) throw new Error("stream ended early");
-    } catch {
-      setPurchase({ phase: "failed", startedAt, spent: false, message: "Lost the connection to the purchase. If it went through, reload in a minute to use the pack." });
+      clearTimeout(stall);
+      if (r.kind === "bought") bought = r.pack;
+      else if (r.kind === "pending") bought = await follow(r.purchaseId, startedAt);
     } finally {
       clearTimeout(stall);
     }
@@ -415,6 +472,7 @@ function applyEvent(e: BuyEvent, startedAt: number): Purchase | null {
     case "settling": return { phase: "settling", startedAt, settlingAt: Date.now() };
     case "settled": return { phase: "settled", startedAt, ms: e.ms > 0 ? e.ms : Date.now() - startedAt, txHash: e.txHash, credits: e.credits, recovered: e.recovered };
     case "ready": return { phase: "ready", txHash: e.txHash, credits: e.credits };
+    case "pending": return { phase: "pending", startedAt, message: e.message };
     case "failed": return { phase: "failed", startedAt, message: e.message, spent: e.spent };
     default: return null;
   }
@@ -452,7 +510,8 @@ function PurchaseCard({ purchase: p, now, settlement }: {
   }
   const elapsed = p.phase === "settled" ? p.ms : now - p.startedAt;
   const paying: StepState = p.phase === "paying" ? "active" : p.phase === "failed" && !p.spent ? "failed" : "done";
-  const settling: StepState = p.phase === "settling" ? "active" : p.phase === "settled" ? "done" : p.phase === "failed" && p.spent ? "failed" : "todo";
+  const settling: StepState = p.phase === "settling" || p.phase === "pending" ? "active"
+    : p.phase === "settled" ? "done" : p.phase === "failed" && p.spent ? "failed" : "todo";
   const settled: StepState = p.phase === "settled" ? "done" : "todo";
   return (
     <div className="rounded-[2px] border-2 border-ink bg-frost p-5" data-testid="purchase">
@@ -462,7 +521,8 @@ function PurchaseCard({ purchase: p, now, settlement }: {
       </div>
       <ol className="mt-3 space-y-1">
         <Step state={paying} label="Paying from the demo wallet" />
-        <Step state={settling} label="Settling on Cardano" time={p.phase === "settling" ? seconds(now - p.settlingAt) : undefined} />
+        <Step state={settling} label={p.phase === "pending" ? "Waiting for Cardano to confirm" : "Settling on Cardano"}
+          time={p.phase === "settling" ? seconds(now - p.settlingAt) : undefined} />
         <Step state={settled} label={p.phase === "settled" ? `Settled in ${seconds(p.ms)}${p.recovered ? " (recovered)" : ""}` : "Settled"} />
       </ol>
       {settlement && <p className="mt-2 text-body text-graphite" data-testid="settlement">{settlementLine(settlement)}</p>}
@@ -471,6 +531,11 @@ function PurchaseCard({ purchase: p, now, settlement }: {
           <p className="text-body">{p.credits} credits bought.</p>
           {p.txHash && <TxLink txHash={p.txHash} />}
         </div>
+      )}
+      {p.phase === "pending" && (
+        <p role="status" className="mt-3 border-t border-ink pt-3 text-body" data-testid="purchase-pending">
+          {`Pending. ${p.message} This page checks again every few seconds.`}
+        </p>
       )}
       {p.phase === "failed" && <p role="alert" className="mt-3 border-t border-ink pt-3 text-body">{p.message}</p>}
     </div>

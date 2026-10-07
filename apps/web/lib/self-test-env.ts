@@ -17,6 +17,7 @@ export function selfTestHandlers() {
     gatewayBase: env.publicBaseUrl(),
     allowBuy,
     allowCall,
+    recoveryKey: env.sessionSecret(),
     build: projectId
       ? evolutionBuilder({ baseUrl: process.env.BLOCKFROST_BASE_URL || DEFAULT_BLOCKFROST_PREPROD, projectId })
       : async () => { throw new SelfPayError(503, "Paying from your wallet isn't set up on this server yet."); },

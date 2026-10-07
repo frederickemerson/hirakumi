@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_QUESTION_CHARS, SUGGESTED_QUESTIONS } from "@/lib/ask/shared";
 import { jsonResponse } from "@/test/http";
-import { ASK_STORAGE_KEY, AskHirakumi } from "./ask-hirakumi";
+import { ASK_STORAGE_KEY, AskHirakumi, askHirakumi } from "./ask-hirakumi";
 
 /** A streamed text response the test feeds chunk by chunk. */
 function controlledStream() {
@@ -31,6 +31,27 @@ async function openPanel() {
 }
 
 describe("AskHirakumi", () => {
+  it("askHirakumi() from another part of the page opens the panel and asks the question", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(textResponse("Add a TXT record."));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AskHirakumi />);
+    act(() => askHirakumi("How do I add the _hirakumi TXT record on Porkbun?"));
+    const panel = await screen.findByRole("dialog", { name: "Ask Hirakumi" });
+    expect(await within(panel).findByText("Add a TXT record.")).toBeInTheDocument();
+    expect(within(panel).getByText("How do I add the _hirakumi TXT record on Porkbun?")).toBeInTheDocument();
+    expect(JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string).question)
+      .toBe("How do I add the _hirakumi TXT record on Porkbun?");
+  });
+
+  it("askHirakumi() with no question only opens the panel", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AskHirakumi />);
+    act(() => askHirakumi());
+    expect(screen.getByRole("button", { name: "Ask Hirakumi" })).toHaveAttribute("aria-expanded", "true");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("starts closed: one floating button with the logo mark, and no dialog", () => {
     render(<AskHirakumi />);
     const trigger = screen.getByRole("button", { name: "Ask Hirakumi" });

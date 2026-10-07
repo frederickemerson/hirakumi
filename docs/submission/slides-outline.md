@@ -7,7 +7,7 @@
    - Paying per call on chain costs about 1.2 to 1.5 ADA min-UTxO plus about 0.17 ADA fee, and waits for a block.
 3. **Solution:** any read-only API, listed in minutes:
    - an OpenAPI link, or a base URL and a few example requests; JSON or text answers; API keys sealed for the gateway only;
-   - ownership by an `X-Hirakumi-Verify` response header (platform detected, snippet or "Let your AI do it" prompt) and one wallet signature, re-checked every 6 hours;
+   - ownership by one DNS TXT record (`_hirakumi.<host>`, DNS provider detected, its steps shown, "Ask Hirakumi how") and one wallet signature, re-checked every 6 hours;
    - a promise inferred from real test calls; text answers need a phrase the seller confirms;
    - **call packs** over x402: one payment for 100 calls; **credits only on pass**: a failing answer is a 422 and costs nothing;
    - **truthful health**: `/availability` answers 503 when the API breaks, so the Masumi registry shows Offline.

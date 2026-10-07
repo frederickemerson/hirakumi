@@ -4,17 +4,17 @@ import { getOpenVerifyCode, getOwnershipTarget, insertCall } from "@hirakumi/db"
 import { demoBuyPack } from "./demoBuy";
 import { SELLER_BODY_HEADERS } from "./http";
 import type { AppDeps } from "./deps";
-import { probeVerifyHeader, type OwnershipCheck } from "./ownership";
+import { probeVerifyDns, txtLookupVia, type DnsCheck } from "./ownership";
 import { canEscrow, forgetSettlementSignals, policyFor } from "./settlement";
 import { runOperation } from "./upstream";
 
 /**
- * The ownership check of the web app's proof step: the API's open code (kind 'header') at its base URL. The same
- * request as the monitor's re-check (ownership.ts probeVerifyHeader).
+ * The ownership check of the web app's proof step: the API's open code (kind 'dns') in the TXT record at
+ * `_hirakumi.<host>`. The same lookup as the monitor's re-check (ownership.ts probeVerifyDns).
  */
-async function checkOwnership(d: AppDeps, target: { id: string; origin: string; path_prefix: string }): Promise<OwnershipCheck> {
+async function checkOwnership(d: AppDeps, target: { id: string; origin: string }): Promise<DnsCheck> {
   const code = await getOpenVerifyCode(d.sql, target.id);
-  return probeVerifyHeader(target, code?.token ?? null, d.config.upstreamTimeoutMs);
+  return probeVerifyDns(target.origin, code?.token ?? null, d.txtLookup ?? txtLookupVia(d.config.dnsResolvers));
 }
 
 const digest = (s: string) => createHash("sha256").update(s).digest();
@@ -53,9 +53,8 @@ export function internalRouter(d: AppDeps): Router {
     } catch (e) { next(e); }
   });
 
-  // Ownership proof: the API's own code in the X-Hirakumi-Verify response header at its base URL (origin +
-  // path_prefix). Read-only (contract v1.1 D3): the web app records the pass and consumes the code when
-  // ownership is finalised.
+  // Ownership proof: the API's own code in the TXT record at _hirakumi.<host>. Read-only (contract v1.1 D3): the
+  // web app records the pass and consumes the code when ownership is finalised.
   r.post("/internal/challenge/:apiId/check", async (req, res, next) => {
     try {
       const target = await getOwnershipTarget(d.sql, req.params.apiId);

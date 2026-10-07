@@ -9,13 +9,13 @@ let h: Harness;
 let monitor: Monitor;
 beforeEach(async () => {
   h = await makeHarness();
-  monitor = new Monitor({ sql: h.sql, registry: h.registry, health: h.health, config: h.config });
+  monitor = new Monitor({ sql: h.sql, registry: h.registry, health: h.health, config: h.config, txtLookup: h.dns.lookup });
 });
 afterEach(async () => { await h.close(); });
 
 const HOUR = 3_600_000;
 
-/** Ownership proven the new way: a 'header' code that passed the check and was consumed when the seller signed. */
+/** Ownership proven by header (before the DNS proof): a 'header' code that passed the check and was consumed when the seller signed. */
 async function verifiedWithHeader(apiId = h.seeded.apiId): Promise<string> {
   const code = newVerifyCode();
   await h.sql`
@@ -37,7 +37,7 @@ const buyPack = () => request(h.app).post(`/a/${h.seeded.apiId}/packs/${h.seeded
 const paused = async () => (await h.sql<{ p: Date | null }[]>`select ownership_paused_at as p from apis where id = ${h.seeded.apiId}`)[0].p !== null;
 const sellerMessages = () => h.sql<{ body: string }[]>`select body from messages where api_id = ${h.seeded.apiId} and author = 'coworker' order by id`;
 
-describe("ownership re-check (X-Hirakumi-Verify at the base URL, from time to time)", () => {
+describe("legacy ownership re-check (X-Hirakumi-Verify at the base URL, for APIs proven by header)", () => {
   it("only re-checks APIs verified with a header code; an API verified the old way is never checked or paused", async () => {
     await verifiedTheOldWay();
     serveRoot({});
@@ -69,7 +69,7 @@ describe("ownership re-check (X-Hirakumi-Verify at the base URL, from time to ti
     const refused = await offer();
     expect(refused.status).toBe(503);
     expect(refused.body).toMatchObject({ error: "selling_paused" });
-    expect(refused.body.message).toMatch(/X-Hirakumi-Verify/);
+    expect(refused.body.message).toMatch(/ownership code is missing/);
     expect(refused.body.message).toMatch(/Credits you already bought still work/);
     expect((await buyPack()).body).toMatchObject({ error: "selling_paused" });
     expect((await request(h.app).get(`/a/${h.seeded.apiId}/availability`)).status).toBe(503);
@@ -168,5 +168,60 @@ describe("ownership re-check (X-Hirakumi-Verify at the base URL, from time to ti
     serveRoot({});
     await Promise.all([recheck(), recheck()]);
     expect(await paused()).toBe(false);
+  });
+});
+
+/** Ownership proven by DNS: a 'dns' code that passed the check and was consumed when the seller signed. */
+async function verifiedWithDns(apiId = h.seeded.apiId): Promise<string> {
+  const code = newVerifyCode();
+  await h.sql`update apis set origin = 'https://price.example.dev' where id = ${apiId}`;
+  await h.sql`
+    insert into challenges (id, api_id, kind, token, expires_at, consumed_at, proof)
+    values (${newId("ch")}, ${apiId}, 'dns', ${code}, now() + interval '10 years', now(),
+            ${h.sql.json({ passedAt: new Date().toISOString(), record: "_hirakumi.price.example.dev" })})`;
+  return code;
+}
+const RECORD = "_hirakumi.price.example.dev";
+
+describe("ownership re-check (the _hirakumi TXT record, from time to time)", () => {
+  it("uses the code the seller proved with, looks up DNS only, and keeps selling while the record is there", async () => {
+    const code = await verifiedWithDns();
+    h.dns.set(RECORD, [code]);
+    expect((await listOwnershipRecheckTargets(h.sql))[0]).toMatchObject({ kind: "dns", token: code });
+    expect(await recheck()).toMatchObject({ outcome: "pass", paused: false });
+    expect(h.dns.asked).toEqual([RECORD]);
+    expect(h.stub.fileHits("/")).toBe(0);
+    expect((await offer()).status).toBe(402);
+  });
+
+  it("pauses new sales after two lookups in a row without the record, tells the seller, and resumes when it is back", async () => {
+    const code = await verifiedWithDns();
+    expect(await recheck()).toMatchObject({ outcome: "fail", reason: "missing", paused: false });
+    expect(await recheck()).toMatchObject({ outcome: "fail", reason: "missing", paused: true, changed: true });
+    expect((await offer()).body).toMatchObject({ error: "selling_paused" });
+    const [msg] = await sellerMessages();
+    expect(msg.body).toMatch(/TXT record at _hirakumi/);
+    h.dns.set(RECORD, [code]);
+    expect(await recheck()).toMatchObject({ outcome: "pass", paused: false, changed: true });
+    expect((await sellerMessages()).map((m) => m.body)[1]).toMatch(/_hirakumi TXT record is back/);
+    expect((await offer()).status).toBe(402);
+  });
+
+  it("a DNS timeout or server failure neither counts nor resets", async () => {
+    await verifiedWithDns();
+    expect(await recheck()).toMatchObject({ outcome: "fail", paused: false });
+    h.dns.fail(RECORD, "ETIMEOUT");
+    for (let i = 0; i < 3; i++) expect(await recheck()).toMatchObject({ outcome: "error", paused: false });
+    h.dns.fail(RECORD, "ESERVFAIL");
+    expect(await recheck()).toMatchObject({ outcome: "error", paused: false });
+    h.dns.clear(RECORD);
+    expect(await recheck()).toMatchObject({ outcome: "fail", paused: true });
+  });
+
+  it("another code at the name counts like a missing record", async () => {
+    await verifiedWithDns();
+    h.dns.set(RECORD, [newVerifyCode()]);
+    await recheck();
+    expect(await recheck()).toMatchObject({ outcome: "fail", reason: "mismatch", paused: true });
   });
 });

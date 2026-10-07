@@ -8,6 +8,14 @@ import { cn } from "@/lib/utils";
 
 /** Where the conversation is kept for the browser tab (sessionStorage), so it survives reloads and full navigations. */
 export const ASK_STORAGE_KEY = "hirakumi.ask.v1";
+/** The window event that opens the panel from anywhere on the page, optionally asking a question (askHirakumi). */
+export const ASK_EVENT = "hirakumi:ask";
+
+/** Opens "Ask Hirakumi"; with a question, asks it right away. For buttons on other parts of the page. */
+export function askHirakumi(question?: string): void {
+  window.dispatchEvent(new CustomEvent<{ question?: string }>(ASK_EVENT, { detail: { question } }));
+}
+
 /** Messages kept in storage and on screen. */
 const MAX_KEPT = 40;
 
@@ -211,6 +219,19 @@ export function AskHirakumi() {
   const close = useCallback(() => {
     setOpen(false);
     trigger.current?.focus();
+  }, []);
+
+  // askHirakumi(): open, and ask the question if one came with it.
+  const sendRef = useRef(send);
+  sendRef.current = send;
+  useEffect(() => {
+    const onAsk = (e: Event) => {
+      setOpen(true);
+      const question = (e as CustomEvent<{ question?: string } | null>).detail?.question;
+      if (question) void sendRef.current(question);
+    };
+    window.addEventListener(ASK_EVENT, onAsk);
+    return () => window.removeEventListener(ASK_EVENT, onAsk);
   }, []);
 
   // Open: focus the question box, stop the page behind from scrolling, close on Escape.

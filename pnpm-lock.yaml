@@ -233,6 +233,9 @@ importers:
       shadcn:
         specifier: 4.21.3
         version: 4.21.3
+      tldts:
+        specifier: 7.4.16
+        version: 7.4.16
       tw-animate-css:
         specifier: 1.4.0
         version: 1.4.0

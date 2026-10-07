@@ -53,7 +53,7 @@ export function sellingPausedBody(api: { ownership_paused_at: Date | null }) {
   if (!api.ownership_paused_at) return null;
   return {
     error: "selling_paused" as const,
-    message: "New sales of this API are paused: Hirakumi could not confirm that the seller still controls it (the X-Hirakumi-Verify header at its base URL is missing). Nothing was charged. Credits you already bought still work.",
+    message: "New sales of this API are paused: Hirakumi could not confirm that the seller still controls it (its ownership code is missing). Nothing was charged. Credits you already bought still work.",
     since: api.ownership_paused_at.toISOString(),
   };
 }

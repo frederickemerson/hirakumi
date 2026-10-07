@@ -1,14 +1,10 @@
 import { env } from "./env";
 import type { PackSettlement } from "./settlement";
 
-/** Why the header check passed or failed (apps/gateway/src/internal.ts OwnershipReason). */
-export type ChallengeReason =
-  | "verified" | "no_code" | "bad_url" | "blocked" | "timeout" | "unreachable" | "too_large" | "missing" | "mismatch";
-/**
- * The ownership check: one GET to the API's base URL, looking for the X-Hirakumi-Verify header. triedUrl is that
- * base URL; status is the HTTP status when the request got one (any status may carry the header).
- */
-export type ChallengeCheck = { ok: boolean; reason: ChallengeReason; triedUrl: string; detail: string; status?: number };
+/** Why the DNS check passed or failed (apps/gateway/src/ownership.ts DnsReason). */
+export type ChallengeReason = "verified" | "no_code" | "bad_host" | "timeout" | "unreachable" | "missing" | "mismatch";
+/** The ownership check: one TXT lookup of `record` (_hirakumi.<host>), looking for the API's code. */
+export type ChallengeCheck = { ok: boolean; reason: ChallengeReason; record: string; detail: string };
 export type GatewayHealth = { health: "healthy" | "down"; checkedAt: string | null; lastReasons: string[] };
 export type Gateway = {
   checkChallenge(apiId: string): Promise<ChallengeCheck>;
@@ -66,13 +62,10 @@ export function createGateway(opts: { baseUrl: string; token: string; fetchImpl?
     async checkChallenge(apiId) {
       const path = `/internal/challenge/${encodeURIComponent(apiId)}/check`;
       const b = await body(await call("POST", path), path);
-      if (typeof b.ok !== "boolean" || typeof b.reason !== "string" || typeof b.triedUrl !== "string" || typeof b.detail !== "string") {
+      if (typeof b.ok !== "boolean" || typeof b.reason !== "string" || typeof b.record !== "string" || typeof b.detail !== "string") {
         throw new GatewayError(UNREADABLE, `gateway ${path} returned an unexpected shape`);
       }
-      return {
-        ok: b.ok, reason: b.reason as ChallengeReason, triedUrl: b.triedUrl, detail: b.detail,
-        ...(typeof b.status === "number" ? { status: b.status } : {}),
-      };
+      return { ok: b.ok, reason: b.reason as ChallengeReason, record: b.record, detail: b.detail };
     },
     async reloadApi(apiId) {
       await call("POST", `/internal/apis/${encodeURIComponent(apiId)}/reload`);

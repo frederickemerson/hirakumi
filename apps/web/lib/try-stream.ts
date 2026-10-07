@@ -1,12 +1,16 @@
 /** Client-safe: the progress events of "Buy a pack live" and a reader for their NDJSON stream. */
 
-/** Phases the gateway streams while the demo wallet buys a pack (apps/gateway/src/demoBuy.ts BuyEvent). */
+/**
+ * Phases the gateway streams while the demo wallet buys a pack (apps/gateway/src/demoBuy.ts BuyEvent). settled and
+ * failed are final; pending is not (ask again with ?resume=<purchaseId>).
+ */
 export type BuyEvent =
-  | { phase: "paying"; packId: string; calls: number; priceMicros: string; wallet: string }
+  | { phase: "paying"; purchaseId?: string; packId: string; calls: number; priceMicros: string; wallet: string }
   /** settlement: PACK_MODE=hybrid only, what the 402 chose and why. */
   | { phase: "settling"; settlement?: { mode: "direct" | "escrow"; reasons: string[] } }
   | { phase: "settled"; txHash: string | null; credits: number; ms: number; recovered: boolean }
   | { phase: "ready"; txHash: string | null; credits: number; pending: boolean; boughtAt: string }
+  | { phase: "pending"; purchaseId: string; message: string }
   | { phase: "failed"; message: string; spent: boolean };
 
 function parseLine(line: string): BuyEvent | null {

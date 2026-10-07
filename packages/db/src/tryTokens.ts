@@ -75,6 +75,35 @@ export async function findUnsettledTryPurchase(sql: Q, apiId: string, scope: Try
     : null;
 }
 
+/** One live-demo purchase as it stands, for a caller waiting on its outcome. */
+export type TryPurchase = {
+  id: string; status: TryStatus; packId: string | null; paymentSignature: string | null; recoverySecret: string | null;
+  txHash: string | null; credits: number | null; createdAt: Date;
+};
+
+/**
+ * The purchase with this id, or with id null the newest one created within the last withinMinutes, for this API
+ * and scope. Null when there is none.
+ */
+export async function findTryPurchase(
+  sql: Q, apiId: string, scope: TryScope, id: string | null, withinMinutes: number,
+): Promise<TryPurchase | null> {
+  const [row] = await sql<{
+    id: string; status: TryStatus; pack_id: string | null; payment_signature: string | null; recovery_secret: string | null;
+    tx_hash: string | null; credits: number | null; created_at: Date;
+  }[]>`
+    select t.id, t.status, t.pack_id, t.payment_signature, t.recovery_secret, t.tx_hash, t.credits, t.created_at from try_tokens t
+    where t.api_id = ${apiId} and ${scopeSql(sql, scope)}
+      and ${id === null ? sql`t.created_at > now() - make_interval(mins => ${withinMinutes})` : sql`t.id = ${id}`}
+    order by t.created_at desc limit 1`;
+  return row
+    ? {
+      id: row.id, status: row.status, packId: row.pack_id, paymentSignature: row.payment_signature, recoverySecret: row.recovery_secret,
+      txHash: row.tx_hash, credits: row.credits, createdAt: row.created_at,
+    }
+    : null;
+}
+
 export type TryPurchaseLimits = {
   perApiWindowSeconds: number; globalPerHour: number; globalPerDay: number;
   /** Free self tests one seller may get across all their listings (one per listing is the unique index). */

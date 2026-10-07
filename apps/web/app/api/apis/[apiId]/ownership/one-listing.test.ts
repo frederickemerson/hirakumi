@@ -8,12 +8,12 @@ import { seedApi, seedSeller } from "@/test/factories";
 import { cookieFor, ctx, jsonRequest } from "@/test/requests";
 import { makeTestWallet, type TestWallet } from "@/test/wallet-fixture";
 import { POST as retire } from "../retire/route";
-import { POST as specCheck } from "./spec-check/route";
+import { POST as dnsCheck } from "./dns-check/route";
 import { POST as verify } from "./verify/route";
 import { POST as walletChallenge } from "./wallet-challenge/route";
 
 const TAKEN = "This API is already listed by another account. If it's yours, retire that listing first.";
-const PASS: ChallengeCheck = { ok: true, reason: "verified", triedUrl: "https://price.example.dev/", detail: "ok" };
+const PASS: ChallengeCheck = { ok: true, reason: "verified", record: "_hirakumi.price.example.dev", detail: "ok" };
 
 type Owner = { wallet: TestWallet; seller: Seller; cookie: string };
 
@@ -25,7 +25,7 @@ async function owner(): Promise<Owner> {
 
 /** An API waiting for its ownership proof, with a fresh OpenAPI pass and a wallet message ready to sign. */
 async function readyToSign(o: Owner, api: Api) {
-  await specCheck(jsonRequest(`/api/apis/${api.id}/ownership/spec-check`, { cookie: o.cookie, body: {} }), ctx(api.id));
+  await dnsCheck(jsonRequest(`/api/apis/${api.id}/ownership/dns-check`, { cookie: o.cookie, body: {} }), ctx(api.id));
   const res = await walletChallenge(jsonRequest(`/api/apis/${api.id}/ownership/wallet-challenge`, { cookie: o.cookie, body: {} }), ctx(api.id));
   expect(res.status).toBe(200);
   const { challengeId, message } = (await res.json()) as { challengeId: string; message: string };
@@ -67,7 +67,7 @@ describe("one API, one listing, one account (at proof of ownership)", () => {
     expect(await stateOf(mine.id)).toBe("endpoints_confirmed");
     expect(await stateOf(theirs.id)).toBe("live");
     // The proof is not used up: once the other listing is gone, the seller can sign again.
-    const open = await getSql()`select 1 from challenges where api_id = ${mine.id} and kind = 'header' and consumed_at is null`;
+    const open = await getSql()`select 1 from challenges where api_id = ${mine.id} and kind = 'dns' and consumed_at is null`;
     expect(open.length).toBe(1);
   });
 

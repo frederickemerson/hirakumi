@@ -3,20 +3,20 @@ import { ACTIVE_BASE_INDEX, checkListingBase, newId, newVerifyCode } from "@hira
 import type { Sql } from "../db";
 import { queryOn } from "./apis";
 
-/** A passing header check counts for this long; after that the seller checks again before signing. */
+/** A passing DNS check counts for this long; after that the seller checks again before signing. */
 export const VERIFY_PASS_TTL_MINUTES = 30;
 
 /**
- * The API's verification code (challenges.kind = 'header'), sent by the seller's API as the X-Hirakumi-Verify
- * response header. It stays the same until ownership is proven. Codes of kind 'openapi' (the old proof) are not used.
+ * The API's verification code (challenges.kind = 'dns'), added by the seller as a TXT record at _hirakumi.<host>.
+ * It stays the same until ownership is proven. Codes of kind 'header' and 'openapi' (older proofs) are not used.
  */
 export type VerifyCode = { id: string; code: string; passedAt: string | null };
 
-/** This API's open code, or null. At most one exists per API (unique index, migration 0015). */
+/** This API's open code, or null. At most one exists per API (unique index, migration 0018). */
 export async function findVerifyCode(sql: Sql, apiId: string): Promise<VerifyCode | null> {
   const [row] = await sql<VerifyCode[]>`
     select id, token as code, proof->>'passedAt' as passed_at from challenges
-    where api_id = ${apiId} and kind = 'header' and consumed_at is null
+    where api_id = ${apiId} and kind = 'dns' and consumed_at is null
     limit 1`;
   return row ?? null;
 }
@@ -24,33 +24,33 @@ export async function findVerifyCode(sql: Sql, apiId: string): Promise<VerifyCod
 /** The code is per API: 256 random bits, never reused (unique index), only shown to the owning seller (callers check). */
 export async function getOrCreateVerifyCode(sql: Sql, apiId: string): Promise<VerifyCode> {
   return sql.begin(async (tx) => {
-    await tx`select pg_advisory_xact_lock(hashtext(${`header-verify|${apiId}`}))`;
+    await tx`select pg_advisory_xact_lock(hashtext(${`dns-verify|${apiId}`}))`;
     const [existing] = await tx<VerifyCode[]>`
       select id, token as code, proof->>'passedAt' as passed_at from challenges
-      where api_id = ${apiId} and kind = 'header' and consumed_at is null
+      where api_id = ${apiId} and kind = 'dns' and consumed_at is null
       limit 1`;
     if (existing) return existing;
     // expires_at is required by the table; the code itself only ends when ownership is finalised.
     const [created] = await tx<VerifyCode[]>`
       insert into challenges (id, api_id, kind, token, expires_at)
-      values (${newId("ch")}, ${apiId}, 'header', ${newVerifyCode()}, now() + interval '10 years')
+      values (${newId("ch")}, ${apiId}, 'dns', ${newVerifyCode()}, now() + interval '10 years')
       returning id, token as code, null::text as passed_at`;
     return created;
   });
 }
 
-export async function markVerifyPassed(sql: Sql, challengeId: string, triedUrl: string): Promise<void> {
+export async function markVerifyPassed(sql: Sql, challengeId: string, record: string): Promise<void> {
   await sql`
     update challenges
-    set proof = coalesce(proof, '{}'::jsonb) || ${sql.json({ passedAt: new Date().toISOString(), triedUrl } as postgres.JSONValue)}
-    where id = ${challengeId} and kind = 'header' and consumed_at is null`;
+    set proof = coalesce(proof, '{}'::jsonb) || ${sql.json({ passedAt: new Date().toISOString(), record } as postgres.JSONValue)}
+    where id = ${challengeId} and kind = 'dns' and consumed_at is null`;
 }
 
-/** True when this API's own code passed the header check in the last VERIFY_PASS_TTL_MINUTES. */
+/** True when this API's own code passed the DNS check in the last VERIFY_PASS_TTL_MINUTES. */
 export async function hasFreshVerifyPass(sql: Sql, apiId: string): Promise<boolean> {
   const rows = await sql`
     select 1 from challenges
-    where api_id = ${apiId} and kind = 'header' and consumed_at is null
+    where api_id = ${apiId} and kind = 'dns' and consumed_at is null
       and (proof->>'passedAt')::timestamptz > now() - make_interval(mins => ${VERIFY_PASS_TTL_MINUTES})
     limit 1`;
   return rows.length > 0;
@@ -112,7 +112,7 @@ export async function finalizeOwnership(
       const moved = await tx`
         update apis set state = 'ownership_verified' where id = ${a.apiId} and state = 'endpoints_confirmed' returning id`;
       if (moved.length !== 1) throw new OwnershipRace();
-      await tx`update challenges set consumed_at = now() where api_id = ${a.apiId} and kind in ('header', 'openapi', 'http') and consumed_at is null`;
+      await tx`update challenges set consumed_at = now() where api_id = ${a.apiId} and kind in ('dns', 'header', 'openapi', 'http') and consumed_at is null`;
       return { ok: true, warnings: verdict.warnings };
     });
   } catch (e) {

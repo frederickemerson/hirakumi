@@ -36,14 +36,14 @@ export type TaskRef = { taskId: string; sokosumiUserId: string; setupToken: stri
 const SUGGESTED_PRICE = `${formatTusdm(SUGGESTED_PACK.priceMicros)} tUSDM for ${SUGGESTED_PACK.calls} calls, and ${formatTusdm(SUGGESTED_PACK.escrowPriceMicros)} tUSDM per escrow job`;
 
 /**
- * How ownership is proven: the seller makes their API send the response header X-Hirakumi-Verify with the API's own
- * code (shown on the ownership page) on responses at its base URL, then signs once with their wallet. Any status
- * counts, so a 404 page at the base is enough. The same for an OpenAPI link and for example requests.
+ * How ownership is proven: the seller adds a DNS TXT record named _hirakumi.<host> with the API's own code (shown on
+ * the ownership page), then signs once with their wallet. The API itself doesn't change. The same for an OpenAPI
+ * link and for example requests.
  */
 export const OWNERSHIP_HOW =
-  "make your API send the header X-Hirakumi-Verify with the code from this page on responses at your base URL (any status counts, even a 404 page), then sign once with your Cardano wallet (no payment):";
+  "add one DNS TXT record with the name and code from this page (your API itself doesn't change), then sign once with your Cardano wallet (no payment):";
 
-/** The URL the ownership check requests: origin + path_prefix, origin + "/" for the root. */
+/** The API's address as the seller gave it: origin + path_prefix, origin + "/" for the root. */
 export const baseUrlOf = (api: Pick<TaskApi, "origin" | "pathPrefix">) => apiBaseUrl(api);
 
 /** Keys are added on the ownership page (sealed so only the gateway reads them), never in a comment. */
