@@ -290,6 +290,12 @@ describe("helpers", () => {
       .toBe("Your API answered 200 with this key; the promise isn't built yet, so we couldn't check the answer.");
     expect(describeCheck({ opened: true, class: "unchecked", why: "not_proven" }).text)
       .toBe("Saved sealed. Not checked yet: we check it once your address is proven.");
+    // Follow-up A: a good answer from an endpoint that doesn't need the key is never "Accepted".
+    const notProtected = describeCheck({ opened: true, class: "unchecked", why: "not_protected", status: 200, op: "getPrice" });
+    expect(notProtected).toEqual({
+      tone: "note",
+      text: "Not checked: your API answered 200 on getPrice, but your OpenAPI file doesn't say that endpoint needs the key, so any key would get that answer.",
+    });
     expect(describeCheck({ opened: true, class: "unclear", status: 200, reasons: ["price is missing"] }).text)
       .toBe("Answered 200 but the promise failed: price is missing");
     // A compressed answer has no status, only the gateway's reason: the seller still sees it.

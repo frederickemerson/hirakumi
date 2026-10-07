@@ -22,7 +22,7 @@ export type KeyCheck = {
   status?: number;
   op?: string;
   reasons?: string[];
-  why?: "not_proven" | "no_test_input";
+  why?: "not_proven" | "no_test_input" | "not_protected";
 };
 
 const PLACE_LABEL: Record<Placement, string> = { header: "header", query: "query parameter" };
@@ -75,6 +75,12 @@ export function describeCheck(check: KeyCheck, egressIps: readonly string[] = []
     case "echoed":
       return { tone: "note", text: "Your API repeated its key in the answer; such answers are withheld." };
     case "unchecked":
+      if (check.why === "not_protected") {
+        return {
+          tone: "note",
+          text: `Not checked: your API answered${check.status ? ` ${check.status}` : ""}${on}, but your OpenAPI file doesn't say that endpoint needs the key, so any key would get that answer.`,
+        };
+      }
       return check.why === "no_test_input"
         ? { tone: "note", text: "Not checked yet: there's no test input to call your API with." }
         : { tone: "note", text: "Saved sealed. Not checked yet: we check it once your address is proven." };

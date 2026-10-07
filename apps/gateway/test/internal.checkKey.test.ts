@@ -12,10 +12,11 @@ const internal = { authorization: "Bearer internal-test-token-0123456789" };
 let h: Harness;
 afterEach(async () => { await h?.close(); });
 
-/** A harness whose API has a header key saved, sealed for its own address. */
+/** A harness whose API has a header key saved, sealed for its own address, and whose endpoint needs it. */
 async function keyed(over: { key?: string | null; state?: string } = {}): Promise<Harness> {
   h = await makeHarness({ config: { upstreamAuthPrivateKey: over.key === undefined ? keys.privateKey : over.key }, seed: { state: over.state } });
   await h.sql`update apis set upstream_auth = ${h.sql.json(sealed(h.seeded.apiId))} where id = ${h.seeded.apiId}`;
+  await h.sql`update operations set needs_key = true where api_id = ${h.seeded.apiId}`;
   return h;
 }
 const sealed = (apiId: string, value = KEY): StoredUpstreamAuth => ({
@@ -117,11 +118,12 @@ describe("check-key classes", () => {
 
 describe("check-key op choice", () => {
   /** Adds an enabled operation (op_id sorts before getPrice) on the stub's /other path. */
-  async function addOp(opId: string, o: { method?: string; schema?: object; input?: object } = {}) {
+  async function addOp(opId: string, o: { method?: string; schema?: object; input?: object; needsKey?: boolean | null } = {}) {
     const id = newId("op");
     await h.sql`
-      insert into operations (id, api_id, op_id, method, path, input_schema, enabled, side_effects_confirmed_none)
-      values (${id}, ${h.seeded.apiId}, ${opId}, ${o.method ?? "GET"}, '/other', ${h.sql.json((o.schema ?? { type: "object" }) as never)}, true, true)`;
+      insert into operations (id, api_id, op_id, method, path, input_schema, enabled, side_effects_confirmed_none, needs_key)
+      values (${id}, ${h.seeded.apiId}, ${opId}, ${o.method ?? "GET"}, '/other', ${h.sql.json((o.schema ?? { type: "object" }) as never)}, true, true,
+        ${o.needsKey === undefined ? true : o.needsKey})`;
     if (o.input) await h.sql`insert into test_inputs (id, operation_id, input) values (${newId("ti")}, ${id}, ${h.sql.json(o.input as never)})`;
     h.stub.setFile("/other", '{"ok":true}');
   }
@@ -145,6 +147,43 @@ describe("check-key op choice", () => {
     await addOp("ccc");
     expect((await check()).body).toMatchObject({ op: "ccc", class: "accepted_unverified", status: 200 });
     expect(h.stub.fileHits("/other")).toBe(1);
+  });
+});
+
+describe("check-key and endpoints that need the key (follow-up A, migration 0021)", () => {
+  async function addPublicOp(opId: string, needsKey: boolean | null) {
+    const id = newId("op");
+    await h.sql`
+      insert into operations (id, api_id, op_id, method, path, input_schema, enabled, side_effects_confirmed_none, needs_key)
+      values (${id}, ${h.seeded.apiId}, ${opId}, 'GET', '/open', ${h.sql.json({ type: "object" } as never)}, true, true, ${needsKey})`;
+    await h.sql`insert into test_inputs (id, operation_id, input) values (${newId("ti")}, ${id}, ${h.sql.json({})})`;
+    h.stub.setFile("/open", '{"ok":true}');
+  }
+
+  it("calls an endpoint that needs the key ahead of a public one, even one listed first", async () => {
+    await keyed();
+    await addPublicOp("aaa", false);
+    const r = await check();
+    expect(r.body).toEqual({ opened: true, class: "ok", status: 200, op: "getPrice" });
+    expect(h.stub.fileHits("/open")).toBe(0);
+  });
+
+  it("with only public endpoints, a good answer is 'not checked', never 'accepted'", async () => {
+    await keyed();
+    await h.sql`update operations set needs_key = false where api_id = ${h.seeded.apiId}`;
+    expect((await check()).body).toEqual({ opened: true, class: "unchecked", why: "not_protected", op: "getPrice", status: 200 });
+    // A refusal still says something: the API refused even with the key.
+    h.stub.setFile("/price", '{"error":"bad key"}', { status: 401 });
+    expect((await check()).body).toMatchObject({ class: "refused", status: 401 });
+  });
+
+  it("an endpoint not known either way (parsed before 0021) is called, but its good answer is not proof either", async () => {
+    await keyed();
+    await h.sql`update operations set needs_key = null where api_id = ${h.seeded.apiId}`;
+    await addPublicOp("aaa", false);
+    const r = await check();
+    expect(r.body).toEqual({ opened: true, class: "unchecked", why: "not_protected", op: "getPrice", status: 200 });
+    expect(h.stub.fileHits("/open")).toBe(0);
   });
 });
 

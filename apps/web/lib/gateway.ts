@@ -17,7 +17,7 @@ export type KeyCheckClass =
  * Never the answer's body.
  */
 export type KeyCheck = {
-  opened: boolean; class: KeyCheckClass; status?: number; op?: string; reasons?: string[]; why?: "not_proven" | "no_test_input";
+  opened: boolean; class: KeyCheckClass; status?: number; op?: string; reasons?: string[]; why?: "not_proven" | "no_test_input" | "not_protected";
 };
 const KEY_CHECK_CLASSES: readonly string[] = [
   "ok", "accepted_unverified", "refused", "forbidden", "rate_limited", "timeout", "echoed", "unclear", "unchecked",
@@ -37,7 +37,7 @@ export function parseKeyCheck(value: unknown): KeyCheck | null {
     ...(typeof b.status === "number" ? { status: b.status } : {}),
     ...(typeof b.op === "string" ? { op: b.op } : {}),
     ...(Array.isArray(b.reasons) ? { reasons: b.reasons.filter((r): r is string => typeof r === "string") } : {}),
-    ...(b.why === "not_proven" || b.why === "no_test_input" ? { why: b.why } : {}),
+    ...(b.why === "not_proven" || b.why === "no_test_input" || b.why === "not_protected" ? { why: b.why } : {}),
   };
 }
 

@@ -24,8 +24,13 @@ async function checkOwnership(d: AppDeps, target: { id: string; origin: string }
 /** What a key check found. "unchecked" means no call was made (see `why`). */
 export type CheckKeyClass =
   | "ok" | "accepted_unverified" | "refused" | "forbidden" | "rate_limited" | "timeout" | "echoed" | "unclear" | "unchecked";
+/**
+ * why, for "unchecked": not_proven (the address isn't proven, so nothing was called), no_test_input (nothing to call
+ * with), not_protected (the endpoint called doesn't need the key as far as the OpenAPI file says, so its good answer
+ * proves nothing about the key).
+ */
 export type CheckKeyResult = {
-  opened: boolean; class: CheckKeyClass; status?: number; op?: string; reasons?: string[]; why?: "not_proven" | "no_test_input";
+  opened: boolean; class: CheckKeyClass; status?: number; op?: string; reasons?: string[]; why?: "not_proven" | "no_test_input" | "not_protected";
 };
 
 /** States from ownership proof onward: only then is the API's address known to be the seller's, so a call may go there. */
@@ -33,22 +38,29 @@ const PROVEN_STATES: ReadonlySet<ApiState> = new Set(["ownership_verified", "rul
 /** A check-key call waits at most this long, so the web app's save never hangs on a slow API. */
 export const CHECK_KEY_TIMEOUT_MS = 15_000;
 
+/** Endpoints that need the key first, then those not known either way, then public ones (migration 0021). */
+const keyRank = (op: LoadedOp) => (op.row.needs_key === true ? 0 : op.row.needs_key === false ? 2 : 1);
+
 /**
- * The operation and input a key check calls: an enabled operation with a promise and a saved test input, else any
- * enabled operation with a saved test input, else an enabled GET that needs no input at all (called with {}).
+ * The operation and input a key check calls, preferring an endpoint that needs the key (keyRank): among those of
+ * the best rank, an enabled operation with a promise and a saved test input, else any enabled operation with a
+ * saved test input, else an enabled GET that needs no input at all (called with {}).
  */
 async function chooseCheckOp(d: AppDeps, loaded: LoadedApi): Promise<{ op: LoadedOp; input: Record<string, unknown> } | null> {
   const inputs = await loadProbeInputs(d.sql, loaded.api.id);
-  const withInput = inputs.map((t) => ({ op: loaded.ops.get(t.op_id), input: t.input })).filter((x) => x.op?.row.enabled);
-  const pick = withInput.find((x) => x.op!.rule) ?? withInput[0];
-  if (pick) {
-    const checked = pick.op!.validateInput(pick.input);
-    return { op: pick.op!, input: checked.ok ? checked.value : (pick.input as Record<string, unknown>) };
-  }
+  const withInput = inputs.map((t) => ({ op: loaded.ops.get(t.op_id)!, input: t.input as unknown }))
+    .filter((x) => x.op?.row.enabled)
+    .map((x) => ({ ...x, input: (() => { const c = x.op.validateInput(x.input); return c.ok ? c.value : (x.input as Record<string, unknown>); })() }));
+  const bare: { op: LoadedOp; input: Record<string, unknown> }[] = [];
   for (const op of loaded.ops.values()) {
     if (!op.row.enabled || op.row.method.toUpperCase() !== "GET" || op.row.path.includes("{")) continue;
     const checked = op.validateInput({});
-    if (checked.ok) return { op, input: checked.value };
+    if (checked.ok) bare.push({ op, input: checked.value });
+  }
+  for (const rank of [0, 1, 2]) {
+    const ranked = withInput.filter((x) => keyRank(x.op) === rank);
+    const pick = ranked.find((x) => x.op.rule) ?? ranked[0] ?? bare.find((x) => keyRank(x.op) === rank);
+    if (pick) return pick;
   }
   return null;
 }
@@ -93,6 +105,10 @@ async function checkKey(d: AppDeps, apiId: string, stored: unknown): Promise<Che
     timeoutMs: Math.min(d.config.upstreamTimeoutMs, CHECK_KEY_TIMEOUT_MS), probe: true,
   });
   const cls = classifyCheck(outcome);
+  // A good answer from an endpoint not known to need the key proves nothing: any key, or none, gets it.
+  if ((cls === "ok" || cls === "accepted_unverified") && chosen.op.row.needs_key !== true) {
+    return { opened: true, class: "unchecked", why: "not_protected", op: chosen.op.row.op_id, ...(outcome.result ? { status: outcome.result.status } : {}) };
+  }
   const status = cls === "echoed" ? undefined : outcome.result?.status;
   return {
     opened: true, class: cls, op: chosen.op.row.op_id,

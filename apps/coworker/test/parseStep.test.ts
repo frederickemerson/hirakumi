@@ -74,6 +74,17 @@ describe("parseStep for an API that needs a key", () => {
     expect((await getStep(db.pool, apiId, "parse"))?.output?.authHint).toBeNull();
     expect((await messagesFor(db.pool, apiId))[0].body).not.toMatch(/key/);
   });
+
+  it("stores which endpoints need the key (operations.needs_key, follow-up A)", async () => {
+    const keyed = await seedApi(db.pool);
+    await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(KEYED) }, keyed);
+    const open = await seedApi(db.pool);
+    await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(PRICE_SPEC) }, open);
+    const needs = async (apiId: string) =>
+      (await db.pool.query<{ needs_key: boolean | null }>(`select needs_key from operations where api_id = $1`, [apiId])).rows.map((r) => r.needs_key);
+    expect(new Set(await needs(keyed))).toEqual(new Set([true]));
+    expect(new Set(await needs(open))).toEqual(new Set([false]));
+  });
 });
 
 describe("parseStep honours servers[0].url (review I7)", () => {

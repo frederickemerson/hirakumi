@@ -132,10 +132,11 @@ export async function parseStep(deps: ParseDeps, apiId: string): Promise<StepOut
       );
       if (moved.rowCount !== 1) return;
       for (const op of parsed.operations) {
+        // needs_key (migration 0021): the key check at save calls an endpoint that needs the key, when there is one.
         await c.query(
-          `insert into operations (id, api_id, op_id, method, path, input_schema) values ($1, $2, $3, $4, $5, $6::jsonb)
+          `insert into operations (id, api_id, op_id, method, path, input_schema, needs_key) values ($1, $2, $3, $4, $5, $6::jsonb, $7)
            on conflict (api_id, op_id) do nothing`,
-          [newId("op"), apiId, op.opId, op.method, op.path, JSON.stringify(op.inputSchema)],
+          [newId("op"), apiId, op.opId, op.method, op.path, JSON.stringify(op.inputSchema), op.needsKey],
         );
       }
       await finishStep(c, apiId, "parse", { title: parsed.title, ops: parsed.operations.map((o) => o.llm), skipped: parsed.skipped, authHint: parsed.authHint });

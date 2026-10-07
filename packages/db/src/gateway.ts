@@ -22,6 +22,8 @@ export type ApiRow = {
 export type OperationRow = {
   id: string; api_id: string; op_id: string; method: string; path: string;
   input_schema: Record<string, unknown>; description: string | null; enabled: boolean;
+  /** The OpenAPI file says the endpoint needs the key (migration 0021); null when not known. */
+  needs_key?: boolean | null;
 };
 export type RuleRow = { id: string; operation_id: string; version: number; definition: RuleDefinition; hash: string; plain_english: string | null };
 export type PackRow = { id: string; api_id: string; calls: number; price_micros: string; escrow_price_micros: string; unsigned_allowance: number };
@@ -40,7 +42,7 @@ export async function loadApiBundle(sql: Sql, apiId: string): Promise<ApiBundle 
     where a.id = ${apiId}`;
   if (!api) return null;
   const operations = await sql<OperationRow[]>`
-    select id, api_id, op_id, method, path, input_schema, description, enabled
+    select id, api_id, op_id, method, path, input_schema, description, enabled, needs_key
     from operations where api_id = ${apiId} order by op_id`;
   const rules = await sql<RuleRow[]>`
     select distinct on (r.operation_id) r.id, r.operation_id, r.version, r.definition, r.hash, r.plain_english

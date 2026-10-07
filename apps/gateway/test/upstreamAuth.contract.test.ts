@@ -155,6 +155,7 @@ describe("upstream key contract: the gateway's key check answers in the shape th
     const apiId = h.seeded.apiId;
     const ctx = { apiId, in: "header" as const, name: "X-API-Key", origin: h.stub.origin, pathPrefix: "/" };
     await h.sql`update apis set upstream_auth = ${h.sql.json({ in: "header", name: "X-API-Key", hint: "", sealed: sealUpstreamSecret(keys.publicKey, ctx, KEY) })} where id = ${apiId}`;
+    await h.sql`update operations set needs_key = true where api_id = ${apiId}`;
     return (body = {}) => request(h.app).post(`/internal/apis/${apiId}/check-key`).set(internal).send(body);
   }
   /** The web parser keeps every field of the gateway's answer, unchanged. */
@@ -187,6 +188,10 @@ describe("upstream key contract: the gateway's key check answers in the shape th
     const notOpened = await check({ stored: { in: "header", name: "X-API-Key", hint: "", sealed: "hks2.garbage" } });
     expect(parsedClass(notOpened)).toBe("unchecked");
     expect(notOpened.body.opened).toBe(false);
+    await h.sql`update operations set needs_key = false where api_id = ${h.seeded.apiId}`;
+    const notProtected = await check();
+    expect(parsedClass(notProtected)).toBe("unchecked");
+    expect(notProtected.body.why).toBe("not_protected");
 
     expect(seen).toEqual(["ok", "echoed", "unclear", "refused", "forbidden", "rate_limited", "timeout", "accepted_unverified"]);
   });
