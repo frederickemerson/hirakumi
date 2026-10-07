@@ -35,7 +35,7 @@ describe("session tokens", () => {
 describe("login challenge", () => {
   it("rebuilds the exact message the wallet was asked to sign", () => {
     const { message, nonceToken } = issueLoginChallenge(ADDR, NOW);
-    expect(openLoginChallenge(nonceToken, NOW + 10)).toEqual({ addr: ADDR, message });
+    expect(openLoginChallenge(nonceToken, NOW + 10)).toEqual({ addr: ADDR, message, nonce: expect.stringMatching(/^[0-9a-f]{32}$/), exp: NOW + 300 });
     expect(message).toContain(ADDR);
     expect(message).toContain("moves no funds");
     expect(message).toContain("Site: web.hirakumi.test");

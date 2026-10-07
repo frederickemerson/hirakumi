@@ -85,8 +85,10 @@ export function issueLoginChallenge(addr: string, now = nowSeconds()): { message
   };
 }
 
-export function openLoginChallenge(nonceToken: string, now = nowSeconds()): { addr: string; message: string } | null {
+export type LoginChallenge = { addr: string; message: string; nonce: string; exp: number };
+
+export function openLoginChallenge(nonceToken: string, now = nowSeconds()): LoginChallenge | null {
   const p = unseal<LoginPayload>("login", nonceToken, now);
   if (!p || typeof p.addr !== "string" || typeof p.nonce !== "string") return null;
-  return { addr: p.addr, message: buildLoginMessage(p.addr, p.nonce, new Date(p.exp * 1000).toISOString()) };
+  return { addr: p.addr, message: buildLoginMessage(p.addr, p.nonce, new Date(p.exp * 1000).toISOString()), nonce: p.nonce, exp: p.exp };
 }

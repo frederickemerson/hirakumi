@@ -178,13 +178,13 @@ describe("sign-in", () => {
     for (const m of mixes) expect((await login(jsonRequest("/api/auth/verify", { body: m }))).status).toBe(401);
   });
 
-  // BUG (low): sign-in nonces are stateless (an HMAC-sealed token, 5 min), so one captured nonceToken + signature
-  // pair opens any number of sessions until it expires. A used nonce is never remembered.
-  it.fails("a signed sign-in can be used once: 20 concurrent replays open one session", async () => {
+  // Fixed: the verify route records the nonce in used_login_nonces (primary key) in the transaction that opens the session.
+  it("a signed sign-in can be used once: 20 concurrent replays open one session", async () => {
     const w = await makeTestWallet(0);
     const m = await signIn(w);
     const res = await Promise.all(Array.from({ length: 20 }, () => login(jsonRequest("/api/auth/verify", { body: m }))));
     expect(res.filter((r) => r.status === 200)).toHaveLength(1);
+    expect(res.filter((r) => r.status === 401)).toHaveLength(19);
   });
 
   it("concurrent sign-ins of one new wallet create exactly one seller", async () => {
