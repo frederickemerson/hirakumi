@@ -86,30 +86,6 @@ export function isMobileBrowser(): boolean {
   return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 }
 
-/** Addresses to check for preprod history: the change address plus a few used ones, deduplicated. */
-export async function walletAddresses(api: Cip30Api, changeAddressHex: string, max = 5): Promise<string[]> {
-  const used = await api.getUsedAddresses().catch(() => [] as string[]);
-  return [...new Set([changeAddressHex, ...used])].slice(0, max);
-}
-
-export type PreprodFunds = "funded" | "empty" | "unknown";
-
-/** Asks the server (which holds the Blockfrost key) whether these addresses have any preprod ADA. */
-export async function checkPreprodFunds(addresses: string[]): Promise<PreprodFunds> {
-  try {
-    const res = await fetch("/api/wallet/preprod-funds", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ addresses }),
-    });
-    if (!res.ok) return "unknown";
-    const data = (await res.json()) as { status?: unknown };
-    return data.status === "funded" || data.status === "empty" ? data.status : "unknown";
-  } catch {
-    return "unknown";
-  }
-}
-
 export async function connectWallet(id: string): Promise<{ api: Cip30Api; addressHex: string }> {
   if (id === EMAIL_WALLET_ID) {
     const projectId = emailWalletProjectId();

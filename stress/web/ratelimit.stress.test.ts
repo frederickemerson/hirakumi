@@ -1,5 +1,5 @@
 // Rate limits under concurrent abuse: Try it live (per visitor + per-pack hourly budget), Buy live, Ask Hirakumi,
-// and the preprod-funds lookup. The gateway, OpenAI and Blockfrost are stubbed; nothing leaves the process.
+//. The gateway, OpenAI and Blockfrost are stubbed; nothing leaves the process.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { newBearerToken, newId, sha256Hex } from "@hirakumi/core";
 import { getSql } from "@/lib/db";
@@ -10,7 +10,6 @@ import { makeTestWallet } from "@/test/wallet-fixture";
 import { POST as tryPost } from "@/app/api/try/[apiId]/route";
 import { POST as buyPost } from "@/app/api/try/[apiId]/buy/route";
 import { POST as askPost } from "@/app/api/ask/route";
-import { POST as fundsPost } from "@/app/api/wallet/preprod-funds/route";
 
 const realFetch = globalThis.fetch;
 let ipSeq = 0;
@@ -199,38 +198,3 @@ describe("Ask Hirakumi under concurrent abuse", () => {
   });
 });
 
-describe("preprod funds lookup", () => {
-  let lookups = 0;
-  let addr: string;
-  beforeAll(async () => { addr = (await makeTestWallet(0)).bech32; });
-  beforeEach(() => {
-    lookups = 0;
-    vi.stubEnv("BLOCKFROST_PROJECT_ID", "preprodTEST");
-    vi.stubEnv("BLOCKFROST_BASE_URL", "https://blockfrost.invalid/api/v0");
-    vi.stubGlobal("fetch", vi.fn(async (url: string | URL) => {
-      if (!String(url).startsWith("https://blockfrost.invalid/")) return realFetch(url);
-      lookups += 1;
-      return new Response(JSON.stringify({ amount: [{ unit: "lovelace", quantity: "5" }] }), { status: 200 });
-    }));
-  });
-  afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
-
-  const funds = (headers: Record<string, string>, addresses: unknown = [addr]) =>
-    fundsPost(new Request("https://web.hirakumi.test/api/wallet/preprod-funds", {
-      method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify({ addresses }),
-    }));
-
-  it("rotating X-Forwarded-For behind a fixed X-Real-IP does not multiply Blockfrost lookups", async () => {
-    const ip = freshIp();
-    await Promise.all(Array.from({ length: 50 }, (_, i) => funds({ "x-real-ip": ip, "x-forwarded-for": `10.1.${i}.7` })));
-    expect(lookups).toBe(1);
-  });
-
-  it("one request can't fan out: at most 5 addresses are looked up, duplicates once", async () => {
-    const fan = await funds({ "x-real-ip": freshIp() }, Array.from({ length: 400 }, () => addr));
-    expect(await fan.json()).toEqual({ status: "funded" });
-    expect(lookups).toBe(1);
-    expect((await funds({ "x-real-ip": freshIp() }, ["not-an-address"])).status).toBe(400);
-    expect((await funds({ "x-real-ip": freshIp() }, [{}])).status).toBe(400);
-  });
-});
