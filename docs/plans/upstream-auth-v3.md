@@ -1,16 +1,62 @@
-# Upstream Auth v3 (lean): multi-part sealed bags (hks3) and key-aware reasons on the existing Down gate (rev. after adversarial round 4)
+# Upstream Auth v3 (lean): multi-part sealed bags (hks3) and key-aware reasons on the existing Down gate (rev. after adversarial round 4, the code audit and the merge of main)
+
+## As built (read first)
+
+This plan was written before the code and before main moved on. Where the sections below differ, this list is what
+the branch does.
+
+1. **Merge with main.** `buildUpstreamRequest`, `acceptFor` and `resolveAuth` live in `packages/core/src/upstreamRequest.ts`
+   (the gateway's `upstream.ts` re-exports them). Every upstream call sends `x-hirakumi-hop: 1`; a keyed call also sends
+   `accept-encoding: identity` and every part of the key, last. `RESERVED_HEADERS` holds both `x-hirakumi-hop` and
+   `accept-encoding`. The leak check (`packages/core/src/exposure.ts`, `apps/web/lib/exposure.ts`) builds its request
+   from the origin and folder only, so it never sends any part of an hks2 or hks3 key.
+2. **Paid calls.** The per-token failure limit, upstream 429 to `503 upstream_rate_limited` and the 422 `auth` field
+   live in `handlePaidCall` (`apps/gateway/src/credits.ts`), shared by `/a/:apiId/x/:opId` and the front door
+   (`frontDoor.ts`), with one counter per app. `begin()` waits at most 5 s for running calls, then refuses. The counter
+   is in memory, so per gateway process (this deployment runs one). The public Try pack (a `try_tokens` row in the
+   showcase scope) is exempt: one token is shared by every visitor and the web's Try routes limit it per visitor.
+3. **Front door.** The origin switch (`apps/gateway/src/frontDoorAdmin.ts`, `apps/web/app/api/apis/[apiId]/front-door/origin/route.ts`)
+   takes either key format: the web seals it for the new origin through `apps/web/lib/upstream-key.ts` (the same code as
+   the key form), and the wizard asks for every part again when the stored key is a bag.
+4. **Public-key check.** A mismatched `UPSTREAM_AUTH_PUBLIC_KEY` in the gateway's env is logged, and the private key
+   **stays in use** (the gateway never uses the public key; whether rows open is the authoritative signal). Only a
+   private key that doesn't parse is dropped (`KEYS_UNAVAILABLE`).
+5. **Operator-only Down re-blamed on the seller.** The gateway's `HealthTracker` writes one `down` to `down` health event
+   when an API Down only for `OPERATOR_KEYS_UNAVAILABLE` then fails `failsToDown` rounds in a row for the seller's
+   reasons (it is seeded from the stored reasons after a reload). The coworker messages that event like any Down, and
+   announces the Live after it. It never messages from probe rows alone. `listIncidents` ignores `down` to `down`.
+6. **Rate-limited probes.** A probe answered 429 is stored as inconclusive (`upstream_ok`, verdict `n/a`), never as a
+   failing check. After 15 rounds in a row where every probe was 429, each further such round counts as failing
+   (`RATE_LIMITED_TOO_LONG_TEXT`), so an API that only answers 429 turns Down.
+7. **Bag validation.** `validateUpstreamBag` refuses a secret part whose key after a well-known scheme word (Bearer,
+   Token, Basic, ApiKey, Api-Key, Key) or whose Basic password is under 8 characters, and derives such keys at the same
+   floor as hks2. Only well-known words count, so a secret that merely contains a space is whole. The web's "key is
+   public" check on a bag uses the gateway's own `leakParts`.
+8. **Follow-up A (done).** Migration `0021_operation_needs_key.sql` adds `operations.needs_key` (null for endpoints
+   parsed before it). The coworker's parse step stores the parser's `needsKey`. check-key calls an endpoint that needs
+   the key first, then unknown ones, then public ones; a good answer from an endpoint not known to need the key is
+   `unchecked` with `why: "not_protected"`, never accepted. So §3's "no migration" no longer holds for this one column.
+9. **Follow-up B (done).** With `UPSTREAM_AUTH_V3=1` (coworker env too) the OpenAPI parser accepts a security
+   requirement of 2 to 4 schemes at once when a key form preset can send it (two headers, or headers and query
+   parameters), and records them in `authHint.parts`. The key form prefills `twoHeaders` or `headerPlusQuery` with
+   each part's name and the word before it.
+10. **Follow-up C (dropped).** It was about explaining a failed `X-Hirakumi-Verify` header check on a protected base URL.
+    Ownership is a DNS TXT record now, which a key never blocks, so there is nothing to explain.
+
+Deploy order is unchanged: migrations run when the gateway starts, so deploy the gateway, then the coworker, then the
+web app, then set `UPSTREAM_AUTH_V3=1` for the web app and the coworker.
 
 ## 0. Verdict and what changed
 
 Round 3 showed that most of the round-2 machinery duplicated things the gateway already does. I checked each claim against the code:
-- Every gateway process runs its own Monitor (`apps/gateway/src/main.ts:36-37`).
-- Any probe that doesn't pass becomes a health reason (`monitor.ts:85-87`), and only the monitor calls `health.record` (`monitor.ts:92`).
-- After `failsToDown=3` ticks at `probeIntervalMs=120s` (`config.ts:97,100`), the API turns Down. **Down is the only sales gate.** It blocks credit calls and the 402 offer (`credits.ts:48`), packs (`packs.ts:266`), the MIP-003 availability check and `start_job` (`mip003.ts:132,182`), and demoBuy (`demoBuy.ts:85`). None of these look at `credentialError`.
-- The coworker already messages the seller with the failing reasons (`apps/coworker/src/alerts.ts:34-36`).
-- Until the API turns Down, failed calls cost the buyer nothing, because every non-pass releases the credit (`credits.ts:134`). The paid route `/a/:apiId/x/:opId` has **no rate limit**; the only limiter is on `start_job` (`mip003.ts:81-100`, `createWindowLimiter`).
-- Today the key is sent on every operation (`upstream.ts:89-91`), and `runOperation` skips all leak checks when `!api.credential` (`upstream.ts:136`).
+- Every gateway process runs its own Monitor (`apps/gateway/src/main.ts`).
+- Any probe that doesn't pass becomes a health reason (`monitor.ts`), and only the monitor calls `health.record` (`monitor.ts`).
+- After `failsToDown=3` ticks at `probeIntervalMs=120s` (`config.ts`), the API turns Down. **Down is the only sales gate.** It blocks credit calls and the 402 offer (`credits.ts`), packs (`packs.ts`), the MIP-003 availability check and `start_job` (`mip003.ts`), and demoBuy (`demoBuy.ts`). None of these look at `credentialError`.
+- The coworker already messages the seller with the failing reasons (`apps/coworker/src/alerts.ts`).
+- Until the API turns Down, failed calls cost the buyer nothing, because every non-pass releases the credit (`credits.ts`). The paid route `/a/:apiId/x/:opId` has **no rate limit**; the only limiter is on `start_job` (`mip003.ts`, `createWindowLimiter`).
+- Today the key is sent on every operation (`upstream.ts`), and `runOperation` skips all leak checks when `!api.credential` (`upstream.ts`).
 - `apis.upstream_auth` has no CHECK constraint (0014/0015), so a new stored format needs no migration.
-- The deployment runs one gateway behind a bare `reverse_proxy gateway:4021` (`Caddyfile:4-6`) with no health check, so nothing reads `/healthz`. The gateway gets the shared `.env` (`docker-compose.yml:48-50`), which holds `UPSTREAM_AUTH_PUBLIC_KEY` too (`.env.example:20`).
+- The deployment runs one gateway behind a bare `reverse_proxy gateway:4021` (`Caddyfile`) with no health check, so nothing reads `/healthz`. The gateway gets the shared `.env` (`docker-compose.yml`), which holds `UPSTREAM_AUTH_PUBLIC_KEY` too (`.env.example`).
 
 **The plan is three small things:**
 1. **hks3 sealed bags**, used only where hks2 can't express the credential: two or more parts, or HTTP Basic with a public username. The web renders the values. The gateway does no templating. It re-checks framing, sends the parts and checks answers against a leak list sealed inside the bag, plus secrets it derives itself.
@@ -25,11 +71,11 @@ Plus four hardening items:
 
 **Round 4 changes:**
 - **Missing or mismatched gateway key.** The instance-scope health skip, `/healthz` 503 and the boot exit are removed. A gateway that can't read keys now records an operator reason through `health.record`, so the API still turns Down and every existing gate applies. The coworker suppresses the seller message for that reason only (§1.7.3).
-- **Public-key check.** A mismatched `UPSTREAM_AUTH_PUBLIC_KEY` no longer exits. `loadConfig` logs it and treats the private key as unusable, which leads to the same operator-reason path. It is tested in `config.test.ts`.
+- **Public-key check.** A mismatched `UPSTREAM_AUTH_PUBLIC_KEY` no longer exits. `loadConfig` logs it. (As built: the private key stays in use; see "As built" item 4.) It is tested in `config.test.ts`.
 - **Shared-quota drain.** A probe answered 429 is inconclusive, and free failures are limited per token. §8.5 and row #29 are corrected.
 - **Leak engine.** `textLeaksAny` decodes once and matches all needles. Leak entries are capped at 8, needles at 160, and a CPU budget test is added.
 - **Gateway Basic and Bearer backstop.** The gateway derives the password, the `user:pass` pair and the Bearer/Token K itself.
-- **One `resolveAuth(api)` helper** gates `runOperation` and `buildUpstreamRequest`. It replaces `if (!api.credential)` at `upstream.ts:136`, and credential-only literals behave as today.
+- **One `resolveAuth(api)` helper** gates `runOperation` and `buildUpstreamRequest`. It replaces `if (!api.credential)` at `upstream.ts`, and credential-only literals behave as today.
 - **hks2 open output is unchanged** (no new fields), and `getUpstreamAuth` stays backward compatible. The list of tests that change is now exact (§7.2).
 - `keyAppearsIn` no longer runs on fixed values.
 - check-key gains the class `accepted_unverified`.
@@ -43,7 +89,7 @@ The work is about 480 LOC of code plus about 420 LOC of tests.
 - Path or body placement: it collides with `urlWithinBase`, the ownership proof and the buyer-owned `body`.
 - Retrying a buyer's call after a refused key: replaying a request that may not be idempotent is unsafe.
 
-**Who can list (scope note).** Ownership needs `X-Hirakumi-Verify` on the seller's own origin and path prefix (`packages/core/src/ownership.ts:3-8`). So third-party APIs (Stripe, OpenAI, GitHub, Google) can only be resold through the seller's own proxy. Sellers own the auth of the API they list, so they can always issue a static key. The realistic sellers are self-hosted APIs and API platforms (AWS API Gateway, Kong, Azure APIM, Supabase, GraphQL servers).
+**Who can list (scope note).** Ownership is now proven with a DNS TXT record at `_hirakumi.<host>` of the API's origin (main, `packages/core/src/dnsVerify.ts`); the earlier `X-Hirakumi-Verify` header proof only survives as the re-check for APIs proven before it. So third-party APIs (Stripe, OpenAI, GitHub, Google) can only be resold through the seller's own proxy or domain. Sellers own the auth of the API they list, so they can always issue a static key. The realistic sellers are self-hosted APIs and API platforms (AWS API Gateway, Kong, Azure APIM, Supabase, GraphQL servers).
 
 ---
 
@@ -60,14 +106,14 @@ The hks2 leak set stays `upstreamSecretParts(value)`. `openCredential`'s hks2 ou
 
 ### 1.2 hks3 only when hks2 can't express it
 hks3 is written for:
-- 2–4 parts, such as the Supabase `apikey` plus `Authorization: Bearer` (same key), a key plus a fixed version header, or a header plus a query key;
+- 2 to 4 parts, such as the Supabase `apikey` plus `Authorization: Bearer` (same key), a key plus a fixed version header, or a header plus a query key;
 - Basic with a **non-empty password**.
 
 Stored and sealed shapes:
 - **Public row:** `{v:3, parts:[{in:'header'|'query', name, hint}], sealed:'hks3.<addrTag>.<ephPub>.<iv>.<ct>.<tag>'}`. `hint` is the last 4 characters of a secret part's value when that value is 16 or more characters; otherwise it is `''`. It is always `''` for a fixed part.
 - **Sealed plaintext (JSON, ≤ 8 KB):** `{values:string[], fixed:number[], leak:string[]}`. `values[i]` is sent as `parts[i]`.
 - **Crypto:** the same X25519 + HKDF-SHA256 + AES-256-GCM as hks2, with prefix `hks3` and HKDF info `hirakumi upstream-auth v3`.
-- **AAD:** `JSON.stringify(['hks3', apiId, parts.map(p => [p.in, p.in==='header' ? p.name.trim().toLowerCase() : p.name.trim()]), canonicalOrigin(origin), canonicalPathPrefix(pathPrefix)])`. These are the **same helpers as hks2** (`upstreamAuth.ts:49-67`), so a key saved at `/v1` opens at `/v1/`, exactly as hks2 does. The addrTag uses the same canonical address as hks2.
+- **AAD:** `JSON.stringify(['hks3', apiId, parts.map(p => [p.in, p.in==='header' ? p.name.trim().toLowerCase() : p.name.trim()]), canonicalOrigin(origin), canonicalPathPrefix(pathPrefix)])`. These are the **same helpers as hks2** (`upstreamAuth.ts`), so a key saved at `/v1` opens at `/v1/`, exactly as hks2 does. The addrTag uses the same canonical address as hks2.
 - **What the AAD protects:** changing a placement, a name, the order or the number of parts fails GCM, and calls are blocked as today. An address change gives `ADDRESS_CHANGED`. `hint` is display-only and not in the AAD.
 
 ### 1.3 The web renders, the gateway checks and backstops
@@ -76,14 +122,14 @@ Stored and sealed shapes:
 - every rendered value that contains a secret (`Bearer K`);
 - for Basic, `user:password` and the password, but not the username;
 - never a fixed value.
-- Limits: 0–**8** entries, each 8–4096 characters. Secret fields and a non-empty Basic password must be at least 8 characters.
+- Limits: 0 to **8** entries, each 8 to 4096 characters. Secret fields and a non-empty Basic password must be at least 8 characters.
 
 **What the gateway checks on open (`validateUpstreamBag`):**
-- `values.length === parts.length`, with 1–4 parts.
+- `values.length === parts.length`, with 1 to 4 parts.
 - Each part passes `validateUpstreamPart`. This is today's rule set (reserved headers, no CR/LF, at most 4096 characters, printable ASCII), except that a fixed value only needs 1 character.
 - Header names are unique (case-insensitive) **and query names are unique** (exact). `searchParams.set` would otherwise drop the earlier value silently.
 - At least one part is not fixed.
-- The leak list has at most 8 entries, each 8–4096 characters.
+- The leak list has at most 8 entries, each 8 to 4096 characters.
 - **`leakParts`** is the deduped union of:
   - `leak`;
   - every non-fixed value;
@@ -118,7 +164,7 @@ Stored and sealed shapes:
 - **403:** prepend `KEY_FORBIDDEN_TEXT`: "The API refused access (HTTP 403): the key's permissions, an IP allowlist or a firewall."
 - **Probes:** the reasons flow through `health.record`. After `failsToDown` failing ticks the API turns Down, every existing gate applies, and the coworker's Down message quotes the reason. `passesToHeal=2` heals it.
 - **Buyer calls:** the reason appears in the 422 `reasons`, and the body gains `auth:'refused'|'forbidden'`. Buyer calls never call `health.record`.
-- **Timing:** each instance gates after its own 3 failing ticks (about 4–6 minutes). Buyers lose nothing in that window.
+- **Timing:** each instance gates after its own 3 failing ticks (about 4 to 6 minutes). Buyers lose nothing in that window.
 
 ### 1.6 Seal-then-check (display only)
 - The web seals the candidate and posts the **sealed** blob to `POST /internal/apis/:id/check-key`.
@@ -131,27 +177,27 @@ Stored and sealed shapes:
 1. **Compression (keyed APIs).**
    - Send `accept-encoding: identity`, and add `accept-encoding` to `RESERVED_HEADERS`.
    - Withhold any answer with a non-identity `content-encoding`: 502 `upstream_error`, probe reason `KEY_UNSCANNABLE_TEXT`.
-   - Reason: `undici.request` (`fetch.ts:171`) doesn't decode compression, so a gzip body would be scanned as garbage and forwarded.
+   - Reason: `undici.request` (`fetch.ts`) doesn't decode compression, so a gzip body would be scanned as garbage and forwarded.
 2. **Upstream 429.**
-   - **Paid call (every API):** 503 `upstream_rate_limited`, with `Retry-After` passed through when it parses (decimal seconds or an HTTP-date, clamped to 1–3600 s). The credit is released and `x-credits-remaining` is set.
+   - **Paid call (every API):** 503 `upstream_rate_limited`, with `Retry-After` passed through when it parses (decimal seconds or an HTTP-date, clamped to 1 to 3600 s). The credit is released and `x-credits-remaining` is set.
    - **Probe:** a 429 is **inconclusive**, neither pass nor fail. `probeApi` adds no reason for that op and counts it in `inconclusive`.
-     - If every probed op was inconclusive, `probeApi` returns without `health.record` (`touchHealthCheck` only), as the ownership recheck treats `'error'` (`monitor.ts:150`).
+     - If every probed op was inconclusive, `probeApi` returns without `health.record` (`touchHealthCheck` only), as the ownership recheck treats `'error'` (`monitor.ts`).
      - So quota exhaustion, whether a buyer drained it or the seller ran it out, never gates sales or blames the seller.
      - Accepted cost: while the seller's quota is exhausted, packs stay buyable. Buyers' calls are free 503s, and their credits stay unused until the quota resets.
 3. **A gateway that can't read keys** (no `UPSTREAM_AUTH_PRIVATE_KEY`, or a key that fails the public-key check in 1.7.5):
    - `credentialError` is the existing text, exported as `KEYS_UNAVAILABLE` ("this API needs a key, and the gateway can't read keys right now"). Calls are blocked as today (502, credit released).
    - `Monitor.probeApi` checks for it **before the probe loop**. It makes no upstream calls and writes no probe `calls` rows. It records `health.record(apiId, false, [{op:'*', reason: OPERATOR_KEYS_UNAVAILABLE}])`, with the text "Hirakumi can't read API keys right now. This is our problem, not yours; sales are paused until we fix it." It logs `[monitor] operator: keys unavailable` once per API.
    - **Sales stay gated exactly as today:** Down after 3 ticks blocks the 402 offer, packs, `start_job`, availability and demoBuy.
-   - **The seller isn't blamed.** `apps/coworker/src/alerts.ts` marks a `down` event notified **without enqueueing a message** when every reason is `OPERATOR_KEYS_UNAVAILABLE`. It does the same for the following `up` event when the most recent earlier `down` event for that API was operator-only (one indexed query).
+   - **The seller isn't blamed.** `apps/coworker/src/alerts.ts` marks a `down` event notified **without enqueueing a message** when every reason is `OPERATOR_KEYS_UNAVAILABLE`. It does the same for the following `up` event when the most recent earlier `down` event for that API was operator-only (one indexed query). As built, a seller-caused failure after it reaches the seller through a `down` to `down` event (item 5).
    - The dashboard shows the operator text, which is honest.
    - No `/healthz` change. Nothing in this deployment reads it, and draining the only gateway would be a full outage.
 4. **Free-failure limit per token.**
-   - `credits.ts` keeps a sliding-window counter (generalising `createWindowLimiter` from `mip003.ts` into `apps/gateway/src/limiter.ts` with `blocked(key)` / `hit(key)`, about 15 LOC). The key is the credit token id or the channel id.
+   - `credits.ts` (`handlePaidCall`, as built item 2) keeps a sliding-window counter (generalising `createWindowLimiter` from `mip003.ts` into `apps/gateway/src/limiter.ts` with `blocked(key)` / `hit(key)`, about 15 LOC). The key is the credit token id or the channel id.
    - Every non-pass outcome calls `hit`.
    - Before reserving or calling upstream, a token at **20 non-pass in 60 s** gets `429 {error:'too_many_failed_calls'}` with `Retry-After`. It reserves nothing and makes no upstream call.
    - This bounds how fast one token can burn a seller's shared quota, and how much leak-scan CPU it can force, for free.
 5. **Public-key check (never exits).**
-   - In `config.ts` `loadConfig`: when both `UPSTREAM_AUTH_PUBLIC_KEY` and `UPSTREAM_AUTH_PRIVATE_KEY` are set and `publicKeyFromPrivate(priv) !== pub`, or the private key doesn't parse, it logs a loud `console.error`, sets `upstreamAuthPrivateKey: null` and sets `upstreamAuthKeyProblem: 'mismatch'|'unparseable'`.
+   - In `config.ts` `loadConfig`: when both `UPSTREAM_AUTH_PUBLIC_KEY` and `UPSTREAM_AUTH_PRIVATE_KEY` are set and `publicKeyFromPrivate(priv) !== pub`, or the private key doesn't parse, it logs a loud `console.error` and sets `upstreamAuthKeyProblem: 'mismatch'|'unparseable'`. Only an unparseable key sets `upstreamAuthPrivateKey: null` (as built, item 4).
    - The path in 1.7.3 then applies: no crash loop, and the ChannelWatcher, JobRunner, Reconciler and keyless APIs keep running.
    - The shared `.env` means this check is effectively always on in production. That is intended, now that it can't stop the process.
    - Web↔gateway mismatch is still caught at save by check-key `opened:false` → `NOT_SET_UP`.
@@ -186,7 +232,7 @@ Stored and sealed shapes:
 | 22 | Key saved before ownership is proven | check-key gives `unchecked` (not proven). After proof: QA, the monitor and "Check key now". | yes |
 | 23 | No test input yet / no rule yet | Op choice: an op with a rule + saved input, else any enabled op with a saved input, else an enabled GET with no required params and `{}`, else `unchecked`. A 2xx with verdict `n/a` gives `accepted_unverified`. | yes |
 | 24 | Web public key ≠ gateway private key | check-key `opened:false` → 503 `NOT_SET_UP`; nothing stored. | yes |
-| 25 | Gateway has no private key, or its private and public keys mismatch | `KEYS_UNAVAILABLE`: calls blocked (502, free). Probes record `OPERATOR_KEYS_UNAVAILABLE` → Down after 3 ticks, so **every sales gate still applies**. The coworker sends no seller message. No crash. | yes |
+| 25 | Gateway has no private key, or it doesn't parse | `KEYS_UNAVAILABLE`: calls blocked (502, free). Probes record `OPERATOR_KEYS_UNAVAILABLE` → Down after 3 ticks, so **every sales gate still applies**. The coworker sends no seller message. No crash. | yes |
 | 26 | Row can't be opened (corrupt, tampered, hks1, bad bag) | Row `credentialError` as today → Down, and the seller is alerted. | yes |
 | 27 | Address changed after save | `ADDRESS_CHANGED` (both formats, canonical address). | yes |
 | 28 | Key revoked mid-pack | Buyers get 422 + `auth:'refused'`, free. After 3 ticks, Down gates everything, and the seller gets a message quoting `KEY_REFUSED`. | yes |
@@ -229,7 +275,7 @@ Stored and sealed shapes:
 
 | Upstream result (keyed API) | Paid buyer call | Money | Probe / health | Seller sees |
 |---|---|---|---|---|
-| 2xx + rule pass | 200 | charged | pass | — |
+| 2xx + rule pass | 200 | charged | pass | none |
 | 401 | 422 `promise_not_met`, `auth:'refused'`, `KEY_REFUSED_TEXT` first | released | failure → Down after `failsToDown` | Down message quoting the 401 text |
 | 403 | 422, `auth:'forbidden'`, `KEY_FORBIDDEN_TEXT` | released | failure → Down | Down message with the 403 text |
 | 429 | 503 `upstream_rate_limited` + `Retry-After`, `x-credits-remaining` | released | **inconclusive** (no reason; if all ops are inconclusive, no `health.record`) | nothing |
@@ -237,7 +283,7 @@ Stored and sealed shapes:
 | Non-identity `content-encoding` | 502 withheld | released | failure `KEY_UNSCANNABLE` | Down message |
 | Row `credentialError` | 502 blocked (as today) | released | failure → Down | Down message |
 | `KEYS_UNAVAILABLE` (no or mismatched private key) | 502 blocked (as today) | released | no upstream call; `OPERATOR_KEYS_UNAVAILABLE` → Down (sales gated) | **no message** (dashboard shows the operator text) |
-| A token at 20 non-pass in 60 s | 429 `too_many_failed_calls` + `Retry-After`, no upstream call | none reserved | — | — |
+| A token at 20 non-pass in 60 s | 429 `too_many_failed_calls` + `Retry-After`, no upstream call | none reserved | none | none |
 
 Invariant: **a credit is consumed only on `upstream_ok` + pass + result** (unchanged).
 
@@ -289,7 +335,7 @@ Invariant: **a credit is consumed only on `upstream_ok` + pass + result** (uncha
   - Right after `registry.get`: if `loaded.api.credentialError === KEYS_UNAVAILABLE`, log once per API, `health.record(apiId, false, [{op:'*', reason: OPERATOR_KEYS_UNAVAILABLE}])` with the usual transition handling, and return. There is no probe loop and no `calls` rows.
   - In the loop: an outcome with `result?.status === 429` adds no reason and increments `inconclusive`.
   - After the loop: if `probed > 0 && inconclusive === probed`, `touchHealthCheck` and return `null`.
-- **`config.ts`:** reads optional `UPSTREAM_AUTH_PUBLIC_KEY`. On a mismatch or an unparseable key it logs, sets `upstreamAuthPrivateKey: null` and sets `upstreamAuthKeyProblem` (§1.7.5). It never throws. `main.ts` is unchanged.
+- **`config.ts`:** reads optional `UPSTREAM_AUTH_PUBLIC_KEY`. On a mismatch or an unparseable key it logs and sets `upstreamAuthKeyProblem`; only an unparseable key is dropped (§1.7.5, as built item 4). It never throws. `main.ts` is unchanged.
 - **`internal.ts`:** `POST /internal/apis/:apiId/check-key {stored?}` (about 65 LOC):
   - Internal token, and 6 per minute per API (`limiter.ts`).
   - Loads the row fresh. From `ownership_verified` onward and not retired; otherwise `{class:'unchecked', why:'not_proven'}`.
@@ -327,7 +373,7 @@ Invariant: **a credit is consumed only on `upstream_ok` + pass + result** (uncha
   - **Response:** the legacy fields, plus `check` only when a check ran and `warnings` only when non-empty. The fake gateway in `upstream-auth.test.ts` has no `checkKey`, so `:63-80` passes unchanged.
 - **`app/api/apis/[apiId]/upstream-auth/check/route.ts`** (new): owner + CSRF, "Check key now".
 - **`lib/repo/upstream-auth.ts`:**
-  - `getUpstreamAuth` stays **backward compatible**. A legacy row returns `{in,name,hint}` exactly as today, so `upstream-auth.test.ts:88` is unchanged. A v3 row returns `{parts:[{in,name,hint}]}`.
+  - `getUpstreamAuth` stays **backward compatible**. A legacy row returns `{in,name,hint}` exactly as today, so `upstream-auth.test.ts` is unchanged. A v3 row returns `{parts:[{in,name,hint}]}`.
   - Type `UpstreamAuthView = UpstreamAuthSetting | {parts: UpstreamAuthSetting[]}`, discriminated by `'parts' in v`.
   - It never selects `sealed`.
 - **`lib/env.ts`:** `upstreamAuthV3()`, `gatewayEgressIps()`.
@@ -338,7 +384,7 @@ Invariant: **a credit is consumed only on `upstream_ok` + pass + result** (uncha
   - The "How does your API take its key?" select, up to 4 rows (Secret / Fixed text), the check panel, warnings and the egress IPs note.
   - **[Save anyway]** for both the simple form and presets: it re-posts the same body with `saveAnyway:true`.
 - **`app/apis/[apiId]/review/page.tsx`** (`:32`, `:54`), **`ownership/page.tsx`**, **`overview/page.tsx`:** pass the `UpstreamAuthView`. The ownership and overview pages show "Check key now" and the base-URL key warning.
-- **`lib/try-handler.ts`** (around line 93): `slot.release()` when `x-credits-remaining` is absent.
+- **`lib/try-handler.ts`** : `slot.release()` when `x-credits-remaining` is absent.
 - **`lib/try.ts`:** headlines for:
   - `upstream_rate_limited`;
   - `too_many_failed_calls`;
@@ -346,8 +392,8 @@ Invariant: **a credit is consumed only on `upstream_ok` + pass + result** (uncha
 - **`lib/ask/facts.ts`:** updated facts.
 
 ### agents/buyer
-- **`src/gatewayClient.ts`** (`:119`): before the generic 503 → `down` case, `error === 'upstream_rate_limited'` → `{kind:'rate_limited', retryAfter}`. A 429 with `too_many_failed_calls` → the same kind.
-- **`src/packBuyer.ts`** (`:188`): on `rate_limited`, log "rate-limited, no credit used" and wait `Retry-After` (capped) before the next call.
+- **`src/gatewayClient.ts`**: before the generic 503 → `down` case, `error === 'upstream_rate_limited'` → `{kind:'rate_limited', retryAfter}`. A 429 with `too_many_failed_calls` → the same kind.
+- **`src/packBuyer.ts`**: on `rate_limited`, log "rate-limited, no credit used" and wait `Retry-After` (capped) before the next call.
 
 ---
 
@@ -376,8 +422,8 @@ Invariant: **a credit is consumed only on `upstream_ok` + pass + result** (uncha
 
 1. hks2 rows: same seal, open (identical output), leak set and injection. The request gains only `accept-encoding: identity`.
 2. **Tests that change (exact):**
-   - None of the `openCredential` / `getUpstreamAuth` `toEqual`s change, because the hks2 output and the legacy view are unchanged. This covers `apps/gateway/test/upstreamAuth.test.ts:23,24,28,62`, `upstreamAuth.contract.test.ts:70`, `apps/web/.../upstream-auth.test.ts:67,88` and `upstreamAuth.test.ts:152`.
-   - Credential-only literals (`upstream.test.ts:63-240`, `upstream.redact.test.ts:32`) pass through `resolveAuth` unchanged.
+   - None of the `openCredential` / `getUpstreamAuth` `toEqual`s change, because the hks2 output and the legacy view are unchanged. This covers `apps/gateway/test/upstreamAuth.test.ts`, `upstreamAuth.contract.test.ts`, `apps/web/.../upstream-auth.test.ts` and `upstreamAuth.test.ts`.
+   - Credential-only literals (`upstream.test.ts`, `upstream.redact.test.ts`) pass through `resolveAuth` unchanged.
    - A grep at plan time found no existing gateway test asserting a keyed upstream 401/403 → 422 body, or a paid-call upstream 429. If the suite surfaces one, its new expected value is the leading reason + `auth` (422), or `503 {error:'upstream_rate_limited'}` (429).
    - A monitor test that expects the probe `calls` rows or the per-op `blocked` reason for a no-private-key API now expects zero probe rows and the single `OPERATOR_KEYS_UNAVAILABLE` reason.
 3. **Deploy order:**
@@ -441,7 +487,7 @@ Invariant: **a credit is consumed only on `upstream_ok` + pass + result** (uncha
 - **`packages/core/test/fetch.test.ts`:** `parseRetryAfter`.
 - **`apps/gateway/test/config.test.ts`:**
   - A matching public key → private key kept.
-  - A mismatch or an unparseable key → `upstreamAuthPrivateKey:null`, `upstreamAuthKeyProblem` set, no throw.
+  - A mismatch → private key kept, `upstreamAuthKeyProblem: 'mismatch'`; an unparseable key → `upstreamAuthPrivateKey:null`; no throw.
   - No public key → unchanged.
 - **`apps/gateway/test/registry.test.ts`:**
   - The hks2 output is identical to today (no `auth` key).
