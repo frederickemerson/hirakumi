@@ -143,6 +143,24 @@ services:
     expose:
       - "4100"
 
+  air-api:
+    # A fourth demo seller (sellers/air-api, "Clean Air"), on the same team-edited DNS domain as weather-api, so its
+    # _hirakumi TXT ownership proof can be shown live. Not part of Hirakumi itself.
+    build:
+      context: .
+      dockerfile: deploy/app.Dockerfile
+      args:
+        APP_DIR: sellers/air-api
+    restart: unless-stopped
+    environment:
+      PORT: "4100"
+      PUBLIC_URL: https://air.patricksteveharrison.com
+      API_TITLE: Clean Air
+      # The seller's own key: /now and /forecast refuse calls without it, so only Hirakumi's gateway gets answers.
+      API_KEY: ${AIR_API_KEY:?set AIR_API_KEY in .env}
+    expose:
+      - "4100"
+
   caddy:
     image: caddy:2.11-alpine
     restart: unless-stopped

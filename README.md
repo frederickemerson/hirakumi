@@ -21,6 +21,7 @@ Built for TOKEN2049 Origins, Cardano "Agentic Commerce" track. Live on Cardano p
 | A listed API as a Masumi agent (MIP-003) | https://52-70-235-103.sslip.io/a/api_eejiaioyqt/availability |
 | Demo seller: crypto prices (`sellers/price-api`) | https://price.52-70-235-103.sslip.io/openapi.json |
 | Demo seller: Mika's FX Rates (`sellers/fx-api`) | https://mika.52-70-235-103.sslip.io/openapi.json |
+| Demo seller: Clean Air (`sellers/air-api`) | https://air.patricksteveharrison.com/openapi.json |
 
 Submission material: [write-up](docs/submission/writeup.md) and [submission evidence](docs/submission/submission-checklist.md).
 

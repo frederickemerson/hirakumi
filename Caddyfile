@@ -48,6 +48,12 @@ weather.patricksteveharrison.com {
 	reverse_proxy weather-api:4100
 }
 
+# A fourth demo seller (sellers/air-api) on the same team-edited DNS domain.
+air.patricksteveharrison.com {
+	encode zstd gzip
+	reverse_proxy air-api:4100
+}
+
 # Every other hostname: a seller's front door. The gateway answers it by Host (apps/gateway/src/frontDoor.ts) and
 # never serves its own routes there. Sites above match first, so this only sees front-door hosts.
 https:// {
