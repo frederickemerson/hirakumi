@@ -3,12 +3,13 @@ import {
   type DomainRecheckTarget, type DomainStatus, listOwnershipRecheckTargets, loadProbeInputs, recordHealthTransition, recordOwnershipRecheck,
   scheduleOwnershipRecheck, touchHealthCheck, type OwnershipRecheckOutcome, type OwnershipRecheckTarget, type Sql,
 } from "@hirakumi/db";
+import { OPERATOR_KEYS_UNAVAILABLE } from "@hirakumi/core";
 import type { GatewayConfig } from "./config";
 import type { HealthReason, HealthTracker, HealthTransition } from "./health";
 import { isNoRecordError, matchVerifyTxt, type TxtLookup } from "@hirakumi/core";
 import { addressResolverVia, checkRouted, type AddressResolver, type DomainRegistry } from "./domains";
 import { probeVerifyDns, probeVerifyHeader, txtLookupVia, type DnsReason, type OwnershipReason } from "./ownership";
-import type { ApiRegistry } from "./registry";
+import { KEYS_UNAVAILABLE, type ApiRegistry } from "./registry";
 import { runOperation } from "./upstream";
 
 export type MonitorDeps = {
@@ -53,11 +54,23 @@ export const DOMAIN_MESSAGES = (host: string, detail: string): Partial<Record<Do
   active: `Your _hirakumi TXT record for ${host} is back, so Hirakumi answers ${host} again.`,
 });
 
+/**
+ * Rounds in a row in which every probe was rate limited (429) before one counts as failing: about 30 minutes at the
+ * default interval. A drained quota is inconclusive, but an API that only ever answers 429 can't be sold either.
+ */
+export const RATE_LIMITED_ROUNDS_TO_FAIL = 15;
+export const RATE_LIMITED_TOO_LONG_TEXT =
+  "Your API answered every check with 429 (rate limited) for a long time, so Hirakumi can't tell whether it works. Raise the key's quota.";
+
 export class Monitor {
   private timer: NodeJS.Timeout | undefined;
   private running = false;
   private readonly rotation = new Map<string, number>();
   private readonly rechecking = new Map<string, Promise<OwnershipRecheck | null>>();
+  /** APIs already logged as blocked by the gateway's own key problem, so the log says it once per API. */
+  private readonly operatorLogged = new Set<string>();
+  /** Rounds in a row in which every probe of the API was rate limited. */
+  private readonly rateLimitedRounds = new Map<string, number>();
   constructor(private readonly d: MonitorDeps) {}
 
   start(): void {
@@ -89,11 +102,23 @@ export class Monitor {
   async probeApi(apiId: string): Promise<HealthTransition | null> {
     const loaded = await this.d.registry.get(apiId);
     if (!loaded) return null;
+    // The gateway can't read keys: our problem, not the seller's. No upstream call is made; the API still turns Down
+    // so nothing unusable is sold, and the coworker sends the seller no message for this reason.
+    if (loaded.api.credentialError === KEYS_UNAVAILABLE) {
+      if (!this.operatorLogged.has(apiId)) {
+        this.operatorLogged.add(apiId);
+        console.error(`[monitor] operator: keys unavailable (${apiId})`);
+      }
+      return this.record(apiId, [{ op: "*", reason: OPERATOR_KEYS_UNAVAILABLE }]);
+    }
+    this.operatorLogged.delete(apiId);
     const inputs = await loadProbeInputs(this.d.sql, apiId);
     const byOp = new Map<string, unknown[]>();
     for (const row of inputs) byOp.set(row.op_id, [...(byOp.get(row.op_id) ?? []), row.input]);
 
     let probed = 0;
+    // An op answered 429 (rate limited) is neither a pass nor a fail: a drained quota must not gate sales.
+    let inconclusive = 0;
     const reasons: HealthReason[] = [];
     for (const [opId, list] of byOp) {
       const op = loaded.ops.get(opId);
@@ -105,17 +130,35 @@ export class Monitor {
       const input = checked.ok ? checked.value : (list[idx] as Record<string, unknown>);
       const outcome = await runOperation(loaded.api, op, input, { timeoutMs: this.d.config.upstreamTimeoutMs, probe: true });
       probed += 1;
+      const rateLimited = outcome.result?.status === 429;
+      // Stored as inconclusive (upstream_ok with verdict n/a: probed ops always have a promise, so only this gives
+      // it), never as a failing check that a seller message or "first failed test" could quote.
       await insertCall(this.d.sql, {
         kind: "probe", apiId, opId, ruleId: op.ruleRow?.id ?? null, execution: outcome.execution,
-        verdict: outcome.verdict, reasons: outcome.reasons, latencyMs: outcome.latencyMs,
+        verdict: rateLimited ? "n/a" : outcome.verdict, reasons: outcome.reasons, latencyMs: outcome.latencyMs,
       });
-      if (!(outcome.execution === "upstream_ok" && outcome.verdict === "pass")) {
+      if (rateLimited) inconclusive += 1;
+      else if (!(outcome.execution === "upstream_ok" && outcome.verdict === "pass")) {
         reasons.push(...(outcome.reasons.length ? outcome.reasons : [outcome.execution]).map((reason) => ({ op: opId, reason })));
       }
     }
     // Audit I4: an API we cannot check must not stay "Live". Say so instead of trusting it blindly.
     if (probed === 0) reasons.push({ op: "*", reason: "no saved test input for any enabled operation, so Hirakumi can't check this API" });
+    // Every op was rate limited: nothing was learned, so health is left as it was, until that has gone on so long
+    // that the API can't be sold either (RATE_LIMITED_ROUNDS_TO_FAIL); each round after that counts as failing.
+    if (probed > 0 && inconclusive === probed) {
+      const rounds = (this.rateLimitedRounds.get(apiId) ?? 0) + 1;
+      this.rateLimitedRounds.set(apiId, rounds);
+      if (rounds >= RATE_LIMITED_ROUNDS_TO_FAIL) return this.record(apiId, [{ op: "*", reason: RATE_LIMITED_TOO_LONG_TEXT }]);
+      await touchHealthCheck(this.d.sql, apiId);
+      return null;
+    }
+    this.rateLimitedRounds.delete(apiId);
+    return this.record(apiId, reasons);
+  }
 
+  /** Feeds one probe round into the health tracker and stores a transition (or just the check time). */
+  private async record(apiId: string, reasons: HealthReason[]): Promise<HealthTransition | null> {
     const t = this.d.health.record(apiId, reasons.length === 0, reasons);
     if (t) {
       const since = t.failingSince?.toISOString() ?? null;

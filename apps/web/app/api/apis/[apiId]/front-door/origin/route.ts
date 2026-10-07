@@ -1,4 +1,4 @@
-import { keyAppearsIn, sealUpstreamSecret, upstreamSecretHint, UpstreamAuthError, validateUpstreamAuth } from "@hirakumi/core";
+import { UpstreamAuthError, type RenderedPreset, type StoredUpstreamAuth } from "@hirakumi/core";
 import { sharedSuffixOf } from "@/app/apis/[apiId]/ownership/probe-dns";
 import { env } from "@/lib/env";
 import { GatewayError, getFrontDoorGateway } from "@/lib/gateway";
@@ -6,12 +6,14 @@ import { errorJson, json, readJson, type ApiRouteContext } from "@/lib/http";
 import { frontDoorUpdatingResponse, updatingResponse } from "@/lib/repo/schema";
 import { publicExampleTexts } from "@/lib/repo/upstream-auth";
 import { loadOwnedApi } from "@/lib/route-helpers";
+import { keyIsPublic, renderKeyBody, sealKey } from "@/lib/upstream-key";
 import type { ApiState } from "@/lib/types";
 
 /** From proven ownership on: the API's address is final and its ownership code is the one the new origin reuses. */
 const READY: ReadonlySet<ApiState> = new Set(["ownership_verified", "rule_built", "priced", "registering", "live"]);
 
 const NOT_SET_UP = "Adding a key isn't set up on Hirakumi right now. Try again later.";
+const NO_BAGS = "Keys made of several parts can't be saved on Hirakumi yet. Use a single header or query parameter for now.";
 const KEY_IS_PUBLIC =
   "This key appears in your example requests, your OpenAPI file or your endpoints' examples, where buyers can see it. Use another key.";
 
@@ -41,30 +43,29 @@ export async function POST(req: Request, ctx: ApiRouteContext): Promise<Response
   if (suffix) {
     return errorJson(400, `${origin.hostname} is on ${suffix}, a platform's shared domain where you can't add the TXT record. Use a hostname on your own domain.`);
   }
-  const key = (body.key ?? {}) as Record<string, unknown>;
-  let credential;
+  // The key as the upstream-auth route takes it: one header or query parameter, or a preset (a key in several parts).
+  const key = (body.key && typeof body.key === "object" ? body.key : {}) as Record<string, unknown>;
+  let rendered: RenderedPreset;
   try {
-    credential = validateUpstreamAuth({ in: key.in, name: key.name, value: key.value });
+    rendered = renderKeyBody(key);
   } catch (e) {
     if (e instanceof UpstreamAuthError) return errorJson(400, e.message);
     throw e;
   }
-  if (keyAppearsIn(credential.value, await publicExampleTexts(sql, api.id))) return errorJson(400, KEY_IS_PUBLIC);
+  if (rendered.kind === "hks3" && !env.upstreamAuthV3()) return errorJson(409, NO_BAGS);
+  if (keyIsPublic(rendered, await publicExampleTexts(sql, api.id))) return errorJson(400, KEY_IS_PUBLIC);
   const publicKey = env.upstreamAuthPublicKey();
   if (!publicKey) return errorJson(503, NOT_SET_UP);
-  let sealed: string;
+  let upstreamAuth: StoredUpstreamAuth;
   try {
-    sealed = sealUpstreamSecret(
-      publicKey, { apiId: api.id, in: credential.in, name: credential.name, origin: origin.origin, pathPrefix: api.pathPrefix }, credential.value,
-    );
+    // Sealed for the new origin: the gateway refuses a key sealed for another address.
+    upstreamAuth = sealKey(publicKey, { id: api.id, origin: origin.origin, pathPrefix: api.pathPrefix }, rendered);
   } catch (e) {
     console.error(`sealing an upstream key failed for ${api.id} (check UPSTREAM_AUTH_PUBLIC_KEY)`, e);
     return errorJson(503, NOT_SET_UP);
   }
   try {
-    const r = await getFrontDoorGateway().switchOrigin(api.id, {
-      origin: origin.origin, upstreamAuth: { in: credential.in, name: credential.name, sealed, hint: upstreamSecretHint(credential.value) },
-    });
+    const r = await getFrontDoorGateway().switchOrigin(api.id, { origin: origin.origin, upstreamAuth });
     if (r.ok) return json(r);
     return json({
       error: r.detail, reason: r.error,

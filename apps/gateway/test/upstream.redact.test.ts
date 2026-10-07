@@ -35,4 +35,13 @@ describe("runOperation never passes on a reason that quotes the key", () => {
     expect(JSON.stringify(o)).not.toContain(KEY);
     expect(JSON.stringify(o)).not.toContain(encodeURIComponent(KEY));
   });
+  it("redacts every secret part of a bag (hks3) from the reason, and not its fixed text", async () => {
+    fetchError.make = (u) => new Error(`request to ${u} failed`);
+    const auth = core.validateUpstreamBag(
+      [{ in: "query", name: "v" }, { in: "query", name: "api_key" }], { values: ["2024-01", KEY], fixed: [0], leak: [] },
+    );
+    const o = await runOperation({ origin: "https://a.example", path_prefix: "/", auth }, op, { symbol: "ADA" }, { timeoutMs: 100 });
+    expect(o.reasons[0]).toContain("https://a.example/price?symbol=ADA&v=2024-01&api_key=[key]");
+    expect(JSON.stringify(o)).not.toContain(encodeURIComponent(KEY));
+  });
 });

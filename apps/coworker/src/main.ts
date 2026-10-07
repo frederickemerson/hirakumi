@@ -30,7 +30,9 @@ const masumiPort: MasumiPort = masumi;
 const fetchSpec = createSpecFetcher();
 
 const handlers: StateHandlers = {
-  intake: (apiId) => parseStep({ pool, fetchSpec, allowInsecure: process.env.ALLOW_INSECURE_UPSTREAM === "1" }, apiId),
+  intake: (apiId) => parseStep({
+    pool, fetchSpec, allowInsecure: process.env.ALLOW_INSECURE_UPSTREAM === "1", multiPartKeys: process.env.UPSTREAM_AUTH_V3 === "1",
+  }, apiId),
   parsed: (apiId) => describeStep({ pool, llm, webBaseUrl: config.webBaseUrl }, apiId),
   ownership_verified: (apiId) => qaStep({ pool, gateway, llm, webBaseUrl: config.webBaseUrl }, apiId),
   registering: (apiId) =>
@@ -56,7 +58,10 @@ if (soko) {
 const mode = selectMode(me);
 if (soko && mode.kind === "sokosumi") {
   // Replies on a task: typed commands first; the LLM only maps free text to the choice the coworker offered.
-  const inbox = createInbox({ pool, soko, webBaseUrl: config.webBaseUrl, fetchSpec, llm, allowInsecure: process.env.ALLOW_INSECURE_UPSTREAM === "1" });
+  const inbox = createInbox({
+    pool, soko, webBaseUrl: config.webBaseUrl, fetchSpec, llm, allowInsecure: process.env.ALLOW_INSECURE_UPSTREAM === "1",
+    multiPartKeys: process.env.UPSTREAM_AUTH_V3 === "1",
+  });
   startLoop("sokosumi-inbox", 5_000, () => inbox.poll());
   startLoop("sokosumi-outbox", 2_000, () => deliverMessages(pool, soko));
   startLoop("sokosumi-usage", 30_000, () => reportOnboardingUsage(pool, soko, config.onboardingCredits));

@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { jsonResponse } from "@/test/http";
 import { frontDoorRecord, undoMessage, undoSteps } from "@/lib/front-door";
-import { DirectCallerCard, FrontDoorWizard, type FrontDoorWizardProps } from "./front-door-wizard";
+import { DirectCallerCard, FrontDoorWizard, partsKeyBody, type FrontDoorWizardProps } from "./front-door-wizard";
 
 const nav = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => nav }));
@@ -36,6 +36,34 @@ describe("FrontDoorWizard", () => {
     expect(await screen.findByText("Test calls to the new origin did not all pass.")).toBeTruthy();
     expect(screen.getByText("getPrice: upstream answered 401")).toBeTruthy();
     expect(nav.refresh).not.toHaveBeenCalled();
+  });
+
+  it("a key stored in several parts asks for every part again and sends the matching preset", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ ok: true, host: "api.seller.dev" }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<FrontDoorWizard {...base} keyHint={null}
+      keyParts={[{ in: "header", name: "X-API-Key" }, { in: "header", name: "Notion-Version", fixed: true }]} />);
+    await userEvent.type(screen.getByLabelText("New origin"), "https://origin.seller.dev");
+    expect(screen.queryByRole("radiogroup", { name: "Where the key goes" })).toBeNull();
+    await userEvent.type(screen.getByLabelText("Header X-API-Key"), "sk_secret_0123");
+    expect(screen.getByRole("button", { name: "Test and switch" }).hasAttribute("disabled")).toBe(true);
+    await userEvent.type(screen.getByLabelText("Header Notion-Version (fixed text)"), "2022-06-28");
+    await userEvent.click(screen.getByRole("button", { name: "Test and switch" }));
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      origin: "https://origin.seller.dev",
+      key: { preset: "keyPlusFixed", fields: { rows: [
+        { in: "header", name: "X-API-Key", value: "sk_secret_0123", fixed: false },
+        { in: "header", name: "Notion-Version", value: "2022-06-28", fixed: true },
+      ] } },
+    });
+  });
+
+  it("partsKeyBody: one part is Basic with a password, a query part is a header and a query, else two headers", () => {
+    expect(partsKeyBody([{ in: "header", name: "Authorization" }], ["alice", "s3cr3tpass"]))
+      .toEqual({ preset: "basic", fields: { username: "alice", password: "s3cr3tpass" } });
+    expect(partsKeyBody([{ in: "header", name: "a" }, { in: "query", name: "b" }], ["x", "y"])).toMatchObject({ preset: "headerPlusQuery" });
+    expect(partsKeyBody([{ in: "header", name: "a" }, { in: "header", name: "b" }], ["x", "y"])).toMatchObject({ preset: "twoHeaders" });
   });
 
   it("once the origin moved: the CNAME to add, the warnings, and Check connection", async () => {

@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
-import { generateUpstreamAuthKeys, sealUpstreamSecret } from "@hirakumi/core";
+import { generateUpstreamAuthKeys, KEY_REFUSED_TEXT, sealUpstreamBag, sealUpstreamSecret } from "@hirakumi/core";
+import { FAILED_CALLS_LIMIT } from "../src/credits";
 import { createApp } from "../src/app";
 import { checkRouted, DomainRegistry, tlsAskDecision, type AddressResolver } from "../src/domains";
-import { tlsAskApp } from "../src/frontDoorAdmin";
+import { parseStoredAuth, tlsAskApp } from "../src/frontDoorAdmin";
 import { isNativeHost } from "../src/frontDoor";
 import { Monitor } from "../src/monitor";
+import { ApiRegistry } from "../src/registry";
 import { insertActiveToken, makeHarness, type Harness } from "./helpers";
 
 const HOST = "api.seller.test";
@@ -129,6 +131,49 @@ describe("the front door", () => {
     const r = await call();
     expect(r.status).toBe(503);
     expect(r.body.error).toBe("selling_paused");
+  });
+
+  it("an upstream 429 is a free 503 upstream_rate_limited with the seller's Retry-After (audit 1c)", async () => {
+    const t = await insertActiveToken(h.sql, h.seeded, 5);
+    h.stub.setFile("/price", '{"error":"slow down"}', { status: 429, headers: { "retry-after": "30" } });
+    const r = await call().set("authorization", `Bearer ${t.token}`);
+    expect(r.status).toBe(503);
+    expect(r.body.error).toBe("upstream_rate_limited");
+    expect(r.headers["retry-after"]).toBe("30");
+    expect(r.headers["x-credits-remaining"]).toBe("5");
+  });
+
+  it("the per-token failure limit applies, and is one counter with /a/:apiId/x/:opId (audit 1c)", async () => {
+    const t = await insertActiveToken(h.sql, h.seeded, 100);
+    h.stub.setMode("empty");
+    const half = Math.floor(FAILED_CALLS_LIMIT.max / 2);
+    for (let i = 0; i < half; i++) {
+      expect((await request(app).get(`/a/${h.seeded.apiId}/x/getPrice?symbol=ADA`).set("authorization", `Bearer ${t.token}`)).status).toBe(422);
+    }
+    for (let i = half; i < FAILED_CALLS_LIMIT.max; i++) expect((await call().set("authorization", `Bearer ${t.token}`)).status).toBe(422);
+    const hits = h.stub.hits();
+    const r = await call().set("authorization", `Bearer ${t.token}`);
+    expect(r.status).toBe(429);
+    expect(r.body.error).toBe("too_many_failed_calls");
+    expect(Number(r.headers["retry-after"])).toBeGreaterThanOrEqual(1);
+    expect(h.stub.hits()).toBe(hits);
+    expect((await request(app).get(`/a/${h.seeded.apiId}/x/getPrice?symbol=ADA`).set("authorization", `Bearer ${t.token}`)).status).toBe(429);
+  });
+
+  it("a keyed API's 401 is a 422 with auth 'refused' and the key reason first (audit 1c)", async () => {
+    const keys = generateUpstreamAuthKeys();
+    const registry = new ApiRegistry(h.sql, h.health, keys.privateKey);
+    const keyed = createApp({ ...h.deps, domains, registry, config: { ...h.config, upstreamAuthPrivateKey: keys.privateKey } });
+    const where = { in: "header" as const, name: "X-API-Key" };
+    const sealed = sealUpstreamSecret(keys.publicKey, { apiId: h.seeded.apiId, ...where, origin: h.stub.origin, pathPrefix: "/" }, "sk_test_0123456789abcdef");
+    await h.sql`update apis set upstream_auth = ${h.sql.json({ ...where, sealed, hint: "cdef" })} where id = ${h.seeded.apiId}`;
+    h.registry.invalidate(h.seeded.apiId);
+    h.stub.setFile("/price", '{"error":"unauthorized"}', { status: 401 });
+    const t = await insertActiveToken(h.sql, h.seeded, 5);
+    const r = await request(keyed).get("/price?symbol=ADA").set("host", HOST).set("authorization", `Bearer ${t.token}`);
+    expect(r.status).toBe(422);
+    expect(r.body).toMatchObject({ error: "promise_not_met", auth: "refused" });
+    expect(r.body.reasons[0]).toBe(KEY_REFUSED_TEXT);
   });
 
   it("400 for bad input, 404 for another path (with the listing), 405 for another method", async () => {
@@ -323,6 +368,38 @@ describe("internal front-door routes", () => {
     expect(r.body).toMatchObject({ error: "tests_failed", tests: [{ opId: "getPrice", ok: false }] });
     expect(JSON.stringify(r.body)).not.toContain("sk_secret_value");
     expect((await h.sql`select origin from apis where id = ${h.seeded.apiId}`)[0].origin).toBe("https://api.seller.test");
+  });
+
+  it("opens a key in several parts (hks3) sealed for the new origin, and refuses one sealed for the old address", async () => {
+    const keys = generateUpstreamAuthKeys();
+    const app2 = createApp({ ...h.deps, domains, config: { ...h.config, upstreamAuthPrivateKey: keys.privateKey } });
+    await h.sql`update apis set origin = 'https://api.seller.test' where id = ${h.seeded.apiId}`;
+    h.dns.set("_hirakumi.origin.seller.test", ["hkv_code"]);
+    h.dns.set("_hirakumi.api.seller.test", ["hkv_code"]);
+    const parts = [{ in: "header" as const, name: "apikey" }, { in: "header" as const, name: "Authorization" }];
+    const bagFor = (origin: string) => ({
+      v: 3, parts: parts.map((p) => ({ ...p, hint: "" })),
+      sealed: sealUpstreamBag(keys.publicKey, { apiId: h.seeded.apiId, parts, origin, pathPrefix: "/" },
+        { values: ["sk_secret_value", "Bearer sk_secret_value"], fixed: [], leak: ["sk_secret_value", "Bearer sk_secret_value"] }),
+    });
+    const post = (body: unknown) => request(app2).post(`/internal/front-door/${h.seeded.apiId}/origin`).set(AUTH).send(body as object);
+    expect((await post({ origin: "https://origin.seller.test", upstreamAuth: bagFor("https://api.seller.test") })).body.error).toBe("key_unreadable");
+    const r = await post({ origin: "https://origin.seller.test", upstreamAuth: bagFor("https://origin.seller.test") });
+    // Opened: the test calls ran (origin.seller.test doesn't resolve here, so they fail) and nothing moved.
+    expect(r.status).toBe(422);
+    expect(r.body).toMatchObject({ error: "tests_failed", tests: [{ opId: "getPrice", ok: false }] });
+    expect(JSON.stringify(r.body)).not.toContain("sk_secret_value");
+  });
+
+  it("parseStoredAuth takes a single key or a bag of parts, and nothing else", () => {
+    expect(parseStoredAuth({ in: "header", name: "x-api-key", sealed: "hks2.a", hint: "WXYZ" })).toEqual({ in: "header", name: "x-api-key", sealed: "hks2.a", hint: "WXYZ" });
+    expect(parseStoredAuth({ v: 3, parts: [{ in: "header", name: "apikey", hint: "abcd" }, { in: "header", name: "V", hint: "x", fixed: true }], sealed: "hks3.a" }))
+      .toEqual({ v: 3, parts: [{ in: "header", name: "apikey", hint: "abcd" }, { in: "header", name: "V", hint: "", fixed: true }], sealed: "hks3.a" });
+    for (const bad of [null, [], { in: "body", name: "x", sealed: "s" }, { v: 3, parts: [], sealed: "s" },
+      { v: 3, parts: Array(5).fill({ in: "header", name: "a" }), sealed: "s" }, { v: 3, parts: [{ in: "path", name: "a" }], sealed: "s" },
+      { in: "header", name: "x", sealed: "" }]) {
+      expect(parseStoredAuth(bad)).toBeNull();
+    }
   });
 });
 

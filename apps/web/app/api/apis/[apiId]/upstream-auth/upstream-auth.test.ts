@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { generateUpstreamAuthKeys, openUpstreamSecret, UpstreamAddressChangedError, type StoredUpstreamAuth } from "@hirakumi/core";
+import { generateUpstreamAuthKeys, openUpstreamSecret, UpstreamAddressChangedError, type StoredUpstreamSecret } from "@hirakumi/core";
 import { getSql } from "@/lib/db";
 import { GatewayError, setGatewayForTests, type Gateway } from "@/lib/gateway";
 import { deleteApi } from "@/lib/repo/delete-api";
@@ -40,7 +40,7 @@ function remove(asCookie = cookie, id = api.id) {
   return DELETE(jsonRequest(`/api/apis/${id}/upstream-auth`, { cookie: asCookie, method: "DELETE" }), ctx(id));
 }
 async function storedRow(id = api.id) {
-  const [row] = await getSql()<{ upstreamAuth: StoredUpstreamAuth | null }[]>`select upstream_auth from apis where id = ${id}`;
+  const [row] = await getSql()<{ upstreamAuth: StoredUpstreamSecret | null }[]>`select upstream_auth from apis where id = ${id}`;
   return row.upstreamAuth;
 }
 
@@ -219,6 +219,15 @@ describe("upstream auth", () => {
     const other = await seedApi(seller.id, "endpoints_confirmed");
     await seedOnboardStep(other.id, "parse", "done", { operations: [], authHint: null });
     expect(await getAuthHint(getSql(), other.id)).toBeNull();
+  });
+
+  it("reads a key in several parts from the parse step, and falls back to the first part when a part is unreadable", async () => {
+    const parts = [{ in: "header", name: "apikey" }, { in: "header", name: "Authorization", prefix: "Bearer " }];
+    await seedOnboardStep(api.id, "parse", "done", { operations: [], authHint: { in: "header", name: "apikey", parts } });
+    expect(await getAuthHint(getSql(), api.id)).toEqual({ in: "header", name: "apikey", parts });
+    const other = await seedApi(seller.id, "endpoints_confirmed");
+    await seedOnboardStep(other.id, "parse", "done", { operations: [], authHint: { in: "header", name: "apikey", parts: [parts[0], { in: "cookie", name: "x" }] } });
+    expect(await getAuthHint(getSql(), other.id)).toEqual({ in: "header", name: "apikey" });
   });
 
   it("doesn't write the key back onto an API retired after the route read it", async () => {

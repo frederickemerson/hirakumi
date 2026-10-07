@@ -5,6 +5,7 @@ import { getJob, insertJob, type JobRow } from "@hirakumi/db";
 import { estimatedDowntimeSeconds } from "./config";
 import type { AppDeps } from "./deps";
 import { downBody, SELLER_BODY_HEADERS, sellingPausedBody } from "./http";
+import { createWindowLimiter } from "./limiter";
 import { escrowOperation } from "./registry";
 import { containsNul, normalizeMip003Input } from "./upstream";
 
@@ -75,28 +76,6 @@ export function clientKey(ip: string | undefined): string {
   const right = tail ? tail.split(":") : [];
   const groups = ip.includes("::") ? [...left, ...Array(8 - left.length - right.length).fill("0"), ...right] : left;
   return `${groups.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, "")).join(":")}::/64`;
-}
-
-/**
- * Sliding-window limiter per key. The map is kept in last-request order (a key is moved to the end on every request),
- * so addresses whose newest request left the window sit at the front and are dropped there: O(1) amortised per
- * request however many addresses are live. (A full scan once the map passed 10 000 keys made every request cost
- * O(addresses): a sweep over many IPv6 /64s slowed every caller down.)
- */
-function createWindowLimiter(max: number, windowMs: number): (key: string, now?: number) => boolean {
-  const hits = new Map<string, number[]>();
-  return (key, now = Date.now()) => {
-    for (const [k, v] of hits) {
-      if (now - v[v.length - 1]! < windowMs) break;
-      hits.delete(k);
-    }
-    const recent = (hits.get(key) ?? []).filter((t) => now - t < windowMs);
-    hits.delete(key);
-    if (recent.length >= max) { hits.set(key, recent); return false; }
-    recent.push(now);
-    hits.set(key, recent);
-    return true;
-  };
 }
 
 function statusBody(job: JobRow) {

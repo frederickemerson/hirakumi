@@ -1,5 +1,5 @@
 import { USDM_PREPROD_ASSET } from "@x402/cardano";
-import { isJsonMediaType, mediaTypeOf } from "@hirakumi/core";
+import { isJsonMediaType, mediaTypeOf, parseRetryAfter } from "@hirakumi/core";
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 export type PackOffer = { packId: string; calls: number; price: string; asset: string; buyUrl: string };
@@ -10,6 +10,11 @@ export type CallOutcome =
   | { kind: "upstream_error"; status: number; reasons: string[]; remaining: number | null; latencyMs: number }
   | { kind: "credits_required"; offer: CreditsRequired }
   | { kind: "down"; message: string }
+  /**
+   * No credit used: the API's own rate limit (503 upstream_rate_limited) or this token's free-failure limit
+   * (429 too_many_failed_calls). `retryAfter` is the Retry-After header in seconds, when it parses.
+   */
+  | { kind: "rate_limited"; error: string; retryAfter: number | null; remaining: number | null }
   | { kind: "bad_input"; message: string }
   | { kind: "token_pending" }
   | { kind: "invalid_token"; message: string }
@@ -116,7 +121,15 @@ export async function callOperation(
     case 502:
     case 504: return { kind: "upstream_error", status: res.status, reasons: reasonsOf(body), remaining, latencyMs };
     case 402: return { kind: "credits_required", offer: parseCreditsRequired(body, a.gatewayUrl) };
-    case 503: return { kind: "down", message: messageOf(body, text) };
+    case 429:
+    case 503: {
+      const error = (body as { error?: unknown } | undefined)?.error;
+      if (error === "upstream_rate_limited" || error === "too_many_failed_calls") {
+        return { kind: "rate_limited", error, retryAfter: parseRetryAfter(res.headers.get("retry-after")), remaining };
+      }
+      if (res.status === 503) return { kind: "down", message: messageOf(body, text) };
+      return { kind: "unexpected", status: res.status, text: text.slice(0, 500) };
+    }
     case 400: return { kind: "bad_input", message: messageOf(body, text) };
     case 401:
       return (body as { error?: unknown } | undefined)?.error === "token_pending"

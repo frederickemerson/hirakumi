@@ -202,7 +202,7 @@ export function testConfig(over: Partial<GatewayConfig> = {}): GatewayConfig {
     dnsResolvers: [], ownershipRecheckMs: 6 * 3_600_000, ownershipRetryMs: 15 * 60_000,
     thresholds: { failsToDown: 2, passesToHeal: 2 }, l1Confirmations: 0, upstreamTimeoutMs: 500,
     escrow: { payByMs: 10 * 60_000, submitResultMs: 20 * 60_000, unit: "16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d" }, blockfrostProjectId: null, masumi: null,
-    packMode: "direct", packEscrow: null, settlement: { ...DEFAULT_SETTLEMENT_POLICY }, startJobTrustedCidrs: [], tryLiveApis: [], upstreamAuthPrivateKey: null,
+    packMode: "direct", packEscrow: null, settlement: { ...DEFAULT_SETTLEMENT_POLICY }, startJobTrustedCidrs: [], tryLiveApis: [], upstreamAuthPrivateKey: null, upstreamAuthKeyProblem: null,
     webBaseUrl: "https://web.test", edgeIps: ["52.70.235.103"], tlsAskPort: 0, domainRecheckMs: 6 * 3_600_000,
     ...over,
   };

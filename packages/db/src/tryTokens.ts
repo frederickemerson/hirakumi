@@ -31,6 +31,16 @@ export const SHOWCASE: TryScope = { selfTestSellerId: null };
 const scopeSql = (sql: Q, s: TryScope) =>
   s.selfTestSellerId === null ? sql`t.self_test_seller_id is null` : sql`t.self_test_seller_id = ${s.selfTestSellerId}`;
 
+/**
+ * True when the token is the public "Try it live" showcase's pack for this API (bought by the demo wallet, not a
+ * seller's self test): one token shared by every visitor, whose calls the web app already limits per visitor.
+ */
+export async function isShowcaseTryToken(sql: Q, apiId: string, tokenHash: string): Promise<boolean> {
+  const [row] = await sql`
+    select 1 from try_tokens where api_id = ${apiId} and token_hash = ${tokenHash} and self_test_seller_id is null limit 1`;
+  return !!row;
+}
+
 /** The newest live-demo pack for this API whose credit token still has credits (and, if escrow, is open). */
 export async function findUsableTryPack(sql: Q, apiId: string, scope: TryScope = SHOWCASE): Promise<UsableTryPack | null> {
   const [row] = await sql<{

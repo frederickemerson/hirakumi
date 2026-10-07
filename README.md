@@ -2,7 +2,7 @@
 
 # Hirakumi
 
-Make your APIs monetizable for AI agents. A seller lists any read-only API, proves they own it, and approves a promise that every good answer must keep. Buyer agents pay once for a pack of calls with x402 on Cardano, and a call uses a credit only when its answer passes the promise. Large or risky packs settle through an Aiken escrow contract that pays the seller only for calls the buyer signed for. Every listing is also a Masumi agent that other agents can hire per job through Masumi escrow.
+Monetize your APIs for AI agents. A seller lists any API, proves they own it, and approves a promise that every good answer must keep. Buyer agents pay once for a pack of calls with x402 on Cardano, and a call uses a credit only when its answer passes the promise. Large or risky packs settle through an Aiken escrow contract that pays the seller only for calls the buyer signed for. Every listing is also a Masumi agent that other agents can hire per job through Masumi escrow.
 
 Built for TOKEN2049 Origins, Cardano "Agentic Commerce" track. Cardano preprod only.
 

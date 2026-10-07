@@ -7,6 +7,7 @@ import { ProtectLink } from "@/components/protect-link";
 import { UpstreamAuthForm } from "@/components/upstream-auth-form";
 import { ErrorState, NoticeList, WaitingState } from "@/components/states";
 import { getSql } from "@/lib/db";
+import { env } from "@/lib/env";
 import { stepForState } from "@/lib/flow";
 import { loadApiPage } from "@/lib/page-auth";
 import { listingBaseNotes } from "@/lib/repo/apis";
@@ -41,7 +42,8 @@ export default async function ReviewPage({ params }: { params: Promise<{ apiId: 
         {failure ? (
           <>
             <ErrorState title="Your test calls didn't pass" detail={failure} />
-            {keysOn && <UpstreamAuthForm apiId={apiId} initial={upstreamAuth} hint={authHint} retriesTests />}
+            {keysOn && <UpstreamAuthForm apiId={apiId} initial={upstreamAuth} hint={authHint} retriesTests
+              v3={env.upstreamAuthV3()} egressIps={env.gatewayEgressIps()} />}
           </>
         ) : (
           <WaitingState title="Running test calls on your API"
@@ -76,7 +78,8 @@ export default async function ReviewPage({ params }: { params: Promise<{ apiId: 
       {/* The key the leak check points to, and key rotation before publishing: a new key takes effect on the next call. */}
       {keysOn && (
         <div id={KEY_FORM_ID}>
-          <UpstreamAuthForm apiId={apiId} initial={upstreamAuth} hint={null} title="Your API's key" />
+          <UpstreamAuthForm apiId={apiId} initial={upstreamAuth} hint={null} title="Your API's key"
+            v3={env.upstreamAuthV3()} egressIps={env.gatewayEgressIps()} />
         </div>
       )}
       <ProtectLink apiId={apiId} frontDoor={frontDoor} />

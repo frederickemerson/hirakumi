@@ -31,11 +31,27 @@ export type FrontDoorWizardProps = {
   apex: boolean;
   /** Where the stored key goes, to prefill the form. The key itself is never sent to the page. */
   keyHint: { in: Placement; name: string } | null;
+  /**
+   * A stored key in several parts (hks3): where each part goes and whether it is fixed text. The key is sealed for
+   * the API's address, so the new origin needs every part typed again. Null for a single key or none.
+   */
+  keyParts?: KeyPart[] | null;
   /** Where the public host's DNS is managed (probe-dns.ts), streamed in. */
   dns?: Promise<DnsSetup>;
 };
 
 type OriginFailure = { text: string; tests?: OriginTest[] };
+export type KeyPart = { in: Placement; name: string; fixed?: boolean };
+
+/**
+ * The key for the new origin as the server takes it (lib/upstream-key.ts renderKeyBody). A stored bag of one part is
+ * HTTP Basic with a password; of several parts, the preset its parts fit: fixed text, a query part, or two headers.
+ */
+export function partsKeyBody(parts: readonly KeyPart[], values: readonly string[]): Record<string, unknown> {
+  if (parts.length === 1) return { preset: "basic", fields: { username: (values[0] ?? "").trim(), password: (values[1] ?? "").trim() } };
+  const preset = parts.some((x) => x.fixed) ? "keyPlusFixed" : parts.some((x) => x.in === "query") ? "headerPlusQuery" : "twoHeaders";
+  return { preset, fields: { rows: parts.map((x, i) => ({ in: x.in, name: x.name, value: (values[i] ?? "").trim(), fixed: !!x.fixed })) } };
+}
 
 /** The new hostname from what the seller typed, or null while it isn't a URL yet. */
 function hostOf(raw: string): string | null {
@@ -58,6 +74,10 @@ export function FrontDoorWizard(p: FrontDoorWizardProps) {
   const [place, setPlace] = useState<Placement>(p.keyHint?.in ?? "header");
   const [keyName, setKeyName] = useState(p.keyHint?.name ?? "");
   const [keyValue, setKeyValue] = useState("");
+  const bag = p.keyParts && p.keyParts.length > 0 ? p.keyParts : null;
+  // A one-part bag is Basic: a user name and a password. Otherwise one value per part.
+  const [partValues, setPartValues] = useState<string[]>(() => (bag ? (bag.length === 1 ? ["", ""] : bag.map(() => "")) : []));
+  const keyReady = bag ? partValues.every((v) => v.trim()) : !!keyName.trim() && !!keyValue.trim();
   const [switching, setSwitching] = useState(false);
   const [failure, setFailure] = useState<OriginFailure | null>(null);
   const [checking, setChecking] = useState(false);
@@ -74,11 +94,15 @@ export function FrontDoorWizard(p: FrontDoorWizardProps) {
     try {
       const res = await fetch(`/api/apis/${p.apiId}/front-door/origin`, {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ origin: originText.trim(), key: { in: place, name: keyName.trim(), value: keyValue.trim() } }),
+        body: JSON.stringify({
+          origin: originText.trim(),
+          key: bag ? partsKeyBody(bag, partValues) : { in: place, name: keyName.trim(), value: keyValue.trim() },
+        }),
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string; tests?: OriginTest[] };
       if (!res.ok) { setFailure({ text: data.error ?? "Something went wrong. Try again.", tests: data.tests }); return; }
       setKeyValue("");
+      setPartValues((vs) => vs.map(() => ""));
       toast("Hirakumi now calls your new origin");
       router.refresh();
     } catch {
@@ -146,6 +170,20 @@ export function FrontDoorWizard(p: FrontDoorWizardProps) {
               <div className="space-y-3">
                 <p className="text-body font-medium">Your API&apos;s key</p>
                 <p className="text-caption text-graphite">Required. Without it, anyone who finds the new hostname could call your API for free.</p>
+                {bag ? (
+                  <div className="grid gap-4 sm:grid-cols-2" data-testid="fd-key-parts">
+                    {(bag.length === 1 ? [{ label: "User name" }, { label: "Password" }] : bag.map((x) => ({
+                      label: `${x.in === "header" ? "Header" : "Query parameter"} ${x.name}${x.fixed ? " (fixed text)" : ""}`, fixed: x.fixed,
+                    }))).map((f, i) => (
+                      <div key={i} className="space-y-2">
+                        <label htmlFor={`fd-key-part-${i}`} className="block text-body font-medium">{f.label}</label>
+                        <Input id={`fd-key-part-${i}`} type={"fixed" in f && f.fixed ? "text" : "password"} autoComplete="off" spellCheck={false}
+                          value={partValues[i] ?? ""} disabled={switching}
+                          onChange={(e) => { const v = e.target.value; setPartValues((vs) => vs.map((old, j) => (j === i ? v : old))); }} />
+                      </div>
+                    ))}
+                  </div>
+                ) : (<>
                 <div role="radiogroup" aria-label="Where the key goes" className="flex flex-wrap gap-2">{tab("header")}{tab("query")}</div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
@@ -159,8 +197,9 @@ export function FrontDoorWizard(p: FrontDoorWizardProps) {
                       value={keyValue} onChange={(e) => setKeyValue(e.target.value)} disabled={switching} />
                   </div>
                 </div>
+                </>)}
               </div>
-              <Button type="submit" disabled={switching || !p.code || !newHost || !keyName.trim() || !keyValue.trim()} pending={switching} pendingLabel="Testing your new origin…">
+              <Button type="submit" disabled={switching || !p.code || !newHost || !keyReady} pending={switching} pendingLabel="Testing your new origin…">
                 Test and switch
               </Button>
               <p className="text-caption text-graphite">Hirakumi checks both TXT records and makes one test call per endpoint at the new origin. Only when all pass does it switch.</p>

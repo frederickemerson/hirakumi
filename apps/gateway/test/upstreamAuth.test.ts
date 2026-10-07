@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import request from "supertest";
-import { generateUpstreamAuthKeys, sealUpstreamSecret, type StoredUpstreamAuth } from "@hirakumi/core";
+import { generateUpstreamAuthKeys, sealUpstreamBag, sealUpstreamSecret, type StoredUpstreamAuth, type StoredUpstreamSecret } from "@hirakumi/core";
 import { JobRunner } from "../src/jobs";
 import { Monitor } from "../src/monitor";
 import { ADDRESS_CHANGED, openCredential } from "../src/registry";
@@ -11,7 +11,7 @@ const KEY = "sk_test/0123456789+abcdef";
 const ORIGIN = "https://api.example.com";
 type Address = { origin: string; pathPrefix: string };
 /** A stored key sealed for apiId at an address, with the placement and name in o (header X-API-Key by default). */
-const stored = (apiId: string, o: Partial<StoredUpstreamAuth> = {}, at: Address = { origin: ORIGIN, pathPrefix: "/" }): StoredUpstreamAuth => {
+const stored = (apiId: string, o: Partial<StoredUpstreamSecret> = {}, at: Address = { origin: ORIGIN, pathPrefix: "/" }): StoredUpstreamSecret => {
   const where = { in: o.in ?? "header", name: o.name ?? "X-API-Key" };
   return { ...where, sealed: sealUpstreamSecret(keys.publicKey, { apiId, ...where, ...at }, KEY), hint: "cdef", ...o };
 };
@@ -142,6 +142,22 @@ describe("an API that needs a key, through the gateway", () => {
     ]);
     for (const f of [KEY, encodeURIComponent(KEY)]) expect(dump).not.toContain(f);
     expect(dump).not.toContain("sk_test");
+  });
+
+  it("a key of two parts (hks3) sends both, and an answer that repeats either is withheld for free", async () => {
+    h = await makeHarness({ config: { upstreamAuthPrivateKey: keys.privateKey } });
+    const parts = [{ in: "header" as const, name: "apikey" }, { in: "header" as const, name: "Authorization" }];
+    const sealed = sealUpstreamBag(keys.publicKey, { apiId: h.seeded.apiId, parts, origin: h.stub.origin, pathPrefix: "/" },
+      { values: [KEY, `Bearer ${KEY}`], fixed: [], leak: [KEY, `Bearer ${KEY}`] });
+    await setAuth({ v: 3, parts: parts.map((p) => ({ ...p, hint: "cdef" })), sealed });
+    expect((await preview()).status).toBe(200);
+    expect(h.stub.lastHeaders()).toMatchObject({ apikey: KEY, authorization: `Bearer ${KEY}`, "accept-encoding": "identity" });
+    h.stub.setMode("echo");
+    const { token } = await insertActiveToken(h.sql, h.seeded, 5);
+    const paid = await request(h.app).get(`/a/${h.seeded.apiId}/x/getPrice?symbol=ADA`).set("authorization", `Bearer ${token}`);
+    expect(paid.status).toBe(502);
+    expect(paid.body).toEqual({ error: "upstream_error", reasons: ["the answer contained the API's key, so it was withheld"] });
+    expect(paid.headers["x-credits-remaining"]).toBe("5");
   });
 
   it("without the private key, or after the key stops opening, every call is blocked and never reaches the API", async () => {

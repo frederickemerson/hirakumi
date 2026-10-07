@@ -1,7 +1,11 @@
+import { gzipSync } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { answerLeaksSecret, compileRule, inferTextRule, withRequiredPhrase, type UpstreamCredential } from "@hirakumi/core";
+import {
+  answerLeaksSecret, compileRule, inferTextRule, KEY_FORBIDDEN_TEXT, KEY_REFUSED_TEXT, KEY_UNSCANNABLE_TEXT, renderPreset, upstreamSecretParts,
+  validateUpstreamBag, withRequiredPhrase, type UpstreamAuth, type UpstreamCredential,
+} from "@hirakumi/core";
 import { compileInputValidator, type LoadedOp } from "../src/registry";
-import { buildUpstreamRequest, leaksSecret, normalizeMip003Input, redactSecret, runOperation, secretForms } from "../src/upstream";
+import { buildUpstreamRequest, leaksSecret, normalizeMip003Input, redactSecret, resolveAuth, runOperation, secretForms } from "../src/upstream";
 import { PRICE_INPUT_SCHEMA, PRICE_RULE, startStubUpstream, type StubUpstream } from "./helpers";
 
 let stub: StubUpstream;
@@ -266,5 +270,105 @@ describe("text answers", () => {
     const o = await runOperation({ origin: stub.origin, path_prefix: "/" }, csvOp(), {}, { timeoutMs: 500 });
     expect(o.verdict).toBe("fail");
     expect(o.reasons[0]).toMatch(/content type is text\/plain, expected text\/csv/);
+  });
+});
+
+const b64 = (t: string) => Buffer.from(t).toString("base64");
+/** The price operation pointed at another stub path, with the price rule or none. */
+const opAt = (path: string, rule: LoadedOp["rule"] | null = compileRule(PRICE_RULE)): LoadedOp => ({ ...op(), row: { ...op().row, path }, rule });
+/** A bag's opened auth, from a preset as the web app renders it. */
+const bagAuth = (preset: string, fields: unknown): UpstreamAuth => {
+  const r = renderPreset(preset, fields);
+  if (r.kind !== "hks3") throw new Error("expected a bag");
+  return validateUpstreamBag(r.parts, r);
+};
+const SUPA = "sb_secret_0123456789abcdefWXYZ";
+const twoHeaders = () => bagAuth("twoHeaders", { rows: [
+  { in: "header", name: "apikey", value: SUPA }, { in: "header", name: "Authorization", value: SUPA, scheme: "Bearer" },
+] });
+const PASSWORD = "pw-0123456789xyz";
+/** HTTP Basic with a password, sealed with an empty leak list: the gateway derives the password and pair itself. */
+const basicNoLeak = (): UpstreamAuth =>
+  validateUpstreamBag([{ in: "header", name: "Authorization" }], { values: [`Basic ${b64(`alice-public:${PASSWORD}`)}`], fixed: [], leak: [] });
+
+describe("resolveAuth", () => {
+  it("a credential gives today's parts and leak set; a bag gives its own; no key gives null", () => {
+    expect(resolveAuth({ credential: headerKey, credentialError: null })).toEqual({ parts: [headerKey], leakParts: upstreamSecretParts(KEY) });
+    const auth = twoHeaders();
+    expect(resolveAuth({ credential: null, credentialError: null, auth })).toBe(auth);
+    expect(resolveAuth({})).toBeNull();
+    expect(resolveAuth({ credential: null, credentialError: "x" })).toBeNull();
+  });
+});
+
+describe("keys of several parts (hks3) and keyed answers", () => {
+  it("a single key's request is today's plus accept-encoding: identity; a keyless one is unchanged", () => {
+    const r = buildUpstreamRequest({ origin: "https://a.example", path_prefix: "/", credential: headerKey, credentialError: null }, { method: "GET", path: "/p" }, {});
+    expect(r.init).toEqual({
+      method: "GET", headers: { accept: "application/json", "user-agent": "hirakumi-gateway/0.1", "x-hirakumi-hop": "1", "accept-encoding": "identity", "x-api-key": KEY },
+    });
+    expect(buildUpstreamRequest({ origin: "https://a.example", path_prefix: "/" }, { method: "GET", path: "/p" }, {}).init.headers["accept-encoding"]).toBeUndefined();
+  });
+  it("sends every part after the buyer's fields, so a buyer field of the same name can't replace one", async () => {
+    const auth = bagAuth("headerPlusQuery", { rows: [
+      { in: "header", name: "X-App-Id", value: "app-public-id", fixed: true }, { in: "query", name: "key", value: SUPA },
+    ] });
+    const api = { origin: stub.origin, path_prefix: "/", credential: null, credentialError: null, auth };
+    const r = buildUpstreamRequest(api, { method: "GET", path: "/p" }, { symbol: "ADA", key: "buyer" });
+    expect(new URL(r.url).searchParams.getAll("key")).toEqual([SUPA]);
+    expect(r.init.headers["x-app-id"]).toBe("app-public-id");
+    stub.setMode("ok");
+    const o = await runOperation({ ...api, auth: twoHeaders() }, op(), { symbol: "ADA" }, { timeoutMs: 500 });
+    expect(o).toMatchObject({ execution: "upstream_ok", verdict: "pass" });
+    expect(stub.lastHeaders()).toMatchObject({ apikey: SUPA, authorization: `Bearer ${SUPA}`, "accept-encoding": "identity" });
+  });
+  it.each([
+    ["the key raw", twoHeaders, `{"echo":"${SUPA}"}`],
+    ["the key base64", twoHeaders, `{"echo":"${b64(SUPA)}"}`],
+    ["the sent Bearer value base64", twoHeaders, `{"echo":"${b64(`Bearer ${SUPA}`)}"}`],
+    ["the Basic header", basicNoLeak, `{"echo":"Basic ${b64(`alice-public:${PASSWORD}`)}"}`],
+    ["the derived password (leak list empty)", basicNoLeak, `{"echo":"${PASSWORD}"}`],
+    ["the derived pair, base64", basicNoLeak, `{"echo":"${b64(`alice-public:${PASSWORD}`)}"}`],
+  ] as const)("an answer that repeats %s is withheld and nothing quotes it", async (_label, auth, body) => {
+    stub.setFile("/leak", body);
+    const o = await runOperation({ origin: stub.origin, path_prefix: "/", credential: null, credentialError: null, auth: auth() }, opAt("/leak", null), {}, { timeoutMs: 500 });
+    expect(o).toMatchObject({ execution: "upstream_error", verdict: "n/a", result: null, reasons: ["the answer contained the API's key, so it was withheld"] });
+    for (const secret of [SUPA, PASSWORD, b64(SUPA)]) expect(JSON.stringify(o)).not.toContain(secret);
+  });
+  it("an echoed Basic user name is not withheld (it is often public)", async () => {
+    stub.setFile("/user", `{"user":"alice-public"}`);
+    const o = await runOperation({ origin: stub.origin, path_prefix: "/", auth: basicNoLeak() }, opAt("/user", null), {}, { timeoutMs: 500 });
+    expect(o).toMatchObject({ execution: "upstream_ok", verdict: "n/a" });
+  });
+  it("a keyed 401 or 403 leads with the key reason and tags auth; a keyless one does not", async () => {
+    stub.setFile("/k401", '{"error":"unauthorized"}', { status: 401 });
+    stub.setFile("/k403", '{"error":"forbidden"}', { status: 403 });
+    const keyed = { origin: stub.origin, path_prefix: "/", credential: headerKey, credentialError: null };
+    const refused = await runOperation(keyed, opAt("/k401"), {}, { timeoutMs: 500 });
+    expect(refused).toMatchObject({ execution: "upstream_ok", verdict: "fail", auth: "refused" });
+    expect(refused.reasons[0]).toBe(KEY_REFUSED_TEXT);
+    expect(refused.reasons.length).toBeGreaterThan(1);
+    const forbidden = await runOperation({ ...keyed, credential: null, auth: twoHeaders() }, opAt("/k403", null), {}, { timeoutMs: 500 });
+    expect(forbidden).toMatchObject({ verdict: "n/a", auth: "forbidden", reasons: [KEY_FORBIDDEN_TEXT] });
+    expect(forbidden.result?.status).toBe(403);
+    const keyless = await runOperation({ origin: stub.origin, path_prefix: "/" }, opAt("/k401"), {}, { timeoutMs: 500 });
+    expect(keyless.auth).toBeUndefined();
+    expect(keyless.reasons).not.toContain(KEY_REFUSED_TEXT);
+  });
+  it("a compressed answer is withheld when keyed and passed through when keyless", async () => {
+    stub.setFile("/gz", gzipSync(`{"echo":"${SUPA}"}`), { headers: { "content-encoding": "gzip" } });
+    const keyed = await runOperation({ origin: stub.origin, path_prefix: "/", auth: twoHeaders() }, opAt("/gz", null), {}, { timeoutMs: 500 });
+    expect(keyed).toMatchObject({ execution: "upstream_error", verdict: "n/a", result: null, reasons: [KEY_UNSCANNABLE_TEXT] });
+    expect(stub.lastFileHeaders()?.["accept-encoding"]).toBe("identity");
+    const keyless = await runOperation({ origin: stub.origin, path_prefix: "/" }, opAt("/gz", null), {}, { timeoutMs: 500 });
+    expect(keyless).toMatchObject({ execution: "upstream_ok", verdict: "n/a" });
+    expect(keyless.result?.contentEncoding).toBe("gzip");
+  });
+  it("an upstream 429 keeps its status and Retry-After in seconds", async () => {
+    stub.setFile("/busy", '{"error":"slow down"}', { status: 429, headers: { "retry-after": "7" } });
+    const o = await runOperation({ origin: stub.origin, path_prefix: "/" }, opAt("/busy"), {}, { timeoutMs: 500 });
+    expect(o).toMatchObject({ execution: "upstream_ok", verdict: "fail", retryAfter: 7 });
+    expect(o.result?.status).toBe(429);
+    expect(o.auth).toBeUndefined();
   });
 });

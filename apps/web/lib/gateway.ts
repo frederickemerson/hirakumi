@@ -1,3 +1,4 @@
+import type { StoredUpstreamAuth } from "@hirakumi/core";
 import { env } from "./env";
 import type { PackSettlement } from "./settlement";
 
@@ -6,6 +7,39 @@ export type ChallengeReason = "verified" | "no_code" | "bad_host" | "timeout" | 
 /** The ownership check: one TXT lookup of `record` (_hirakumi.<host>), looking for the API's code. */
 export type ChallengeCheck = { ok: boolean; reason: ChallengeReason; record: string; detail: string };
 export type GatewayHealth = { health: "healthy" | "down"; checkedAt: string | null; lastReasons: string[] };
+
+/** What one real call with a key said (apps/gateway/src/internal.ts check-key). */
+export type KeyCheckClass =
+  | "ok" | "accepted_unverified" | "refused" | "forbidden" | "rate_limited" | "timeout" | "echoed" | "unclear" | "unchecked";
+/**
+ * The gateway's check of a key: opened is false when it couldn't open the key at all; status is the API's HTTP
+ * status, op the endpoint called, reasons the redacted test reasons, why says why nothing was called ("unchecked").
+ * Never the answer's body.
+ */
+export type KeyCheck = {
+  opened: boolean; class: KeyCheckClass; status?: number; op?: string; reasons?: string[]; why?: "not_proven" | "no_test_input" | "not_protected";
+};
+const KEY_CHECK_CLASSES: readonly string[] = [
+  "ok", "accepted_unverified", "refused", "forbidden", "rate_limited", "timeout", "echoed", "unclear", "unchecked",
+];
+
+/** The check-key answer as the web app reads it, or null for any other shape. */
+export function parseKeyCheck(value: unknown): KeyCheck | null {
+  if (!value || typeof value !== "object") return null;
+  const b = value as Record<string, unknown>;
+  if (typeof b.opened !== "boolean") return null;
+  // A key the gateway couldn't open was never called with, so it may come back without a class.
+  const cls = b.class === undefined && !b.opened ? "unchecked" : b.class;
+  if (typeof cls !== "string" || !KEY_CHECK_CLASSES.includes(cls)) return null;
+  return {
+    opened: b.opened,
+    class: cls as KeyCheckClass,
+    ...(typeof b.status === "number" ? { status: b.status } : {}),
+    ...(typeof b.op === "string" ? { op: b.op } : {}),
+    ...(Array.isArray(b.reasons) ? { reasons: b.reasons.filter((r): r is string => typeof r === "string") } : {}),
+    ...(b.why === "not_proven" || b.why === "no_test_input" || b.why === "not_protected" ? { why: b.why } : {}),
+  };
+}
 
 /** The front door (apps/gateway/src/frontDoorAdmin.ts). */
 export type DomainStatus = "pending_dns" | "active" | "detached" | "disabled";
@@ -27,12 +61,18 @@ export type Gateway = {
   getHealth(apiId: string): Promise<GatewayHealth>;
   /** How each pack settles now for a buyer who can escrow (the gateway's PACK_MODE and settlement policy). */
   getSettlement(apiId: string): Promise<PackSettlement[]>;
+  /**
+   * One real call to the seller's API with a key: the sealed candidate in stored, or the saved key without it.
+   * Null on any failure, never throws. Optional so test fakes without it behave as before any check existed.
+   */
+  checkKey?(apiId: string, stored?: StoredUpstreamAuth): Promise<KeyCheck | null>;
 };
 
 /** The front door's internal routes, apart from Gateway so a test fakes only what it uses. */
 export type FrontDoorGateway = {
   getFrontDoor(apiId: string): Promise<FrontDoorView>;
-  switchOrigin(apiId: string, body: { origin: string; upstreamAuth: { in: string; name: string; sealed: string; hint: string } }): Promise<OriginSwitch>;
+  /** The key sealed for the new origin: one key (hks2) or a key in several parts (hks3). */
+  switchOrigin(apiId: string, body: { origin: string; upstreamAuth: StoredUpstreamAuth }): Promise<OriginSwitch>;
   checkDomain(host: string): Promise<DomainCheck>;
   stopFrontDoor(apiId: string): Promise<{ host: string | null }>;
   reloadDomain(host: string): Promise<void>;
@@ -125,6 +165,16 @@ export function createGateway(opts: { baseUrl: string; token: string; fetchImpl?
         }];
       });
     },
+    async checkKey(apiId, stored) {
+      const path = `/internal/apis/${encodeURIComponent(apiId)}/check-key`;
+      try {
+        // The gateway's own call to the seller's API may take up to 15 s; 25 s leaves room for opening and the trip.
+        return parseKeyCheck(await body(await call("POST", path, 25_000, stored === undefined ? {} : { stored }), path));
+      } catch (e) {
+        console.warn(`gateway key check failed for ${apiId}`, e instanceof Error ? e.message : e);
+        return null;
+      }
+    },
     async getFrontDoor(apiId) {
       const path = `/internal/front-door/${encodeURIComponent(apiId)}`;
       const b = await body(await call("GET", path, 5_000), path);
@@ -180,6 +230,20 @@ export function setFrontDoorGatewayForTests(g: FrontDoorGateway | null): void {
 
 export function getGateway(): Gateway {
   return override ?? createGateway({ baseUrl: env.gatewayInternalUrl(), token: env.internalToken() });
+}
+
+/**
+ * The gateway's check of a key (Gateway.checkKey), or null when it couldn't run: no gateway configured, a gateway
+ * without the check, or any failure. A null check never blocks a save.
+ */
+export async function checkKey(apiId: string, stored?: StoredUpstreamAuth): Promise<KeyCheck | null> {
+  try {
+    const gw = getGateway();
+    return gw.checkKey ? await gw.checkKey(apiId, stored) : null;
+  } catch (e) {
+    console.warn(`gateway key check failed for ${apiId}`, e instanceof Error ? e.message : e);
+    return null;
+  }
 }
 
 export function getFrontDoorGateway(): FrontDoorGateway {

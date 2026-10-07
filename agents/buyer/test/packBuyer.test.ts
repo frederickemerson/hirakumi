@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runPackDemo, type PackDemoOptions } from "../src/packBuyer.js";
+import { MAX_RATE_LIMIT_WAIT_MS, runPackDemo, type PackDemoOptions } from "../src/packBuyer.js";
 import { PendingStore, TokenStore } from "../src/tokenStore.js";
 import { PackPurchaseError, type SignedHook } from "../src/payClient.js";
 import { NoAffordablePackError } from "../src/gatewayClient.js";
@@ -95,6 +95,24 @@ describe("runPackDemo", () => {
     const s = await runPackDemo(h.make(), opts());
     expect(h.buyPack).not.toHaveBeenCalled();
     expect(s.down).toBe(1);
+  });
+
+  it("rate-limited: no credit used, waits Retry-After before the next call", async () => {
+    const gw = fakeGateway({ modes: ["pass", "rate_limited", "pass"], retryAfter: 7 });
+    const h = deps(gw);
+    const d = h.make();
+    const s = await runPackDemo(d, opts({ calls: 3, intervalMs: 1_000 }));
+    expect(s).toMatchObject({ passed: 2, rateLimited: 1, lastRemaining: 3, creditAccountingOk: true });
+    expect(h.lines.join("\n")).toContain("#2 rate-limited (upstream_rate_limited), no credit used. Retry-After 7s.");
+    expect(d.sleep.mock.calls.map((c) => c[0])).toEqual([1_000, 7_000]);
+  });
+
+  it("caps the Retry-After wait and handles a per-token 429", async () => {
+    const gw = fakeGateway({ modes: ["too_many_failed", "pass"], retryAfter: 3600 });
+    const d = deps(gw).make();
+    const s = await runPackDemo(d, opts({ calls: 2 }));
+    expect(s).toMatchObject({ passed: 1, rateLimited: 1, creditAccountingOk: true });
+    expect(d.sleep).toHaveBeenCalledWith(MAX_RATE_LIMIT_WAIT_MS);
   });
 
   it("waits while the token is pending, then succeeds", async () => {

@@ -257,6 +257,14 @@ describe("Ask teaches the current ownership flow (audit I4)", () => {
     expect(facts).toMatch(/payout address/);
   });
 
+  it("mentions keys in several parts and Basic passwords only once they can be saved (UPSTREAM_AUTH_V3)", () => {
+    const before = buildInstructions(null, false);
+    expect(before).toMatch(/HTTP Basic with the key as the user name/);
+    expect(before).not.toMatch(/2 to 4 parts|a user name and a password/);
+    const after = buildInstructions(null, true);
+    expect(after).toMatch(/HTTP Basic with the key as the user name\.\n- It also offers HTTP Basic with a user name and a password, and keys made of 2 to 4 parts/);
+  });
+
   it("answers the ownership step's help question offline", () => {
     expect(OFFLINE_FAQ[DNS_HELP_QUESTION]).toMatch(/add a TXT record/);
     expect(OFFLINE_FAQ[DNS_HELP_QUESTION]).not.toMatch(/[–—]/);

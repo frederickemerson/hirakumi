@@ -75,7 +75,8 @@ describe("credits: used == kept promises, exactly, under concurrent chaos", () =
       if ((row!.remaining === 0) !== (row!.status === "exhausted")) bad.push(`${t.id}: remaining=${row!.remaining} status=${row!.status}`);
     }
     const t = tally(statuses);
-    expect(Object.keys(t).every((k) => ["200", "402", "422", "502"].includes(k)), JSON.stringify(t)).toBe(true);
+    // 429: a token past 20 failed calls in a minute is turned away before any credit is reserved.
+    expect(Object.keys(t).every((k) => ["200", "402", "422", "429", "502"].includes(k)), JSON.stringify(t)).toBe(true);
     expect(bad).toEqual([]);
   });
 

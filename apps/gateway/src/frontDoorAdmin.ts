@@ -1,7 +1,7 @@
 import { Router } from "express";
 import express from "express";
 import { isIP } from "node:net";
-import { normalizeHost, type StoredUpstreamAuth } from "@hirakumi/core";
+import { MAX_UPSTREAM_PARTS, normalizeHost, resolveAuth, type StoredUpstreamAuth } from "@hirakumi/core";
 import {
   activateDomain, attachFrontDoor, detachApiFrontDoor, getDomainRoute, getFrontDoorState, getProvenVerifyCode, loadProbeInputs,
   noteDomainError, originHost, type FrontDoorLimits,
@@ -85,11 +85,12 @@ export function frontDoorAdminRoutes(d: AppDeps, r: Router, limits?: FrontDoorLi
       if (!atPublic.ok) { fail(422, "public_txt", atPublic.detail, { record: atPublic.record, reason: atPublic.reason }); return; }
 
       const access = openCredential({ id: apiId, upstream_auth: stored, origin, path_prefix: state.pathPrefix }, d.config.upstreamAuthPrivateKey);
-      if (access.credentialError || !access.credential) { fail(400, "key_unreadable", access.credentialError ?? "The key could not be read. Enter it again."); return; }
+      if (access.credentialError || !resolveAuth(access)) { fail(400, "key_unreadable", access.credentialError ?? "The key could not be read. Enter it again."); return; }
       const loaded = await d.registry.get(apiId, { fresh: true });
       if (!loaded) { fail(404, "api_not_found", "This API was not found."); return; }
       const inputs = await loadProbeInputs(d.sql, apiId);
-      const api = { ...loaded.api, origin, ...access };
+      // Only the key sealed for the new origin: a single key opens without `auth`, so the old bag's must not carry over.
+      const api = { ...loaded.api, origin, credential: access.credential, credentialError: access.credentialError, auth: access.auth };
       const tests: OriginTest[] = [];
       for (const op of loaded.ops.values()) {
         if (!op.row.enabled) continue;
@@ -166,11 +167,27 @@ export function frontDoorAdminRoutes(d: AppDeps, r: Router, limits?: FrontDoorLi
   });
 }
 
-function parseStoredAuth(v: unknown): StoredUpstreamAuth | null {
-  const o = v as Partial<StoredUpstreamAuth> | null;
-  if (!o || typeof o !== "object") return null;
-  if ((o.in !== "header" && o.in !== "query") || typeof o.name !== "string" || typeof o.sealed !== "string" || !o.sealed) return null;
-  return { in: o.in, name: o.name, sealed: o.sealed, hint: typeof o.hint === "string" ? o.hint : "" };
+/**
+ * The key the web app sealed for the new origin, as it will be stored: one key (hks2 { in, name, sealed, hint }) or a
+ * bag of parts (hks3 { v: 3, parts, sealed }). Only the shape is checked here; openCredential checks the rest.
+ */
+export function parseStoredAuth(v: unknown): StoredUpstreamAuth | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const o = v as Record<string, unknown>;
+  if (typeof o.sealed !== "string" || !o.sealed) return null;
+  const place = (x: unknown): x is "header" | "query" => x === "header" || x === "query";
+  const hint = (x: unknown) => (typeof x === "string" ? x : "");
+  if (o.v === 3) {
+    if (!Array.isArray(o.parts) || o.parts.length < 1 || o.parts.length > MAX_UPSTREAM_PARTS) return null;
+    const parts: { in: "header" | "query"; name: string; hint: string; fixed?: true }[] = [];
+    for (const p of o.parts as Record<string, unknown>[]) {
+      if (!p || typeof p !== "object" || !place(p.in) || typeof p.name !== "string") return null;
+      parts.push({ in: p.in, name: p.name, hint: p.fixed === true ? "" : hint(p.hint), ...(p.fixed === true ? { fixed: true as const } : {}) });
+    }
+    return { v: 3, parts, sealed: o.sealed };
+  }
+  if (!place(o.in) || typeof o.name !== "string") return null;
+  return { in: o.in, name: o.name, sealed: o.sealed, hint: hint(o.hint) };
 }
 
 /**

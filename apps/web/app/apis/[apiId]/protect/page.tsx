@@ -55,7 +55,9 @@ export default async function ProtectPage({ params }: { params: Promise<{ apiId:
         <FrontDoorWizard
           apiId={apiId} publicHost={publicHost} origin={origin} code={code}
           domain={view.domain ? { status: view.domain.status, lastError: view.domain.lastError } : null}
-          dnsTarget={view.dnsTarget} apex={apex} keyHint={key ? { in: key.in, name: key.name } : null} dns={dns}
+          dnsTarget={view.dnsTarget} apex={apex} dns={dns}
+          keyHint={key && !("parts" in key) ? { in: key.in, name: key.name } : null}
+          keyParts={key && "parts" in key ? key.parts.map((x) => ({ in: x.in, name: x.name, fixed: !!x.fixed })) : null}
         />
       )}
       <p className="text-body">

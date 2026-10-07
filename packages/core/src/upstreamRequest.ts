@@ -1,23 +1,35 @@
 import { urlWithinBase } from "./ownership";
 import { isJsonMediaType } from "./rules";
-import type { UpstreamCredential } from "./upstreamAuth";
+import { upstreamSecretParts, type UpstreamAuth, type UpstreamCredential } from "./upstreamAuth";
 
-/**
- * The API as an upstream call needs it: its proven origin and path prefix, and optionally the seller's key (the
- * gateway opens it; the leak check calls without one). credentialError is set when a stored key could not be opened.
- */
 /**
  * Sent on every upstream call. If an origin ever routes back to Hirakumi's front door, the front door answers 508
  * to a request carrying it instead of calling out again (apps/gateway frontDoor.ts). A reserved header.
  */
 export const HOP_HEADER = "x-hirakumi-hop";
 
+/**
+ * The API as an upstream call needs it: its proven origin and path prefix, and optionally the seller's key (the
+ * gateway opens it; the leak check calls without one). A single-key row opens to `credential`; a multi-part (hks3)
+ * row opens to `auth` with `credential` null. credentialError is set when a stored key could not be opened.
+ */
 export type UpstreamTarget = {
   origin: string;
   path_prefix: string;
   credential?: UpstreamCredential | null;
+  auth?: UpstreamAuth | null;
   credentialError?: string | null;
 };
+
+/**
+ * The API's key, whichever way it was stored: a bag's parts and leak list, or the one credential with the parts
+ * textLeaksSecret looks for (so a credential behaves exactly as before). Null when the API needs no key. Every read
+ * of the key goes through here, so a bag (credential null) is never sent or checked any less than a credential.
+ */
+export function resolveAuth(api: Pick<UpstreamTarget, "credential" | "auth" | "credentialError">): UpstreamAuth | null {
+  if (api.auth) return api.auth;
+  return api.credential ? { parts: [api.credential], leakParts: upstreamSecretParts(api.credential.value) } : null;
+}
 
 /**
  * The Accept header for an operation. A JSON promise, or no promise yet (QA and previews of a new listing), asks for
@@ -66,8 +78,11 @@ export function buildUpstreamRequest(
     throw new Error(`blocked: the endpoint path ${op.path} resolves outside the API's folder (${prefix || "/"}) on ${new URL(api.origin).origin}`);
   }
   if (api.credentialError) throw new Error(`blocked: ${api.credentialError}`);
+  const auth = resolveAuth(api);
   const method = op.method.toUpperCase();
   const headers: Record<string, string> = { accept: acceptFor(ruleContentType), "user-agent": "hirakumi-gateway/0.1", [HOP_HEADER]: "1" };
+  // A compressed answer can't be checked for the key (bodies are never decompressed), so a keyed call asks for none.
+  if (auth) headers["accept-encoding"] = "identity";
   // Shared input convention (P3 contract addition 3): `{name}` fields fill the path, a field named
   // `body` is the JSON request body, and every other field is a query parameter, for any method.
   const { body, ...query } = rest;
@@ -77,9 +92,10 @@ export function buildUpstreamRequest(
     else url.searchParams.set(k, typeof v === "object" ? JSON.stringify(v) : String(v));
   }
   // The seller's key last, so no buyer input can replace it. The URL was checked to be under the proven base above.
-  const credential = api.credential;
-  if (credential?.in === "header") headers[credential.name.toLowerCase()] = credential.value;
-  if (credential?.in === "query") url.searchParams.set(credential.name, credential.value);
+  for (const part of auth?.parts ?? []) {
+    if (part.in === "header") headers[part.name.toLowerCase()] = part.value;
+    else url.searchParams.set(part.name, part.value);
+  }
   if (body === undefined || method === "GET" || method === "HEAD") return { url: url.toString(), init: { method, headers } };
   headers["content-type"] = "application/json";
   return { url: url.toString(), init: { method, headers, body: JSON.stringify(body) } };

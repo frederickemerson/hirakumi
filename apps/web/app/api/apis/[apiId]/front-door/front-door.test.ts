@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { generateUpstreamAuthKeys, openUpstreamSecret } from "@hirakumi/core";
+import { generateUpstreamAuthKeys, openUpstreamBag, openUpstreamSecret, validateUpstreamBag, type StoredUpstreamBag } from "@hirakumi/core";
 import { getSql } from "@/lib/db";
 import { setFrontDoorGatewayForTests, setGatewayForTests, type FrontDoorGateway, type Gateway, type OriginSwitch } from "@/lib/gateway";
 import type { Api, Seller } from "@/lib/types";
@@ -69,6 +69,26 @@ describe("POST /front-door/origin", () => {
     const where = { apiId: api.id, in: "header" as const, name: "X-API-Key", pathPrefix: api.pathPrefix };
     expect(openUpstreamSecret(keys.privateKey, { ...where, origin: "https://origin.seller.dev" }, payload.upstreamAuth.sealed)).toBe(KEY);
     expect(() => openUpstreamSecret(keys.privateKey, { ...where, origin: api.origin }, payload.upstreamAuth.sealed)).toThrow();
+  });
+
+  it("seals a key in several parts (hks3) for the new origin, behind UPSTREAM_AUTH_V3", async () => {
+    const bag = {
+      origin: "https://origin.seller.dev",
+      key: { preset: "twoHeaders", fields: { rows: [{ in: "header", name: "apikey", value: KEY }, { in: "header", name: "Authorization", value: KEY, scheme: "Bearer" }] } },
+    };
+    expect((await post(origin, "/origin", bag)).status).toBe(409);
+    expect(fd.switchOrigin).not.toHaveBeenCalled();
+    vi.stubEnv("UPSTREAM_AUTH_V3", "1");
+    const res = await post(origin, "/origin", bag);
+    expect(res.status).toBe(200);
+    const [[, payload]] = fd.switchOrigin.mock.calls as [[string, { origin: string; upstreamAuth: StoredUpstreamBag }]];
+    expect(JSON.stringify(payload)).not.toContain(KEY);
+    expect(payload.upstreamAuth).toMatchObject({ v: 3, parts: [{ in: "header", name: "apikey", hint: "WXYZ" }, { in: "header", name: "Authorization", hint: "WXYZ" }] });
+    const parts = payload.upstreamAuth.parts.map((p) => ({ in: p.in, name: p.name }));
+    const ctxFor = (o: string) => ({ apiId: api.id, parts, origin: o, pathPrefix: api.pathPrefix });
+    const opened = openUpstreamBag(keys.privateKey, ctxFor("https://origin.seller.dev"), payload.upstreamAuth.sealed);
+    expect(validateUpstreamBag(parts, opened).parts.map((p) => p.value)).toEqual([KEY, `Bearer ${KEY}`]);
+    expect(() => openUpstreamBag(keys.privateKey, ctxFor(api.origin), payload.upstreamAuth.sealed)).toThrow();
   });
 
   it("passes on why the gateway refused, with the test results", async () => {

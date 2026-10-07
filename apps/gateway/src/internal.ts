@@ -1,13 +1,16 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { Router, type RequestHandler } from "express";
-import { getOpenVerifyCode, getOwnershipTarget, insertCall } from "@hirakumi/db";
+import type { StoredUpstreamAuth } from "@hirakumi/core";
+import { getOpenVerifyCode, getOwnershipTarget, insertCall, loadProbeInputs, type ApiState } from "@hirakumi/db";
 import { demoBuyPack } from "./demoBuy";
 import { frontDoorAdminRoutes } from "./frontDoorAdmin";
 import { SELLER_BODY_HEADERS } from "./http";
 import type { AppDeps } from "./deps";
+import { createWindowLimiter } from "./limiter";
 import { probeVerifyDns, txtLookupVia, type DnsCheck } from "./ownership";
+import { openCredential, type LoadedApi, type LoadedOp } from "./registry";
 import { canEscrow, forgetSettlementSignals, policyFor } from "./settlement";
-import { runOperation } from "./upstream";
+import { KEY_WITHHELD_TEXT, resolveAuth, runOperation, type OperationOutcome } from "./upstream";
 
 /**
  * The ownership check of the web app's proof step: the API's open code (kind 'dns') in the TXT record at
@@ -16,6 +19,102 @@ import { runOperation } from "./upstream";
 async function checkOwnership(d: AppDeps, target: { id: string; origin: string }): Promise<DnsCheck> {
   const code = await getOpenVerifyCode(d.sql, target.id);
   return probeVerifyDns(target.origin, code?.token ?? null, d.txtLookup ?? txtLookupVia(d.config.dnsResolvers));
+}
+
+/** What a key check found. "unchecked" means no call was made (see `why`). */
+export type CheckKeyClass =
+  | "ok" | "accepted_unverified" | "refused" | "forbidden" | "rate_limited" | "timeout" | "echoed" | "unclear" | "unchecked";
+/**
+ * why, for "unchecked": not_proven (the address isn't proven, so nothing was called), no_test_input (nothing to call
+ * with), not_protected (the endpoint called doesn't need the key as far as the OpenAPI file says, so its good answer
+ * proves nothing about the key).
+ */
+export type CheckKeyResult = {
+  opened: boolean; class: CheckKeyClass; status?: number; op?: string; reasons?: string[]; why?: "not_proven" | "no_test_input" | "not_protected";
+};
+
+/** States from ownership proof onward: only then is the API's address known to be the seller's, so a call may go there. */
+const PROVEN_STATES: ReadonlySet<ApiState> = new Set(["ownership_verified", "rule_built", "priced", "registering", "live"]);
+/** A check-key call waits at most this long, so the web app's save never hangs on a slow API. */
+export const CHECK_KEY_TIMEOUT_MS = 15_000;
+
+/** Endpoints that need the key first, then those not known either way, then public ones (migration 0021). */
+const keyRank = (op: LoadedOp) => (op.row.needs_key === true ? 0 : op.row.needs_key === false ? 2 : 1);
+
+/**
+ * The operation and input a key check calls, preferring an endpoint that needs the key (keyRank): among those of
+ * the best rank, an enabled operation with a promise and a saved test input, else any enabled operation with a
+ * saved test input, else an enabled GET that needs no input at all (called with {}).
+ */
+async function chooseCheckOp(d: AppDeps, loaded: LoadedApi): Promise<{ op: LoadedOp; input: Record<string, unknown> } | null> {
+  const inputs = await loadProbeInputs(d.sql, loaded.api.id);
+  const withInput = inputs.map((t) => ({ op: loaded.ops.get(t.op_id)!, input: t.input as unknown }))
+    .filter((x) => x.op?.row.enabled)
+    .map((x) => ({ ...x, input: (() => { const c = x.op.validateInput(x.input); return c.ok ? c.value : (x.input as Record<string, unknown>); })() }));
+  const bare: { op: LoadedOp; input: Record<string, unknown> }[] = [];
+  for (const op of loaded.ops.values()) {
+    if (!op.row.enabled || op.row.method.toUpperCase() !== "GET" || op.row.path.includes("{")) continue;
+    const checked = op.validateInput({});
+    if (checked.ok) bare.push({ op, input: checked.value });
+  }
+  for (const rank of [0, 1, 2]) {
+    const ranked = withInput.filter((x) => keyRank(x.op) === rank);
+    const pick = ranked.find((x) => x.op.rule) ?? ranked[0] ?? bare.find((x) => keyRank(x.op) === rank);
+    if (pick) return pick;
+  }
+  return null;
+}
+
+/** The class of one check call. A withheld answer is "echoed" whatever its status, since its status is not kept. */
+export function classifyCheck(outcome: OperationOutcome): CheckKeyClass {
+  const status = outcome.result?.status;
+  if (outcome.execution === "timeout") return "timeout";
+  if (outcome.execution === "upstream_error" && !outcome.result && outcome.reasons.includes(KEY_WITHHELD_TEXT)) return "echoed";
+  if (outcome.auth === "refused" || status === 401) return "refused";
+  if (outcome.auth === "forbidden" || status === 403) return "forbidden";
+  if (status === 429) return "rate_limited";
+  if (outcome.execution === "upstream_ok" && outcome.verdict === "pass") return "ok";
+  if (outcome.execution === "upstream_ok" && outcome.verdict === "n/a" && status !== undefined && status >= 200 && status < 300) return "accepted_unverified";
+  return "unclear";
+}
+
+/**
+ * POST /internal/apis/:apiId/check-key {stored?}: does the API accept this key? Opens the sealed key the web app
+ * sends (or the saved one) under the row's own address, makes one real call on the seller's test input and answers
+ * with a class, the HTTP status and the redacted reasons, never the answer's body. Nothing is stored: no calls row,
+ * no health change. Only an API whose address is proven is called.
+ */
+async function checkKey(d: AppDeps, apiId: string, stored: unknown): Promise<CheckKeyResult | null> {
+  const loaded = await d.registry.get(apiId, { fresh: true });
+  if (!loaded) return null;
+  const toOpen = (stored ?? loaded.api.upstream_auth) as StoredUpstreamAuth | null;
+  if (!toOpen || typeof toOpen !== "object") return { opened: false, class: "unchecked" };
+  let access: ReturnType<typeof openCredential>;
+  try {
+    access = openCredential({ ...loaded.api, upstream_auth: toOpen }, d.config.upstreamAuthPrivateKey);
+  } catch {
+    return { opened: false, class: "unchecked" };
+  }
+  // Only the opened candidate is the key: an hks2 key has no `auth`, so a saved bag's must not carry over.
+  const api = { ...loaded.api, credential: access.credential, credentialError: access.credentialError, auth: access.auth };
+  if (access.credentialError || !resolveAuth(api)) return { opened: false, class: "unchecked" };
+  if (!PROVEN_STATES.has(loaded.api.state)) return { opened: true, class: "unchecked", why: "not_proven" };
+  const chosen = await chooseCheckOp(d, loaded);
+  if (!chosen) return { opened: true, class: "unchecked", why: "no_test_input" };
+  const outcome = await runOperation(api, chosen.op, chosen.input, {
+    timeoutMs: Math.min(d.config.upstreamTimeoutMs, CHECK_KEY_TIMEOUT_MS), probe: true,
+  });
+  const cls = classifyCheck(outcome);
+  // A good answer from an endpoint not known to need the key proves nothing: any key, or none, gets it.
+  if ((cls === "ok" || cls === "accepted_unverified") && chosen.op.row.needs_key !== true) {
+    return { opened: true, class: "unchecked", why: "not_protected", op: chosen.op.row.op_id, ...(outcome.result ? { status: outcome.result.status } : {}) };
+  }
+  const status = cls === "echoed" ? undefined : outcome.result?.status;
+  return {
+    opened: true, class: cls, op: chosen.op.row.op_id,
+    ...(status !== undefined ? { status } : {}),
+    ...(cls !== "ok" && outcome.reasons.length ? { reasons: outcome.reasons.slice(0, 5) } : {}),
+  };
 }
 
 const digest = (s: string) => createHash("sha256").update(s).digest();
@@ -34,6 +133,8 @@ function requireInternalToken(token: string): RequestHandler {
 export function internalRouter(d: AppDeps): Router {
   const r = Router();
   r.use("/internal", requireInternalToken(d.config.internalToken));
+  // Each check is a real call to the seller's API: at most 6 a minute per API.
+  const checkLimit = createWindowLimiter(6, 60_000);
 
   r.post("/internal/preview/:apiId/:opId", async (req, res, next) => {
     try {
@@ -67,6 +168,18 @@ export function internalRouter(d: AppDeps): Router {
   r.post("/internal/demo/buy-pack/:apiId", demoBuyPack(d));
   // A seller's one free test of their own live API (any API, not only TRY_LIVE_APIS); the web checks the seller.
   r.post("/internal/demo/self-test/:apiId", demoBuyPack(d, "self_test"));
+
+  r.post("/internal/apis/:apiId/check-key", async (req, res, next) => {
+    try {
+      if (!checkLimit(req.params.apiId)) {
+        res.status(429).set("retry-after", "60").json({ error: "too_many_checks" });
+        return;
+      }
+      const result = await checkKey(d, req.params.apiId, (req.body as { stored?: unknown } | undefined)?.stored);
+      if (!result) { res.status(404).json({ error: "api_not_found" }); return; }
+      res.json(result);
+    } catch (e) { next(e); }
+  });
 
   r.post("/internal/apis/:apiId/reload", (req, res) => {
     d.registry.invalidate(req.params.apiId);

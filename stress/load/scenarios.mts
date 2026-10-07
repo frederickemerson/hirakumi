@@ -187,14 +187,17 @@ if (want("receipts")) {
 }
 
 if (want("chaos")) {
-  // The seller flips pass/fail on every call while buyers hammer it: credits used == 200s exactly.
+  // The seller flips pass/fail on every call while buyers hammer it: credits used == 200s exactly. Each token makes
+  // 20 calls, so none reaches the gateway's limit of 20 failed calls a minute (a token past it gets 429s).
   const api = await seedApi();
   await internal(`/internal/apis/${api.apiId}/reload`);
-  const { token, id } = await newToken(api.apiId, api.packId, 1_000_000);
+  const total = LONG ? 50_000 : 10_000;
+  const tokens = await Promise.all(Array.from({ length: total / 20 }, () => newToken(api.apiId, api.packId, 1_000)));
   await admin({ mode: "flip" });
-  const m = await drive({ conns: 64, total: LONG ? 50_000 : 10_000, make: () => ({ path: api.call, headers: { authorization: `Bearer ${token}` } }) });
+  const m = await drive({ conns: 64, total, make: (i) => ({ path: api.call, headers: { authorization: `Bearer ${tokens[i % tokens.length]!.token}` } }) });
   await admin({ mode: "ok" });
-  const used = 1_000_000 - (await remainingOf(id)).remaining;
+  const [{ left }] = await sql<{ left: number }[]>`select sum(remaining)::int as left from credit_tokens where id = any(${tokens.map((t) => t.id)})`;
+  const used = tokens.length * 1_000 - left!;
   record("flip-flopping seller under load: credits used == 200s, the rest 422", used === (m.statuses[200] ?? 0) && Object.keys(m.statuses).every((k) => k === "200" || k === "422" || k === "503"),
     `used=${used} statuses=${JSON.stringify(m.statuses)} p99=${m.p99}ms`);
   await waitHealth(api.apiId, 200);
@@ -202,11 +205,14 @@ if (want("chaos")) {
 
 if (want("down")) {
   // Broken seller: 422 and no credit; the monitor flips it Down (503, no credit, no upstream call); recovery.
+  // The broken calls use their own token: past 20 failed calls in a minute it gets 429s (no credit either), and the
+  // recovery call must not wait out that minute.
   const api = await seedApi();
   await internal(`/internal/apis/${api.apiId}/reload`);
   const { token, id } = await newToken(api.apiId, api.packId, 500);
+  const broken = await newToken(api.apiId, api.packId, 500);
   await admin({ mode: "empty" });
-  const r1 = await Promise.all(Array.from({ length: 300 }, () => req(api.call, { headers: { authorization: `Bearer ${token}` } }).then((r) => r.status)));
+  const r1 = await Promise.all(Array.from({ length: 300 }, () => req(api.call, { headers: { authorization: `Bearer ${broken.token}` } }).then((r) => r.status)));
   const down = await waitHealth(api.apiId, 503);
   const r2 = await Promise.all(Array.from({ length: 200 }, () => req(api.call, { headers: { authorization: `Bearer ${token}` } }).then((r) => r.status)));
   const offerDown = await req(`/a/${api.apiId}/packs/${api.packId}`, { method: "POST" });
@@ -214,9 +220,10 @@ if (want("down")) {
   const up = await waitHealth(api.apiId, 200);
   const r3 = await req(api.call, { headers: { authorization: `Bearer ${token}` } });
   const left = (await remainingOf(id)).remaining;
+  const brokenLeft = (await remainingOf(broken.id)).remaining;
   record("broken -> Down -> recovered: 422s and 503s use nothing, no pack is offered while Down, one credit after recovery",
-    !r1.includes(200) && down && r2.every((s) => s === 503) && offerDown.status === 503 && up && r3.status === 200 && left === 499,
-    `broken=${JSON.stringify(tally(r1))} down=${down} whileDown=${JSON.stringify(tally(r2))} packOffer=${offerDown.status} recovered=${up} after=${r3.status} left=${left}`);
+    r1.every((s) => s === 422 || s === 429) && brokenLeft === 500 && down && r2.every((s) => s === 503) && offerDown.status === 503 && up && r3.status === 200 && left === 499,
+    `broken=${JSON.stringify(tally(r1))} down=${down} whileDown=${JSON.stringify(tally(r2))} packOffer=${offerDown.status} recovered=${up} after=${r3.status} left=${left} brokenLeft=${brokenLeft}`);
 }
 
 if (want("hybrid")) {

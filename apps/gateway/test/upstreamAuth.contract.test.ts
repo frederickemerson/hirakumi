@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it } from "vitest";
 import request from "supertest";
-import { generateUpstreamAuthKeys, sealUpstreamSecret, upstreamSecretHint, validateUpstreamAuth } from "@hirakumi/core";
+import {
+  generateUpstreamAuthKeys, renderPreset, sealUpstreamBag, sealUpstreamSecret, upstreamSecretHint, validateUpstreamAuth, type StoredUpstreamAuth,
+} from "@hirakumi/core";
 import { loadApiBundle } from "@hirakumi/db";
 import { createPool } from "../../coworker/src/db";
 import { parseOpenApi } from "../../coworker/src/openapi/parse";
 import { finishStep } from "../../coworker/src/steps";
+import { parseKeyCheck } from "../../web/lib/gateway";
 import { getAuthHint, getUpstreamAuth, setUpstreamAuth } from "../../web/lib/repo/upstream-auth";
 import { openCredential } from "../src/registry";
 import { makeHarness, type Harness } from "./helpers";
@@ -76,5 +79,120 @@ describe("upstream key contract: coworker hint, web sealing, gateway opening", (
     expect(p.status).toBe(200);
     expect(h.stub.lastHeaders()?.authorization).toBe(`Bearer ${KEY}`);
     expect(JSON.stringify(p.body)).not.toContain(KEY);
+  });
+});
+
+/** Each preset as a seller fills it in. */
+const PRESETS: [string, unknown][] = [
+  ["single", { in: "query", name: "api_key", value: KEY }],
+  ["bearer", { key: KEY }],
+  ["bearer", { key: KEY, scheme: "Token", header: "X-Auth" }],
+  ["basic", { username: KEY }],
+  ["basic", { username: "alice", password: "pw-0123456789xyz" }],
+  ["twoHeaders", { rows: [{ in: "header", name: "apikey", value: KEY }, { in: "header", name: "Authorization", value: KEY, scheme: "Bearer" }] }],
+  ["keyPlusFixed", { rows: [{ in: "header", name: "X-API-Key", value: KEY }, { in: "header", name: "Notion-Version", value: "2022-06-28", fixed: true }] }],
+  ["headerPlusQuery", { rows: [{ in: "header", name: "X-App-Id", value: "app-0123456789" }, { in: "query", name: "key", value: KEY }] }],
+];
+
+/** What the gateway must withhold whatever the leak list says, worked out here independently of core. */
+function derived(value: string): string[] {
+  const basic = /^Basic ([A-Za-z0-9+/=]+)$/.exec(value);
+  if (basic) {
+    const pair = Buffer.from(basic[1], "base64").toString();
+    const password = pair.slice(pair.indexOf(":") + 1);
+    return [password, pair].filter((x) => x.length >= 8 && password.length > 0);
+  }
+  const scheme = /^(?:Bearer|Token) (.+)$/.exec(value);
+  return scheme ? [scheme[1]] : [];
+}
+
+describe("upstream key contract: every preset the web app seals opens on the gateway", () => {
+  let h: Harness;
+  afterEach(async () => { await h.close(); });
+
+  it("with the same parts, and a leak set covering the web's list and what the gateway derives", async () => {
+    h = await makeHarness({ config: { upstreamAuthPrivateKey: keys.privateKey } });
+    const { apiId, sellerId } = h.seeded;
+    const at = { origin: h.stub.origin, pathPrefix: "/" };
+    for (const [preset, fields] of PRESETS) {
+      const label = `${preset} ${JSON.stringify(fields)}`;
+      const r = renderPreset(preset, fields);
+      // Web: seal the rendered key or bag for this API and store it as the route does.
+      let stored: StoredUpstreamAuth;
+      if (r.kind === "hks2") {
+        const c = r.credential;
+        stored = { in: c.in, name: c.name, sealed: sealUpstreamSecret(keys.publicKey, { apiId, in: c.in, name: c.name, ...at }, c.value), hint: upstreamSecretHint(c.value) };
+      } else {
+        const hints = r.values.map((v, i) => (r.fixed.includes(i) ? "" : upstreamSecretHint(v)));
+        stored = { v: 3, parts: r.parts.map((p, i) => ({ ...p, hint: hints[i] })), sealed: sealUpstreamBag(keys.publicKey, { apiId, parts: r.parts, ...at }, r) };
+      }
+      expect(await setUpstreamAuth(h.sql, { apiId, sellerId }, stored), label).toBe(true);
+
+      // Gateway: the stored row opens to exactly what was rendered.
+      const access = openCredential((await loadApiBundle(h.sql, apiId))!.api, keys.privateKey);
+      expect(access.credentialError, label).toBeNull();
+      if (r.kind === "hks2") {
+        expect(access, label).toStrictEqual({ credential: r.credential, credentialError: null });
+        continue;
+      }
+      expect(access.credential, label).toBeNull();
+      expect(access.auth?.parts, label).toEqual(r.parts.map((p, i) => ({ ...p, value: r.values[i] })));
+      const secrets = r.values.filter((_, i) => !r.fixed.includes(i));
+      const leakParts = new Set(access.auth?.leakParts);
+      for (const x of [...r.leak, ...secrets, ...secrets.flatMap(derived)]) expect(leakParts.has(x), `${label}: ${x}`).toBe(true);
+      for (const i of r.fixed) expect(leakParts.has(r.values[i]), label).toBe(false);
+    }
+  });
+});
+
+describe("upstream key contract: the gateway's key check answers in the shape the web app reads", () => {
+  let h: Harness;
+  afterEach(async () => { await h.close(); });
+
+  /** Saves a header key for the harness's API and returns a function posting one check, as the web app does. */
+  async function keyedCheck(): Promise<(body?: object) => Promise<request.Response>> {
+    h = await makeHarness({ config: { upstreamAuthPrivateKey: keys.privateKey } });
+    const apiId = h.seeded.apiId;
+    const ctx = { apiId, in: "header" as const, name: "X-API-Key", origin: h.stub.origin, pathPrefix: "/" };
+    await h.sql`update apis set upstream_auth = ${h.sql.json({ in: "header", name: "X-API-Key", hint: "", sealed: sealUpstreamSecret(keys.publicKey, ctx, KEY) })} where id = ${apiId}`;
+    await h.sql`update operations set needs_key = true where api_id = ${apiId}`;
+    return (body = {}) => request(h.app).post(`/internal/apis/${apiId}/check-key`).set(internal).send(body);
+  }
+  /** The web parser keeps every field of the gateway's answer, unchanged. */
+  const parsedClass = (r: request.Response) => {
+    expect(r.status).toBe(200);
+    expect(parseKeyCheck(r.body)).toStrictEqual(r.body);
+    return r.body.class as string;
+  };
+
+  it("for every class a check can end in", async () => {
+    const seen: string[] = [];
+    let check = await keyedCheck();
+    seen.push(parsedClass(await check()));
+    h.stub.setMode("echo");
+    seen.push(parsedClass(await check()));
+    h.stub.setMode("error500");
+    seen.push(parsedClass(await check()));
+    for (const status of [401, 403, 429]) {
+      h.stub.setFile("/price", "{}", { status });
+      seen.push(parsedClass(await check()));
+    }
+    await h.close();
+
+    check = await keyedCheck();
+    h.stub.setMode("slow");
+    seen.push(parsedClass(await check()));
+    h.stub.setMode("ok");
+    await h.sql`delete from rules where operation_id = ${h.seeded.operationId}`;
+    seen.push(parsedClass(await check()));
+    const notOpened = await check({ stored: { in: "header", name: "X-API-Key", hint: "", sealed: "hks2.garbage" } });
+    expect(parsedClass(notOpened)).toBe("unchecked");
+    expect(notOpened.body.opened).toBe(false);
+    await h.sql`update operations set needs_key = false where api_id = ${h.seeded.apiId}`;
+    const notProtected = await check();
+    expect(parsedClass(notProtected)).toBe("unchecked");
+    expect(notProtected.body.why).toBe("not_protected");
+
+    expect(seen).toEqual(["ok", "echoed", "unclear", "refused", "forbidden", "rate_limited", "timeout", "accepted_unverified"]);
   });
 });

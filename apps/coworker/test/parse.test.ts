@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PermanentError } from "../src/errors.js";
-import { OpenApiError, parseOpenApi, toOpId } from "../src/openapi/parse.js";
+import { describeAuthHint, OpenApiError, parseOpenApi, toOpId } from "../src/openapi/parse.js";
 import { PRICE_SPEC } from "./fixtures.js";
 
 describe("parseOpenApi", () => {
@@ -114,6 +114,65 @@ describe("parseOpenApi: APIs that need a key", () => {
     // The key header is the gateway's to add, never a buyer input.
     expect(r.operations[0].inputSchema.required).toEqual(["symbol"]);
     expect(r.operations[0].llm.parameters.map((p) => p.name)).toEqual(["symbol"]);
+  });
+
+  describe("two keys at once (follow-up B, UPSTREAM_AUTH_V3)", () => {
+    const supabase = {
+      schemes: { apikey: { type: "apiKey", in: "header", name: "apikey" }, jwt: { type: "http", scheme: "bearer" } },
+      security: [{ apikey: [], jwt: [] }],
+      paths: {
+        "/rest": { parameters: [{ name: "apikey", in: "header", required: true, schema: { type: "string" } }, { name: "q", in: "query", schema: { type: "string" } }] },
+      },
+    };
+
+    it("are skipped while keys in several parts can't be saved", async () => {
+      const r = await parseOpenApi(spec(supabase));
+      expect(r.operations).toEqual([]);
+      expect(r.skipped[0].reason).toBe("needs two or more keys at once (not supported yet)");
+    });
+
+    it("are sold as a key in several parts: the hint lists every part, and no part is a buyer input", async () => {
+      const r = await parseOpenApi(spec(supabase), { multiPartKeys: true });
+      expect(r.skipped).toEqual([]);
+      expect(r.authHint).toEqual({
+        in: "header", name: "apikey",
+        parts: [{ in: "header", name: "apikey" }, { in: "header", name: "Authorization", prefix: "Bearer " }],
+      });
+      expect(r.operations[0].needsKey).toBe(true);
+      expect(Object.keys(r.operations[0].inputSchema.properties)).toEqual(["q"]);
+      expect(describeAuthHint(r.authHint!)).toBe("the apikey header and a bearer token in the Authorization header");
+    });
+
+    it("a header and a query key at once; the same requirement in another order is the same key", async () => {
+      const r = await parseOpenApi(spec({
+        schemes: { app: { type: "apiKey", in: "header", name: "X-App-Id" }, key: { type: "apiKey", in: "query", name: "key" } },
+        paths: { "/a": { security: [{ app: [], key: [] }] }, "/b": { security: [{ key: [], app: [] }] } },
+      }), { multiPartKeys: true });
+      expect(r.skipped).toEqual([]);
+      expect(r.authHint?.parts).toEqual([{ in: "header", name: "X-App-Id" }, { in: "query", name: "key" }]);
+      expect(r.operations.map((o) => o.needsKey)).toEqual([true, true]);
+    });
+
+    it("skips what no key form preset can send: two query keys, three headers, a part Hirakumi can't supply", async () => {
+      const r = await parseOpenApi(spec({
+        schemes: {
+          q1: { type: "apiKey", in: "query", name: "a" }, q2: { type: "apiKey", in: "query", name: "b" },
+          h1: { type: "apiKey", in: "header", name: "X-A" }, h2: { type: "apiKey", in: "header", name: "X-B" }, h3: { type: "apiKey", in: "header", name: "X-C" },
+          basic: { type: "http", scheme: "basic" },
+        },
+        paths: {
+          "/qq": { security: [{ q1: [], q2: [] }] },
+          "/hhh": { security: [{ h1: [], h2: [], h3: [] }] },
+          "/hb": { security: [{ h1: [], basic: [] }] },
+        },
+      }), { multiPartKeys: true });
+      expect(r.operations).toEqual([]);
+      expect(r.skipped.map((s) => s.reason)).toEqual([
+        "needs 2 query keys at once (not supported yet)",
+        "needs 3 header keys at once (not supported yet)",
+        "needs HTTP basic sign-in (not supported yet)",
+      ]);
+    });
   });
 
   it("maps http bearer to the Authorization header with a Bearer prefix", async () => {

@@ -1,5 +1,5 @@
 import { isIP } from "node:net";
-import { DEFAULT_SETTLEMENT_POLICY, type SettlementPolicy } from "@hirakumi/core";
+import { DEFAULT_SETTLEMENT_POLICY, publicKeyFromPrivate, type SettlementPolicy } from "@hirakumi/core";
 import { walletKeys } from "@hirakumi/escrow/txs";
 import type { HealthThresholds } from "./health";
 import { DEFAULT_DNS_RESOLVERS } from "./ownership";
@@ -49,6 +49,12 @@ export type GatewayConfig = {
    * `pnpm --filter @hirakumi/gateway upstream-auth-keys`; the web app gets the public half). Unset: such APIs are blocked.
    */
   upstreamAuthPrivateKey: string | null;
+  /**
+   * What is wrong with UPSTREAM_AUTH_PRIVATE_KEY, logged at start. "unparseable": it can't be used, so keyed APIs
+   * turn Down with an operator reason. "mismatch": it isn't the half of UPSTREAM_AUTH_PUBLIC_KEY, which the gateway
+   * itself never uses, so the private key stays in use (whether stored keys open is what counts). Null when fine.
+   */
+  upstreamAuthKeyProblem: UpstreamAuthKeyProblem | null;
   /** WEB_BASE_URL: the web app, for the listing link in a front-door 402 (<web>/p/<apiId>). Unset: no listingUrl. */
   webBaseUrl: string | null;
   /**
@@ -61,6 +67,8 @@ export type GatewayConfig = {
   /** How often a front-door host's TXT record and DNS are checked again (jittered by 10%). */
   domainRecheckMs: number;
 };
+
+export type UpstreamAuthKeyProblem = "mismatch" | "unparseable";
 
 export type PackMode = "direct" | "escrow" | "hybrid";
 
@@ -129,12 +137,38 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     settlement: settlementFrom(env),
     startJobTrustedCidrs: parseTrustedCidrs(env.START_JOB_TRUSTED_CIDRS),
     tryLiveApis: parseTryLiveApis(env.TRY_LIVE_APIS),
-    upstreamAuthPrivateKey: env.UPSTREAM_AUTH_PRIVATE_KEY?.trim() || null,
+    ...upstreamAuthKeyFrom(env),
     webBaseUrl: parseWebBaseUrl(env.WEB_BASE_URL),
     edgeIps: parseEdgeIps(env.EDGE_IPS),
     tlsAskPort: parsePort(env.TLS_ASK_PORT, 4022, "TLS_ASK_PORT"),
     domainRecheckMs: 6 * 3_600_000,
   };
+}
+
+/**
+ * UPSTREAM_AUTH_PRIVATE_KEY, checked against UPSTREAM_AUTH_PUBLIC_KEY when that is set too (the shared .env has
+ * both). A key that doesn't parse or doesn't match is not used, loudly, and never stops the process: keyless APIs,
+ * escrow and jobs keep running, and keyed APIs turn Down with an operator reason instead of failing to open.
+ */
+export function upstreamAuthKeyFrom(env: NodeJS.ProcessEnv): Pick<GatewayConfig, "upstreamAuthPrivateKey" | "upstreamAuthKeyProblem"> {
+  const privateKey = env.UPSTREAM_AUTH_PRIVATE_KEY?.trim() || null;
+  const publicKey = env.UPSTREAM_AUTH_PUBLIC_KEY?.trim() || null;
+  if (!privateKey) return { upstreamAuthPrivateKey: null, upstreamAuthKeyProblem: null };
+  let derived: string;
+  try {
+    derived = publicKeyFromPrivate(privateKey);
+  } catch {
+    console.error("[config] UPSTREAM_AUTH_PRIVATE_KEY does not parse: APIs that need a key are blocked until it is fixed");
+    return { upstreamAuthPrivateKey: null, upstreamAuthKeyProblem: "unparseable" };
+  }
+  // The gateway never uses the public key: a stale UPSTREAM_AUTH_PUBLIC_KEY in its env must not take every keyed API
+  // Down. Keys sealed with the web app's public key either open with this private key or don't (row credentialError,
+  // and check-key's opened:false at save), which is the authoritative signal.
+  if (publicKey && derived !== publicKey) {
+    console.error("[config] UPSTREAM_AUTH_PRIVATE_KEY is not the half of UPSTREAM_AUTH_PUBLIC_KEY: keys sealed with that public key won't open. Still using the private key.");
+    return { upstreamAuthPrivateKey: privateKey, upstreamAuthKeyProblem: "mismatch" };
+  }
+  return { upstreamAuthPrivateKey: privateKey, upstreamAuthKeyProblem: null };
 }
 
 /** "1.1.1.1, 8.8.8.8" to a list of IPs; unset or blank gives the public default. A name is refused (it needs DNS itself). */

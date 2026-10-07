@@ -22,10 +22,16 @@ export type ApiRow = {
 export type OperationRow = {
   id: string; api_id: string; op_id: string; method: string; path: string;
   input_schema: Record<string, unknown>; description: string | null; enabled: boolean;
+  /** The OpenAPI file says the endpoint needs the key (migration 0021); null when not known. */
+  needs_key?: boolean | null;
 };
 export type RuleRow = { id: string; operation_id: string; version: number; definition: RuleDefinition; hash: string; plain_english: string | null };
 export type PackRow = { id: string; api_id: string; calls: number; price_micros: string; escrow_price_micros: string; unsigned_allowance: number };
-export type ApiBundle = { api: ApiRow; operations: OperationRow[]; rules: RuleRow[]; packs: PackRow[] };
+/**
+ * downReasons: while the API is Down, the reasons of the health event that made (or last re-blamed) it Down, so a
+ * reloaded health tracker knows whether it is Down only for Hirakumi's own key problem. Null when healthy.
+ */
+export type ApiBundle = { api: ApiRow; operations: OperationRow[]; rules: RuleRow[]; packs: PackRow[]; downReasons?: unknown };
 
 export async function loadApiBundle(sql: Sql, apiId: string): Promise<ApiBundle | null> {
   const [api] = await sql<ApiRow[]>`
@@ -36,7 +42,7 @@ export async function loadApiBundle(sql: Sql, apiId: string): Promise<ApiBundle 
     where a.id = ${apiId}`;
   if (!api) return null;
   const operations = await sql<OperationRow[]>`
-    select id, api_id, op_id, method, path, input_schema, description, enabled
+    select id, api_id, op_id, method, path, input_schema, description, enabled, needs_key
     from operations where api_id = ${apiId} order by op_id`;
   const rules = await sql<RuleRow[]>`
     select distinct on (r.operation_id) r.id, r.operation_id, r.version, r.definition, r.hash, r.plain_english
@@ -46,7 +52,10 @@ export async function loadApiBundle(sql: Sql, apiId: string): Promise<ApiBundle 
   const packs = await sql<PackRow[]>`
     select id, api_id, calls, price_micros::text as price_micros, escrow_price_micros::text as escrow_price_micros, unsigned_allowance
     from packs where api_id = ${apiId} order by price_micros, id`;
-  return { api, operations, rules, packs };
+  if (api.health !== "down") return { api, operations, rules, packs, downReasons: null };
+  const [down] = await sql<{ reasons: unknown }[]>`
+    select reasons from health_events where api_id = ${apiId} and to_health = 'down' order by id desc limit 1`;
+  return { api, operations, rules, packs, downReasons: down?.reasons ?? null };
 }
 
 // ---------------------------------------------------------------- credit tokens
