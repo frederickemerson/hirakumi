@@ -1,10 +1,10 @@
-# Hirakumi: make your APIs monetizable for AI agents
+# Hirakumi: monetize your APIs for AI agents
 
 ## Problem
 AI agents buy data per call, but most useful data sits behind ordinary HTTP APIs whose owners have no way to sell to them. To sell on Masumi today an API owner must build and register an agent, handle Cardano payments and run an honest health endpoint. Buyers carry the risk: they pay even when an answer is empty or stale. And paying per call on chain does not work on Cardano: every payment output needs about 1.2 to 1.5 ADA of min-UTxO plus about 0.17 ADA in fees, and waits for a block.
 
 ## What we built
-Hirakumi takes any read-only API to the agent market. The seller gives an OpenAPI link, or just a base URL and a few example requests, chooses endpoints, proves ownership with a response header and one wallet signature, and approves a price and a promise that every good answer must keep. The listing becomes a Masumi-registered agent with a monitored health status. Buyer agents pay once for a pack of calls with x402, and a call uses a credit only when its answer passes the promise. Per purchase, Hirakumi settles the pack direct to the seller or through an Aiken escrow contract that pays the seller only for calls the buyer signed for; a buyer can always demand escrow. Onboarding runs on the website or from a Sokosumi task assigned to the Hirakumi coworker.
+Hirakumi monetizes any API for AI agents. The seller gives an OpenAPI link, or just a base URL and a few example requests, chooses endpoints, proves ownership with a response header and one wallet signature, and approves a price and a promise that every good answer must keep. The listing becomes a Masumi-registered agent with a monitored health status. Buyer agents pay once for a pack of calls with x402, and a call uses a credit only when its answer passes the promise. Per purchase, Hirakumi settles the pack direct to the seller or through an Aiken escrow contract that pays the seller only for calls the buyer signed for; a buyer can always demand escrow. Onboarding runs on the website or from a Sokosumi task assigned to the Hirakumi coworker.
 
 ## Technical approach
 
@@ -24,7 +24,8 @@ Hirakumi takes any read-only API to the agent market. The seller gives an OpenAP
 - **Example requests instead of an OpenAPI file:** lines such as `GET /coins/{id=cardano}?days?=7` or `POST /search {"q":"ada"}` become an OpenAPI 3.1 document, so the rest of onboarding is the same.
 - **Ownership by response header:** the API sends a per-API code in `X-Hirakumi-Verify` at its base URL; the gateway checks it with one plain `GET`, no redirects followed. The ownership page reads the API's own response headers to detect its platform (Express, Next.js, FastAPI, Flask, Vercel, Netlify, Cloudflare, nginx) and preselects the matching snippet, or gives a ready prompt under "Let your AI do it" for a coding assistant. A CIP-30 signature binds the payout address. The header is checked again every 6 hours; two misses in a row pause new sales, and credits already sold keep working.
 - **Text promises:** CSV, XML, plain text and YAML answers are checked for a 2xx status, the media type, a non-empty body, no HTML error page, and a required phrase. Hirakumi suggests a phrase from the test calls (one every good answer has and a wrong request's answer lacks), and the seller must confirm one before publishing.
-- **Seller API keys:** sealed in the web app with the gateway's X25519 public key and bound to the API's id, origin, path and placement. Only the gateway can open a key, adds it only to calls inside the proven origin and folder, and withholds any answer that contains it.
+- **Seller API keys:** sealed in the web app with the gateway's X25519 public key and bound to the API's id, origin, path and placement. Only the gateway can open a key, adds it only to calls inside the proven origin and folder, and withholds any answer that contains it. With PR #19 (behind `UPSTREAM_AUTH_V3`) a key can be `Bearer`, HTTP Basic or up to 4 header and query parts sealed together, and each part's place is bound in, so moving one makes the key unreadable.
+- **When a key fails, the buyer doesn't pay:** a 401/403 on a keyed call is a free 422 tagged "key refused" or "access forbidden"; after 3 failed health checks the API is Down and the seller is told why. A wrong key is caught with one real call when it is saved. An upstream 429 is a free 503 with `Retry-After` and never counts against the seller's health; each token gets at most 20 failed calls a minute; a problem on our side pauses sales without messaging the seller. The design was attacked in four adversarial review rounds before implementation, and the code reviewed again after.
 
 ### Stack
 TypeScript throughout: Express gateway, Next.js web app, Node coworker, Postgres (Neon) with plain SQL migrations, Vitest (over 2,100 tests across 10 workspaces), Aiken for the validator, Docker Compose and Caddy on AWS EC2, Vercel for the web app.
@@ -41,6 +42,20 @@ All transaction hashes are in `docs/submission/submission-checklist.md`.
 - **Escrow pack:** the money sits in the contract. The seller is paid only for calls the buyer signed for, and the buyer can always exit with everything unsigned. If Hirakumi closes with an old count, anyone holding the buyer's higher IOU (published on the channel page) can raise it.
 - **Direct pack:** the money goes to the seller at purchase and the gateway counts credits, using one only on a pass. Receipts make every call auditable, but the chain does not refund a wrong charge.
 - **Masumi escrow job:** Masumi's contract holds the money per job and refunds if no passing result is submitted.
+
+## Why not just ask an AI to build the agent?
+The Sokosumi CLI lets an AI assistant browse the marketplace, create tasks and hire agents. It is a buyer's tool and does not list an API for sale. A coding assistant can write and register a Masumi agent around an API in an afternoon, but the result is code the seller must host, and it leaves the buyer trusting the seller. The parts a prompt cannot give are the ones that keep running after setup:
+
+| | Agent written by an AI assistant | Hirakumi |
+|---|---|---|
+| Who judges an answer | The seller's own code | A neutral gateway checks every answer against the published promise (`/r/<ruleHash>`) and uses a credit only on a pass |
+| Payment cost | One on-chain payment per job, about 1.4 ADA overhead | One x402 pack for 100 calls, about 0.014 ADA per call |
+| Buyer protection | Masumi refund per job | Also the pack escrow: the seller is paid only for calls the buyer signed for, and the buyer can always exit |
+| Health status | Whatever the seller's `/availability` returns | Hirakumi re-runs the test inputs; `/availability` answers 503 when the promise breaks |
+| Ownership | Not checked | Response header, a wallet signature, and a re-check every 6 hours |
+| What the seller runs | A new service | Nothing new; the existing API is unchanged |
+
+The two fit together: an assistant using the Sokosumi CLI can create the task that the Hirakumi coworker picks up.
 
 ## Deployment and scaling
 - **Today:** one AWS EC2 instance (us-east-1) running Docker Compose: the gateway, the coworker, the Masumi payment service with its Postgres, Caddy for HTTPS, and the two demo seller APIs. Hirakumi's data is in Neon Postgres; the web app is on Vercel.
