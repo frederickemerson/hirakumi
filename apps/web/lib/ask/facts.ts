@@ -48,6 +48,7 @@ OWNERSHIP PROOF AND THE WALLET
 - Keep the record in place while the API is listed. Hirakumi checks it again every few hours; if it is missing twice in a row, new sales pause until it is back. Credits buyers already bought keep working.
 - A passing check counts for 30 minutes. Within that time the seller signs one message with their wallet, and that signature sets the payout address where buyers pay.
 - Any CIP-30 wallet on preprod works, such as Lace or Eternl. The wallet address is the seller's account and the place buyers pay.
+- Sellers can also sign in with email or Google ("Continue with email or Google", a non-custodial UTXOS wallet on preprod), no browser extension needed. It signs the same messages and payments, and a new one starts empty, so it needs test ADA from the faucet before paying.
 - Signing in and proving ownership only sign a message. Signing costs nothing and moves no funds. It is not a transaction.
 
 APIS THAT NEED A KEY

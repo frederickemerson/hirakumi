@@ -7,10 +7,10 @@ import type { TryPackView } from "@/components/try-console";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { GetAWallet, MobileNote, useIsMobile, useWallets, WalletIcon } from "@/components/wallet-picker";
+import { BROWSER_WALLET_TOO, GetAWallet, MobileNote, onlyEmailWallet, useIsMobile, useWallets, WalletIcon } from "@/components/wallet-picker";
 import { postJson, RequestError } from "@/lib/client-fetch";
 import { formatTusdm } from "@/lib/money";
-import { connectWallet, WalletError, walletErrorMessage, type Cip30Api } from "@/lib/wallet-client";
+import { connectWallet, needsAnotherClick, walletAction, WalletError, walletErrorMessage, type Cip30Api } from "@/lib/wallet-client";
 import { useElapsed } from "@/components/elapsed";
 
 /** CIP-30 calls a payment needs on top of sign-in's. */
@@ -38,6 +38,7 @@ type Phase =
   | { kind: "working"; walletId: string; text: string }
   | { kind: "paying"; walletId: string; startedAt: number; text: string }
   | { kind: "pending"; walletId: string; startedAt: number; text: string }
+  | { kind: "again"; text: string }
   | { kind: "error"; text: string };
 
 const PENDING_TEXT = "Your payment is sent and waiting for Cardano to confirm it. It goes to your own payout address either way.";
@@ -96,11 +97,15 @@ export function WalletPay({ apiId, packPrice, onBought, resumeEveryMs = RESUME_E
       setPhase({ kind: "working", walletId, text: "Connecting to your wallet…" });
       const { api } = await connectWallet(walletId);
       const w = api as PayingApi;
-      if (typeof w.getUtxos !== "function" || typeof w.signTx !== "function") {
+      if (typeof w.signTx !== "function") {
         throw new WalletError("This wallet can't sign payments here. Try another wallet.");
       }
-      const utxos = (await w.getUtxos()) ?? [];
-      if (utxos.length === 0) throw new WalletError("Your wallet has no funds on preprod. Get test ADA and tUSDM, then try again.");
+      // A wallet that can't list its UTxOs (the email wallet) sends only its address; the server reads them there.
+      let utxos: string[] | undefined;
+      if (typeof w.getUtxos === "function") {
+        utxos = (await w.getUtxos()) ?? [];
+        if (utxos.length === 0) throw new WalletError("Your wallet has no funds on preprod. Get test ADA and tUSDM, then try again.");
+      }
       setPhase({ kind: "working", walletId, text: "Getting the price from Hirakumi…" });
       const p = await postJson<Prepared>(`${base}/prepare`, { utxos, changeAddress: await api.getChangeAddress() });
       setPhase({
@@ -129,7 +134,8 @@ export function WalletPay({ apiId, packPrice, onBought, resumeEveryMs = RESUME_E
       setPhase({ kind: "idle" });
       onBought({ credits: r.credits, txHash: r.txHash, pending: r.pending });
     } catch (e) {
-      setPhase({ kind: "error", text: stage === "sign" ? signErrorMessage(e) : walletErrorMessage(e) });
+      if (needsAnotherClick(e)) setPhase({ kind: "again", text: e.message });
+      else setPhase({ kind: "error", text: stage === "sign" ? signErrorMessage(e) : walletErrorMessage(e) });
     }
   }
 
@@ -158,14 +164,16 @@ export function WalletPay({ apiId, packPrice, onBought, resumeEveryMs = RESUME_E
                 <Button type="button" size="lg" variant={mine ? "default" : "outline"} disabled={busy} aria-busy={mine || undefined}
                   className="w-full justify-start gap-3" onClick={() => void pay(w.id)}>
                   {mine ? <Spinner className="size-3" /> : <WalletIcon icon={w.icon} />}
-                  {`Pay with ${w.name}`}
+                  {walletAction("Pay", w)}
                 </Button>
               </li>
             );
           })}
         </ul>
       )}
+      {wallets && onlyEmailWallet(wallets) && <GetAWallet title={BROWSER_WALLET_TOO} />}
       {!busy && <PhoneWalletConnect />}
+      {phase.kind === "again" && <p role="status" aria-live="polite" className="border-l-4 border-mint pl-3 text-body">{phase.text}</p>}
       {phase.kind === "working" && <p role="status" aria-live="polite" className="border-l-4 border-sky pl-3 text-body">{phase.text}</p>}
       {phase.kind === "paying" && <Paying startedAt={phase.startedAt} text={phase.text} />}
       {phase.kind === "pending" && <Paying startedAt={phase.startedAt} text={`Pending. ${phase.text} This page checks again every few seconds.`} />}

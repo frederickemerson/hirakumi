@@ -4,11 +4,13 @@ import { parseAssetUnit, USDM_PREPROD_ASSET, type ClientCardanoSigner } from "@x
 import { ExactCardanoScheme } from "@x402/cardano/exact/client";
 import { x402Client, x402HTTPClient } from "@x402/core/client";
 import type { PaymentRequired, PaymentRequirements } from "@x402/core/types";
+import { toPreprodBech32 } from "./cardano";
 
 /**
  * A seller paying for a pack of their own API from their browser wallet (CIP-30), in two steps:
  * 1. prepare: read the gateway's 402 for the pack, exactly as any agent does, and build the unsigned payment
- *    from the wallet's own UTxOs (the server has the Blockfrost key for protocol parameters).
+ *    from the wallet's own UTxOs (the server has the Blockfrost key for protocol parameters). A wallet that can't
+ *    list its UTxOs (the email wallet) sends only its address, and the server reads them at that address.
  * 2. pay: the wallet signed it in the browser (signTx, partial); add its witnesses and pay the gateway with x402.
  * The request carries no escrow headers, so a hybrid gateway settles it direct: the money goes to the seller's
  * own payout address and only the network fee is spent. The token comes back to the server, never the browser.
@@ -35,7 +37,8 @@ export type UnsignedPayment = { tx: string; nonce: string; feeLovelace: string }
 
 /** Builds the unsigned payment. Injected so tests run without a chain; the default uses Evolution + Blockfrost. */
 export type BuildPayment = (a: {
-  utxos: string[]; changeAddress: string; payTo: string; asset: string; amount: bigint; ttlMs: bigint;
+  /** The wallet's UTxOs (CIP-30 CBOR hex), or null: read them from Blockfrost at changeAddress. */
+  utxos: string[] | null; changeAddress: string; payTo: string; asset: string; amount: bigint; ttlMs: bigint;
 }) => Promise<UnsignedPayment>;
 
 export type SelfPayDeps = { fetchImpl?: typeof fetch; build: BuildPayment; now?: () => number };
@@ -87,7 +90,7 @@ async function readOffer(doFetch: typeof fetch, t: SelfPayTarget): Promise<{ off
 
 /** Step 1: the price from the gateway and the unsigned payment for the wallet to sign. */
 export async function prepareSelfPayment(
-  d: SelfPayDeps, t: SelfPayTarget, wallet: { utxos: string[]; changeAddress: string },
+  d: SelfPayDeps, t: SelfPayTarget, wallet: { utxos: string[] | null; changeAddress: string },
 ): Promise<PreparedPayment> {
   const { req, calls } = await readOffer(d.fetchImpl ?? fetch, t);
   const now = d.now ?? Date.now;
@@ -253,8 +256,12 @@ function readOnlyCip30(utxos: string[], changeAddress: string) {
  */
 export function evolutionBuilder(blockfrost: { baseUrl: string; projectId: string }): BuildPayment {
   return async (a) => {
-    if (a.utxos.length === 0) throw new Error("no UTxOs in the wallet");
-    const client = Client.make(preprod).withBlockfrost(blockfrost).withCip30(readOnlyCip30(a.utxos, a.changeAddress) as never);
+    if (a.utxos?.length === 0) throw new Error("no UTxOs in the wallet");
+    const read = Client.make(preprod).withBlockfrost(blockfrost);
+    // Blockfrost is the authority on what sits at an address, so a wallet that can't list its UTxOs is read there.
+    const client = a.utxos === null
+      ? read.withAddress(toPreprodBech32(a.changeAddress))
+      : read.withCip30(readOnlyCip30(a.utxos, a.changeAddress) as never);
     const utxos = await client.getWalletUtxos();
     const nonceUtxo = utxos[0];
     if (!nonceUtxo) throw new Error("no UTxOs in the wallet");

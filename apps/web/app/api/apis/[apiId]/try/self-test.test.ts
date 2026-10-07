@@ -157,6 +157,24 @@ describe("paying with the seller's own wallet", () => {
     expect(sent[0].get("x-hirakumi-settlement")).toBeNull();
   });
 
+  it("prepare: a wallet that can't list its UTxOs (the email wallet) sends only its address; the builder reads them there", async () => {
+    const build = vi.fn(async () => ({ tx: UNSIGNED_TX, nonce: NONCE, feeLovelace: "180000" }));
+    const h = handlers(vi.fn(async () => offer(seller.cardanoAddr)) as typeof fetch, { build });
+    const res = await h.prepare(own({ changeAddress: "00ab" }), ctx(api.id));
+    expect(res.status).toBe(200);
+    expect(build).toHaveBeenCalledWith(expect.objectContaining({ utxos: null, changeAddress: "00ab" }));
+  });
+
+  it("prepare still refuses an empty or malformed UTxO list", async () => {
+    const build = vi.fn();
+    const h = handlers(vi.fn(async () => offer(seller.cardanoAddr)) as typeof fetch, { build });
+    for (const utxos of [[], ["zz"], "8282", null]) {
+      expect((await h.prepare(own({ utxos, changeAddress: "00ab" }), ctx(api.id))).status).toBe(400);
+    }
+    expect((await h.prepare(own({}), ctx(api.id))).status).toBe(400);
+    expect(build).not.toHaveBeenCalled();
+  });
+
   it("prepare refuses an escrow offer: nothing is built or paid", async () => {
     const build = vi.fn();
     const h = handlers(vi.fn(async () => offer("addr_test1wescrowscriptaddressxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")) as typeof fetch, { build });
