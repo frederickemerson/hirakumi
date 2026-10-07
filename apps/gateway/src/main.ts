@@ -1,5 +1,4 @@
 import { HTTPFacilitatorClient } from "@x402/core/server";
-import { setSelfAddresses } from "@hirakumi/core";
 import { createDb, deleteStaleDecisions, deleteStaleQuotes, migrate } from "@hirakumi/db";
 import { createApp } from "./app";
 import { listen } from "./server";
@@ -22,7 +21,6 @@ const applied = await migrate(sql);
 if (applied.length) console.log(`[gateway] migrations applied: ${applied.join(", ")}`);
 
 // No upstream may resolve to Hirakumi's own edge: it would come back in through the front door.
-setSelfAddresses(config.edgeIps);
 const health = new HealthTracker(config.thresholds);
 const domains = new DomainRegistry(sql);
 const registry = new ApiRegistry(sql, health, config.upstreamAuthPrivateKey);

@@ -28,15 +28,18 @@ export function frontDoor(d: AppDeps): RequestHandler {
   const publicHost = new URL(d.config.publicBaseUrl).hostname.toLowerCase();
   const listingUrl = (apiId: string) => (d.config.webBaseUrl ? { listingUrl: `${d.config.webBaseUrl}/p/${apiId}` } : {});
   return async (req, res, next) => {
+    // Our own upstream call came back to the gateway, on any host or route: an origin that routes to Hirakumi
+    // would loop. Every upstream call carries the header, so this is exact; sites that only share our IP (other
+    // Caddy sites) never reach the gateway and are unaffected.
+    if (req.header(HOP_HEADER)) {
+      res.set("cache-control", "no-store").status(508)
+        .json({ error: "loop_detected", message: "This request came from Hirakumi itself, so it was not sent on again." });
+      return;
+    }
     const host = normalizeHost(req.headers.host);
     if (isNativeHost(host, publicHost)) { next(); return; }
     try {
       res.set("cache-control", "no-store");
-      // Our own call came back to us: an origin that routes to the front door would loop forever.
-      if (req.header(HOP_HEADER)) {
-        res.status(508).json({ error: "loop_detected", message: "This request came from Hirakumi itself, so it was not sent on again." });
-        return;
-      }
       const route = d.domains ? await d.domains.get(host!) : null;
       if (!isServed(route)) {
         res.status(421).json({ error: "misdirected_request", message: "This hostname is not served by Hirakumi." });

@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { matchOperation, normalizeHost, pathAfterPrefix } from "../src/routeMatch";
-import { isSelfAddress, resolvedAddressProblem, safeFetch, setSelfAddresses, UpstreamBlockedError } from "../src/fetch";
 
 describe("normalizeHost", () => {
   it.each([
@@ -80,30 +79,3 @@ describe("matchOperation", () => {
   });
 });
 
-describe("Hirakumi's own addresses", () => {
-  afterEach(() => setSelfAddresses([]));
-
-  it("is off until set, then matches the addresses and their IPv4-mapped forms", () => {
-    expect(isSelfAddress("52.70.235.103")).toBe(false);
-    setSelfAddresses(["52.70.235.103", "2600:1f18::1"]);
-    expect(isSelfAddress("52.70.235.103")).toBe(true);
-    expect(isSelfAddress("::ffff:52.70.235.103")).toBe(true);
-    expect(isSelfAddress("::ffff:3446:eb67")).toBe(true);
-    expect(isSelfAddress("2600:1f18:0::1")).toBe(true);
-    expect(isSelfAddress("52.70.235.104")).toBe(false);
-    expect(() => setSelfAddresses(["gateway"])).toThrow(/not an IP/);
-  });
-
-  it("refuses an origin that resolves to one", () => {
-    setSelfAddresses(["52.70.235.103"]);
-    expect(resolvedAddressProblem("origin.seller.com", [{ address: "8.8.8.8" }, { address: "52.70.235.103" }])).toMatch(/Hirakumi's own address/);
-    expect(resolvedAddressProblem("origin.seller.com", [{ address: "8.8.8.8" }])).toBeNull();
-    expect(resolvedAddressProblem("origin.seller.com", [{ address: "10.0.0.1" }])).toMatch(/blocked address 10.0.0.1/);
-    expect(resolvedAddressProblem("origin.seller.com", [])).toMatch(/none/);
-  });
-
-  it("refuses a URL naming one before connecting", async () => {
-    setSelfAddresses(["52.70.235.103"]);
-    await expect(safeFetch("https://52.70.235.103/price", { method: "GET" })).rejects.toBeInstanceOf(UpstreamBlockedError);
-  });
-});
