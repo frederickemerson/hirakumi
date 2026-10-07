@@ -29,6 +29,15 @@ Submission material: [write-up](docs/submission/writeup.md), [demo script](docs/
 5. **Price and publish.** The default is 100 calls for 2 tUSDM. The listing is registered on the Masumi registry and goes Live.
 6. **Stay honest.** A monitor re-runs the saved test inputs against the full promise (every 2 minutes; every 10 seconds in demo mode). After repeated failures the API is Down: MIP-003 `/availability` answers 503 (the registry shows it Offline), paid routes answer 503 before anyone pays, and the seller gets a Sokosumi comment. Every 6 hours (with jitter) the gateway looks the `_hirakumi` TXT record up again; two misses in a row pause new sales until it is back, while credits already bought keep working. A DNS timeout or server failure neither counts nor resets. APIs proven before the DNS proof (by the old `X-Hirakumi-Verify` response header) keep being re-checked by that header.
 
+### Seller on Sokosumi: no website
+
+A seller who starts from a Sokosumi task never uses the Hirakumi website. Every step is a comment: the coworker reads the link, lists the endpoints (`sell 1 2`), posts the DNS record and looks it up itself (the gateway's check, the pass recorded exactly as the ownership page records it, valid 30 minutes), runs the test calls, takes the phrase for a text promise (`phrase Price`) and the price (`price 2`), and runs the leak check before offering to publish. Only two kinds of step open a browser tab, and each is one focused page with nothing else on it:
+
+- **First link of the Sokosumi account to a wallet** (`/setup?t=…&link=1`): sign in on the page, confirm, close. The coworker then starts from the link the seller already sent.
+- **A wallet signature or the API's key** (`/act/<token>`): "Sign to prove you own weather.example.com" (with the optional key field), "Add the key for …", "Sign to publish … at 2 tUSDM for 100 calls". The token is one-time, bound to one API and one action, valid 30 minutes and stored only as a SHA-256 hash (`act_tokens`, migration `0022_act_tokens.sql`); the outbox makes it when it posts the comment, which names the wallet the page expects. The token only selects the action: the API owner's wallet signature is the authority (the ownership page's wallet challenge and `finalizeOwnership`, or a sealed one-time message like a sign-in), so a leaked link does nothing. The key goes through the same code as the key form. The page then says "Done. You can close this tab; the rest continues in Sokosumi." and the coworker comments the next step.
+
+The full website keeps working for sellers who use it directly.
+
 APIs that need a key: the seller saves it as a header (recommended) or a query parameter. The web app seals it with the gateway's X25519 public key, bound to the API's id, origin, path and placement, so only the gateway can open it, and only for calls inside the proven origin and folder.
 
 ### The front door: only reachable through Hirakumi
