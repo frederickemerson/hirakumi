@@ -3,7 +3,7 @@ import { buildWalletChallenge } from "@hirakumi/core";
 import { env } from "@/lib/env";
 import { errorJson, json, type ApiRouteContext } from "@/lib/http";
 import { createWalletChallenge, hasFreshVerifyPass } from "@/lib/repo/challenges";
-import { updatingResponse } from "@/lib/repo/schema";
+import { ownershipUpdatingResponse } from "@/lib/repo/schema";
 import { loadOwnedApi, wrongStep } from "@/lib/route-helpers";
 
 const WALLET_CHALLENGE_TTL_MS = 30 * 60 * 1000;
@@ -12,11 +12,11 @@ export async function POST(req: Request, ctx: ApiRouteContext): Promise<Response
   const loaded = await loadOwnedApi(req, ctx);
   if (loaded instanceof Response) return loaded;
   const { api, sql, session } = loaded;
-  // The verification code is a challenge of kind 'header', which needs migration 0015.
-  const updating = await updatingResponse(sql);
+  // The verification code is a challenge of kind 'dns', which needs migration 0018.
+  const updating = await ownershipUpdatingResponse(sql);
   if (updating) return updating;
   if (api.state !== "endpoints_confirmed") return wrongStep(api);
-  if (!(await hasFreshVerifyPass(sql, api.id))) return errorJson(409, "Check your X-Hirakumi-Verify header first.");
+  if (!(await hasFreshVerifyPass(sql, api.id))) return errorJson(409, "Add your DNS record first. We check it on this page.");
   const nonce = randomBytes(16).toString("hex");
   const expiresAt = new Date(Date.now() + WALLET_CHALLENGE_TTL_MS);
   const message = buildWalletChallenge({

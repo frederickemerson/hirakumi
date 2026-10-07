@@ -4,7 +4,7 @@ A read-only price API used as the demo seller for Hirakumi. `GET /openapi.json` 
 
 ## Proving ownership on Hirakumi
 
-Hirakumi asks a seller to make their API send its verification code as a response header at the API's base URL:
+New listings prove ownership with a DNS TXT record (`_hirakumi.<host>`, value `hkv_...`), added at the host's DNS provider, so nothing in this API is involved. Listings proven before that sent the code as a response header, and Hirakumi still re-checks those by the header. This demo keeps sending it for them:
 
 ```
 X-Hirakumi-Verify: hkv_...

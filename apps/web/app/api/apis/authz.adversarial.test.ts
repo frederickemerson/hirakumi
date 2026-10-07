@@ -7,7 +7,7 @@ import { cookieFor, ctx, jsonRequest } from "@/test/requests";
 import { POST as retire } from "./[apiId]/retire/route";
 import { POST as publish } from "./[apiId]/publish/route";
 import { POST as pricing } from "./[apiId]/pricing/route";
-import { POST as specCheck } from "./[apiId]/ownership/spec-check/route";
+import { POST as dnsCheck } from "./[apiId]/ownership/dns-check/route";
 
 const stateOf = async (id: string) => (await getSql()<{ state: string }[]>`select state from apis where id = ${id}`)[0].state;
 
@@ -28,7 +28,7 @@ describe("adversarial: seller isolation (IDOR)", () => {
     expect((await retire(jsonRequest(`/x`, { cookie: c, body: {} }), ctx(live.id))).status).toBe(404);
     expect((await publish(jsonRequest(`/x`, { cookie: c, body: {} }), ctx(priced.id))).status).toBe(404);
     expect((await pricing(jsonRequest(`/x`, { cookie: c, body: { packCalls: "10", packPrice: "1", escrowPrice: "1" } }), ctx(priced.id))).status).toBe(404);
-    expect((await specCheck(jsonRequest(`/x`, { cookie: c, body: {} }), ctx(ec.id))).status).toBe(404);
+    expect((await dnsCheck(jsonRequest(`/x`, { cookie: c, body: {} }), ctx(ec.id))).status).toBe(404);
     expect(await getSql()`select 1 from challenges where api_id = ${ec.id}`).toHaveLength(0);
     expect(await stateOf(live.id)).toBe("live");
     expect(await stateOf(priced.id)).toBe("priced");

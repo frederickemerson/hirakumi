@@ -307,18 +307,18 @@ export async function getRuleByHash(sql: Sql, hash: string): Promise<(RuleRow & 
   return row ?? null;
 }
 
-/** What the ownership check needs: the API's base URL (origin + path_prefix), where the header must be. */
+/** What the ownership check needs: the API's origin, whose host carries the TXT record. */
 export async function getOwnershipTarget(sql: Sql, apiId: string): Promise<{ id: string; origin: string; path_prefix: string } | null> {
   const [row] = await sql<{ id: string; origin: string; path_prefix: string }[]>`
     select id, origin, path_prefix from apis where id = ${apiId}`;
   return row ?? null;
 }
 
-/** This API's open verification code (kind 'header'); at most one exists (unique index, migration 0015). */
+/** This API's open verification code (kind 'dns'); at most one exists (unique index, migration 0018). */
 export async function getOpenVerifyCode(sql: Sql, apiId: string): Promise<{ id: string; token: string } | null> {
   const [row] = await sql<{ id: string; token: string }[]>`
     select id, token from challenges
-    where api_id = ${apiId} and kind = 'header' and consumed_at is null
+    where api_id = ${apiId} and kind = 'dns' and consumed_at is null
     limit 1`;
   return row ?? null;
 }
@@ -357,23 +357,24 @@ export async function getReceipts(sql: Sql, apiId: string, tokenHash: string, li
 }
 
 /**
- * An API whose ownership is checked again: proven with a 'header' code (the code passed the check and was consumed
- * when the seller signed), and registering or live. APIs proven the old way (a code in the OpenAPI file) have no
- * such code and are never re-checked. token is the code the seller's API must keep sending.
+ * An API whose ownership is checked again: proven with a 'dns' code, or a 'header' code before the DNS proof (the
+ * code passed the check and was consumed when the seller signed), and registering or live. APIs proven the oldest
+ * way (a code in the OpenAPI file) have no such code and are never re-checked. token is the code that must stay
+ * in place; kind says where: the TXT record at _hirakumi.<host>, or the X-Hirakumi-Verify header.
  */
 export type OwnershipRecheckTarget = {
-  id: string; origin: string; path_prefix: string; token: string;
+  id: string; origin: string; path_prefix: string; token: string; kind: "dns" | "header";
   failures: number; paused_at: Date | null; next_check_at: Date | null;
 };
 
 export async function listOwnershipRecheckTargets(sql: Sql): Promise<OwnershipRecheckTarget[]> {
   return sql<OwnershipRecheckTarget[]>`
-    select a.id, a.origin, a.path_prefix, c.token, a.ownership_failures as failures,
+    select a.id, a.origin, a.path_prefix, c.token, c.kind, a.ownership_failures as failures,
            a.ownership_paused_at as paused_at, a.ownership_next_check_at as next_check_at
     from apis a
     join lateral (
-      select token from challenges c
-      where c.api_id = a.id and c.kind = 'header' and c.consumed_at is not null and c.proof ? 'passedAt'
+      select token, kind from challenges c
+      where c.api_id = a.id and c.kind in ('dns', 'header') and c.consumed_at is not null and c.proof ? 'passedAt'
       order by c.consumed_at desc, c.id desc limit 1
     ) c on true
     where a.state in ('registering', 'live')

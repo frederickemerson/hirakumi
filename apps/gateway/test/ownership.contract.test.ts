@@ -11,15 +11,15 @@ import {
 import { makeHarness, type Harness } from "./helpers";
 
 /**
- * The header proof across the two apps, each with its own code: the web app makes the API's code (kind 'header'),
- * its gateway client asks the real gateway over HTTP, the gateway reads that code from the same database and finds
- * it in the X-Hirakumi-Verify header at the base URL, and the web app records the pass and finalises ownership after
+ * The DNS proof across the two apps, each with its own code: the web app makes the API's code (kind 'dns'), its
+ * gateway client asks the real gateway over HTTP, the gateway reads that code from the same database and finds it in
+ * the TXT record at _hirakumi.<host>, and the web app records the pass and finalises ownership after
  * the wallet signature (verified by the web route with CIP-30; taken as valid here). The web functions run on the
  * web app's own connection (camelCase columns), pointed at the harness schema.
  */
 const TEST_URL = process.env.TEST_DATABASE_URL ?? "postgres://hirakumi:hirakumi@localhost:5432/hirakumi";
 
-describe("ownership contract: web code, gateway header check, web finalise", () => {
+describe("ownership contract: web code, gateway DNS check, web finalise", () => {
   let h: Harness;
   let server: Server;
   afterEach(async () => {
@@ -29,7 +29,7 @@ describe("ownership contract: web code, gateway header check, web finalise", () 
     await h.close();
   });
 
-  it("a code made by the web app, sent as a header at the base URL, ends in ownership_verified", async () => {
+  it("a code made by the web app, added as a TXT record, ends in ownership_verified", async () => {
     h = await makeHarness();
     server = createServer(h.app);
     await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
@@ -39,24 +39,22 @@ describe("ownership contract: web code, gateway header check, web finalise", () 
     process.env.DATABASE_URL = url.href;
     const sql = getSql();
     const { apiId, sellerId, payTo } = h.seeded;
-    await h.sql`update apis set state = 'endpoints_confirmed', path_prefix = '/v1' where id = ${apiId}`;
+    await h.sql`update apis set state = 'endpoints_confirmed', path_prefix = '/v1', origin = 'https://price.example.dev' where id = ${apiId}`;
 
-    // Web: the ownership page creates the code (spec-check route does the same before asking the gateway).
+    // Web: the ownership page creates the code (dns-check route does the same before asking the gateway).
     const code = await getOrCreateVerifyCode(sql, apiId);
     const [row] = await h.sql<{ kind: string }[]>`select kind from challenges where id = ${code.id}`;
-    expect(row.kind).toBe("header");
+    expect(row.kind).toBe("dns");
 
-    // Not sent yet: the gateway answers "missing" and nothing is recorded.
-    h.stub.setFile("/v1", "not found", { status: 404, contentType: "text/plain" });
+    // Not added yet: the gateway answers "missing" and nothing is recorded.
     const before = await gateway.checkChallenge(apiId);
-    expect(before).toMatchObject({ ok: false, reason: "missing", triedUrl: `${h.stub.origin}/v1`, status: 404 });
+    expect(before).toEqual({ ok: false, reason: "missing", record: "_hirakumi.price.example.dev", detail: "No TXT record found at _hirakumi.price.example.dev yet." });
 
-    // The seller's API sends the header, on a 404 page at the base URL.
-    h.stub.setFile("/v1", "not found", { status: 404, contentType: "text/plain", headers: { "X-Hirakumi-Verify": code.code } });
+    // The seller adds the TXT record.
+    h.dns.set("_hirakumi.price.example.dev", [code.code]);
     const result = await gateway.checkChallenge(apiId);
-    expect(result).toMatchObject({ ok: true, reason: "verified", triedUrl: `${h.stub.origin}/v1`, status: 404 });
-    expect(h.stub.fileHits("/v1")).toBe(2);
-    await markVerifyPassed(sql, code.id, result.triedUrl);
+    expect(result).toMatchObject({ ok: true, reason: "verified", record: "_hirakumi.price.example.dev" });
+    await markVerifyPassed(sql, code.id, result.record);
     expect(await hasFreshVerifyPass(sql, apiId)).toBe(true);
     expect((await findVerifyCode(sql, apiId))?.passedAt).toBeTruthy();
 
@@ -64,7 +62,7 @@ describe("ownership contract: web code, gateway header check, web finalise", () 
     const nonce = "0123456789abcdef0123456789abcdef";
     const expiresAt = new Date(Date.now() + 30 * 60_000);
     const message = buildWalletChallenge({
-      domain: "hirakumi.test", sellerId, apiId, origin: h.stub.origin, payTo, network: "cardano:preprod", nonce, expires: expiresAt.toISOString(),
+      domain: "hirakumi.test", sellerId, apiId, origin: "https://price.example.dev", payTo, network: "cardano:preprod", nonce, expires: expiresAt.toISOString(),
     });
     const challengeId = await createWalletChallenge(sql, { apiId, nonce, expiresAt, message });
     const open = await getOpenWalletChallenge(sql, challengeId, apiId);

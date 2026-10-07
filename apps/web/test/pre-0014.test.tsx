@@ -107,7 +107,7 @@ describe("before migration 0014", () => {
     render(await Ownership({ params: Promise.resolve({ apiId: api.id }) }));
     expect(screen.getByText(UPDATING)).toBeInTheDocument();
     expect(screen.queryByText(/X-Hirakumi-Verify/)).toBeNull();
-    const { POST: specCheck } = await import("@/app/api/apis/[apiId]/ownership/spec-check/route");
+    const { POST: specCheck } = await import("@/app/api/apis/[apiId]/ownership/dns-check/route");
     const { POST: walletChallenge } = await import("@/app/api/apis/[apiId]/ownership/wallet-challenge/route");
     for (const route of [specCheck, walletChallenge]) {
       const res = await route(jsonRequest(`/api/apis/${api.id}/ownership/x`, { cookie: api.cookie, body: {} }), ctx(api.id));

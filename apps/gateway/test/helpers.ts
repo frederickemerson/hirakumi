@@ -199,7 +199,7 @@ export function testConfig(over: Partial<GatewayConfig> = {}): GatewayConfig {
   return {
     port: 0, publicBaseUrl: "https://gw.test", internalToken: "internal-test-token-0123456789", demoMode: true,
     facilitatorUrl: "http://facilitator.invalid", databaseUrl: "unused", probeIntervalMs: 10_000,
-    ownershipRecheckMs: 6 * 3_600_000, ownershipRetryMs: 15 * 60_000,
+    dnsResolvers: [], ownershipRecheckMs: 6 * 3_600_000, ownershipRetryMs: 15 * 60_000,
     thresholds: { failsToDown: 2, passesToHeal: 2 }, l1Confirmations: 0, upstreamTimeoutMs: 500,
     escrow: { payByMs: 10 * 60_000, submitResultMs: 20 * 60_000, unit: "16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d" }, blockfrostProjectId: null, masumi: null,
     packMode: "direct", packEscrow: null, settlement: { ...DEFAULT_SETTLEMENT_POLICY }, startJobTrustedCidrs: [], tryLiveApis: [], upstreamAuthPrivateKey: null,
@@ -214,8 +214,26 @@ import type { AppDeps } from "../src/deps";
 import { HealthTracker } from "../src/health";
 import { ApiRegistry } from "../src/registry";
 
+/** TXT records by name, for the DNS ownership proof. `fail` makes a name's lookup throw with that error code. */
+export class FakeDns {
+  private readonly records = new Map<string, string[][]>();
+  private readonly failures = new Map<string, string>();
+  readonly asked: string[] = [];
+  set(name: string, values: string[]): void { this.records.set(name, values.map((v) => [v])); this.failures.delete(name); }
+  clear(name: string): void { this.records.delete(name); this.failures.delete(name); }
+  fail(name: string, code: string): void { this.failures.set(name, code); }
+  readonly lookup = async (name: string): Promise<string[][]> => {
+    this.asked.push(name);
+    const code = this.failures.get(name);
+    if (code) throw Object.assign(new Error(`queryTxt ${code} ${name}`), { code });
+    const r = this.records.get(name);
+    if (!r) throw Object.assign(new Error(`queryTxt ENOTFOUND ${name}`), { code: "ENOTFOUND" });
+    return r;
+  };
+}
+
 export type Harness = {
-  db: TestDb; sql: Sql; stub: StubUpstream; seeded: Seeded; health: HealthTracker; registry: ApiRegistry;
+  db: TestDb; sql: Sql; stub: StubUpstream; seeded: Seeded; health: HealthTracker; registry: ApiRegistry; dns: FakeDns;
   facilitator: FakeFacilitator; masumi: FakeMasumi; config: GatewayConfig; deps: AppDeps; app: Express;
   txHashOf(transaction: string): string | null;
   close(): Promise<void>;
@@ -233,13 +251,14 @@ export async function makeHarness(
   const facilitator = new FakeFacilitator();
   if (opts.facilitatorMethods) facilitator.methods = opts.facilitatorMethods;
   const masumi = new FakeMasumi();
+  const dns = new FakeDns();
   const deps: AppDeps = {
-    sql: db.sql, config, registry, health, facilitator, masumi,
+    sql: db.sql, config, registry, health, facilitator, masumi, txtLookup: dns.lookup,
     paymentTxHash: (payload) => fakeTxHash(String(payload.transaction)), escrowChain: opts.escrowChain ?? null,
   };
   const app = createApp(deps);
   return {
-    db, sql: db.sql, stub, seeded, health, registry, facilitator, masumi, config, deps, app, txHashOf: fakeTxHash,
+    db, sql: db.sql, stub, seeded, health, registry, dns, facilitator, masumi, config, deps, app, txHashOf: fakeTxHash,
     async close() { await stub.close(); await db.drop(); },
   };
 }

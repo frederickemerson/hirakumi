@@ -11,7 +11,7 @@ describe("getOrCreateVerifyCode (the ownership page calls it on every load)", ()
     const api = await seedApi((await seedSeller()).id, "endpoints_confirmed");
     const codes = await Promise.all(Array.from({ length: 8 }, () => getOrCreateVerifyCode(getSql(), api.id)));
     expect(new Set(codes.map((c) => c.code)).size).toBe(1);
-    const [row] = await getSql()<{ n: number }[]>`select count(*)::int as n from challenges where api_id = ${api.id} and kind = 'header'`;
+    const [row] = await getSql()<{ n: number }[]>`select count(*)::int as n from challenges where api_id = ${api.id} and kind = 'dns'`;
     expect(row.n).toBe(1);
   });
 
@@ -20,6 +20,6 @@ describe("getOrCreateVerifyCode (the ownership page calls it on every load)", ()
     await getOrCreateVerifyCode(getSql(), api.id);
     await expect(getSql()`
       insert into challenges (id, api_id, kind, token, expires_at)
-      values ('ch_dupe', ${api.id}, 'header', 'hkv_other', now() + interval '1 day')`).rejects.toThrow(/challenges_header_open_per_api/);
+      values ('ch_dupe', ${api.id}, 'dns', 'hkv_other', now() + interval '1 day')`).rejects.toThrow(/challenges_dns_open_per_api/);
   });
 });

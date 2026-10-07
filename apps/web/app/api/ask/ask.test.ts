@@ -3,9 +3,10 @@ import { getSql } from "@/lib/db";
 import { CUT_OFF_NOTE } from "@/lib/ask/model";
 import { buildInstructions, OFFLINE_DEFAULT, OFFLINE_FAQ } from "@/lib/ask/facts";
 import { ASK_LIMIT } from "@/lib/ask/rate-limit";
-import { MAX_QUESTION_CHARS, SUGGESTED_QUESTIONS } from "@/lib/ask/shared";
+import { DNS_HELP_QUESTION, MAX_QUESTION_CHARS, SUGGESTED_QUESTIONS } from "@/lib/ask/shared";
 import { resetDb } from "@/test/db";
 import { seedApi, seedSeller } from "@/test/factories";
+import { getOrCreateVerifyCode } from "@/lib/repo/challenges";
 import { cookieFor } from "@/test/requests";
 import { POST } from "./route";
 
@@ -109,6 +110,22 @@ describe("POST /api/ask with a model", () => {
     expect(instructions).toContain("Price Feed");
     expect(instructions).not.toContain("Secret Other Feed");
     expect(instructions).not.toContain(theirs.id);
+  });
+
+  it("tells a seller proving ownership the exact DNS record for their own API, and no one else's", async () => {
+    const me = await seedSeller();
+    const other = await seedSeller();
+    const mine = await seedApi(me.id, "endpoints_confirmed", { name: "Weather Feed", origin: "https://weather.example.dev" });
+    const theirs = await seedApi(other.id, "endpoints_confirmed", { name: "Other Feed", origin: "https://other.example.dev" });
+    const myCode = (await getOrCreateVerifyCode(getSql(), mine.id)).code;
+    const theirCode = (await getOrCreateVerifyCode(getSql(), theirs.id)).code;
+    openai.create.mockResolvedValue(deltas("ok"));
+
+    await readChunks(await ask({ question: "What do I type in my DNS?" }, { cookie: cookieFor(me) }));
+    const { instructions } = lastCall();
+    expect(instructions).toContain(`DNS record to add: TXT, name _hirakumi.weather.example.dev, value ${myCode}`);
+    expect(instructions).not.toContain(theirCode);
+    expect(instructions).toContain("is not a secret, and you may tell it to that signed-in seller");
   });
 
   it("tells the model when a signed-in seller has no APIs yet", async () => {
@@ -225,19 +242,24 @@ describe("POST /api/ask limits and guards", () => {
 describe("Ask teaches the current ownership flow (audit I4)", () => {
   const OLD_FLOW = /verification file|challenge file|download|\.well-known|unpaid agent|one file/i;
 
-  it("the model's facts describe the X-Hirakumi-Verify header, any status, base URL folder, no redirects, 30 minutes, then the signature", () => {
+  it("the model's facts describe the DNS TXT record, its name and value, where to add it, 30 minutes, then the signature", () => {
     const facts = buildInstructions(null);
     expect(facts).not.toMatch(OLD_FLOW);
-    expect(facts).not.toMatch(/hirakumi-verify\.json|root of (your|their) OpenAPI file|x-hirakumi-verify: "<code>"|same origin/i);
-    expect(facts).toContain("X-Hirakumi-Verify: <code>");
-    expect(facts).toMatch(/base URL/);
-    expect(facts).toMatch(/Any status counts, a 404 page too/);
-    expect(facts).toMatch(/folder/);
-    expect(facts).toMatch(/Redirects are not followed, except one that only adds a slash/);
-    expect(facts).toContain("curl -s -o /dev/null -D - <base url> | grep -i x-hirakumi-verify");
+    expect(facts).not.toMatch(/X-Hirakumi-Verify|hirakumi-verify\.json|root of (your|their) OpenAPI file|curl -s/i);
+    expect(facts).toContain("name _hirakumi.<the API's host>");
+    expect(facts).toContain("The API itself doesn't change");
+    expect(facts).toMatch(/types only the part before their domain/);
+    expect(facts).toContain("dig +short TXT _hirakumi.<host>");
+    expect(facts).toMatch(/something\.vercel\.app/);
+    expect(facts).toMatch(/new sales pause until it is back/);
     expect(facts).toMatch(/hosted anywhere/);
     expect(facts).toMatch(/30 minutes/);
     expect(facts).toMatch(/payout address/);
+  });
+
+  it("answers the ownership step's help question offline", () => {
+    expect(OFFLINE_FAQ[DNS_HELP_QUESTION]).toMatch(/add a TXT record/);
+    expect(OFFLINE_FAQ[DNS_HELP_QUESTION]).not.toMatch(/[–—]/);
   });
 
   it("no offline answer mentions the old file", () => {

@@ -2,6 +2,7 @@ import { isIP } from "node:net";
 import { DEFAULT_SETTLEMENT_POLICY, type SettlementPolicy } from "@hirakumi/core";
 import { walletKeys } from "@hirakumi/escrow/txs";
 import type { HealthThresholds } from "./health";
+import { DEFAULT_DNS_RESOLVERS } from "./ownership";
 
 export type { HealthThresholds } from "./health";
 export type GatewayConfig = {
@@ -12,7 +13,9 @@ export type GatewayConfig = {
   facilitatorUrl: string;
   databaseUrl: string;
   probeIntervalMs: number;
-  /** How often an API proven with the X-Hirakumi-Verify header is checked again (jittered by 10%). */
+  /** DNS_RESOLVERS: the servers the ownership proof asks for TXT records (comma list of IPs). Default 1.1.1.1, 8.8.8.8. */
+  dnsResolvers: string[];
+  /** How often a proven API's ownership is checked again (jittered by 10%). */
   ownershipRecheckMs: number;
   /** How soon it is checked again after a failed or unreachable check, so two failures in a row come quickly. */
   ownershipRetryMs: number;
@@ -95,6 +98,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     facilitatorUrl: required("FACILITATOR_URL"),
     databaseUrl: required("DATABASE_URL"),
     probeIntervalMs: demoMode ? 10_000 : 120_000,
+    dnsResolvers: parseDnsResolvers(env.DNS_RESOLVERS),
     ownershipRecheckMs: 6 * 3_600_000,
     ownershipRetryMs: 15 * 60_000,
     thresholds: demoMode ? { failsToDown: 2, passesToHeal: 2 } : { failsToDown: 3, passesToHeal: 2 },
@@ -116,6 +120,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     tryLiveApis: parseTryLiveApis(env.TRY_LIVE_APIS),
     upstreamAuthPrivateKey: env.UPSTREAM_AUTH_PRIVATE_KEY?.trim() || null,
   };
+}
+
+/** "1.1.1.1, 8.8.8.8" to a list of IPs; unset or blank gives the public default. A name is refused (it needs DNS itself). */
+export function parseDnsResolvers(raw: string | undefined): string[] {
+  const items = (raw ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (items.length === 0) return [...DEFAULT_DNS_RESOLVERS];
+  const bad = items.find((item) => isIP(item) === 0);
+  if (bad) throw new Error(`DNS_RESOLVERS: "${bad}" is not an IP address`);
+  return items;
 }
 
 /** GATEWAY_PORT: blank or unset is 4021. Number("") is 0 (a random port) and Number("x") is NaN, so check the text. */

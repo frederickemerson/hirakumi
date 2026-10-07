@@ -14,10 +14,10 @@ export function startMockGateway(port: number, token: string, opts: { challengeO
     const check = url.match(/^\/internal\/challenge\/([^/]+)\/check$/);
     if (req.method === "POST" && check) {
       const ok = opts.challengeOk ?? process.env.MOCK_CHALLENGE !== "fail";
-      const triedUrl = "https://price.example.dev/";
+      const record = "_hirakumi.price.example.dev";
       return send(res, 200, ok
-        ? { ok: true, reason: "verified", triedUrl, status: 200, detail: "Found your code in the X-Hirakumi-Verify header." }
-        : { ok: false, reason: "missing", triedUrl, status: 404, detail: "Your API answered 404 without an X-Hirakumi-Verify header." });
+        ? { ok: true, reason: "verified", record, detail: `Found your code in the TXT record at ${record}.` }
+        : { ok: false, reason: "missing", record, detail: `No TXT record found at ${record} yet.` });
     }
     if (req.method === "POST" && /^\/internal\/apis\/[^/]+\/reload$/.test(url)) return send(res, 204);
     if (req.method === "GET" && /^\/internal\/apis\/[^/]+\/health$/.test(url)) {

@@ -4,28 +4,36 @@ import {
 } from "@hirakumi/db";
 import type { GatewayConfig } from "./config";
 import type { HealthReason, HealthTracker, HealthTransition } from "./health";
-import { probeVerifyHeader, type OwnershipReason } from "./ownership";
+import type { TxtLookup } from "@hirakumi/core";
+import { probeVerifyDns, probeVerifyHeader, txtLookupVia, type DnsReason, type OwnershipReason } from "./ownership";
 import type { ApiRegistry } from "./registry";
 import { runOperation } from "./upstream";
 
 export type MonitorDeps = {
   sql: Sql; registry: ApiRegistry; health: HealthTracker;
-  config: Pick<GatewayConfig, "probeIntervalMs" | "upstreamTimeoutMs" | "ownershipRecheckMs" | "ownershipRetryMs">;
+  config: Pick<GatewayConfig, "probeIntervalMs" | "upstreamTimeoutMs" | "ownershipRecheckMs" | "ownershipRetryMs" | "dnsResolvers">;
+  /** TXT lookups; unset: config.dnsResolvers. Tests pass a fake. */
+  txtLookup?: TxtLookup;
   /** 0 to 1; tests pass a fixed value. */
   random?: () => number;
 };
 
 export type OwnershipRecheck = {
-  outcome: OwnershipRecheckOutcome; reason: OwnershipReason; detail: string; failures: number; paused: boolean; changed: boolean;
+  outcome: OwnershipRecheckOutcome; reason: OwnershipReason | DnsReason; detail: string; failures: number; paused: boolean; changed: boolean;
 };
 
-/** The header was looked for and was not there, or held another code: the only outcomes that count toward a pause. */
-const FAILED: OwnershipReason[] = ["missing", "mismatch"];
+/** The code was looked for and was not there, or another code was: the only outcomes that count toward a pause. */
+const FAILED: (OwnershipReason | DnsReason)[] = ["missing", "mismatch"];
 
-export const PAUSED_MESSAGE = (detail: string) =>
-  `Hirakumi paused new sales of your API: two checks in a row did not find your code in the X-Hirakumi-Verify header at its base URL (${detail}). ` +
-  "Buyers' credits they already bought still work. Send the header again, the same code as when you proved ownership, and sales start again at the next check.";
-export const RESTORED_MESSAGE = "Your API's X-Hirakumi-Verify header is back, so Hirakumi is selling it again.";
+const WHERE = { dns: "the TXT record at _hirakumi.<your host>", header: "the X-Hirakumi-Verify header at its base URL" } as const;
+
+export const PAUSED_MESSAGE = (detail: string, kind: "dns" | "header" = "dns") =>
+  `Hirakumi paused new sales of your API: two checks in a row did not find your code in ${WHERE[kind]} (${detail}). ` +
+  `Buyers' credits they already bought still work. Put the ${kind === "dns" ? "record" : "header"} back, the same code as when you proved ownership, and sales start again at the next check.`;
+export const RESTORED_MESSAGE = (kind: "dns" | "header" = "dns") =>
+  kind === "dns"
+    ? "Your API's _hirakumi TXT record is back, so Hirakumi is selling it again."
+    : "Your API's X-Hirakumi-Verify header is back, so Hirakumi is selling it again.";
 
 export class Monitor {
   private timer: NodeJS.Timeout | undefined;
@@ -107,8 +115,8 @@ export class Monitor {
   }
 
   /**
-   * Ownership re-check, for APIs proven with the X-Hirakumi-Verify header only (listOwnershipRecheckTargets). One
-   * seen for the first time is only scheduled, at a random time within one interval.
+   * Ownership re-check, for APIs proven with a DNS record or (before it) the X-Hirakumi-Verify header
+   * (listOwnershipRecheckTargets). One seen for the first time is only scheduled, at a random time within one interval.
    */
   async recheckDue(now: Date = new Date()): Promise<void> {
     let targets: OwnershipRecheckTarget[];
@@ -129,9 +137,9 @@ export class Monitor {
   }
 
   /**
-   * One re-check: the same request as the proof step (probeVerifyHeader), with the code the seller proved with. A
-   * missing header or another code counts; two in a row pause new sales (402 offers, packs and Masumi jobs answer
-   * 503 selling_paused), and the header back ends the pause. Credits already bought keep working: their answers are
+   * One re-check: the same lookup as the proof step (probeVerifyDns; probeVerifyHeader for APIs proven by header),
+   * with the code the seller proved with. A missing record or another code counts; two in a row pause new sales
+   * (402 offers, packs and Masumi jobs answer 503 selling_paused), and the code back ends the pause. Credits already bought keep working: their answers are
    * still checked against the promise, and stopping them would strand what buyers paid for. A network error neither
    * counts nor resets. Two calls for one API at once share one check.
    */
@@ -146,12 +154,14 @@ export class Monitor {
   private async recheckOnce(apiId: string, now: Date): Promise<OwnershipRecheck | null> {
     const target = (await listOwnershipRecheckTargets(this.d.sql)).find((t) => t.id === apiId);
     if (!target) return null;
-    const check = await probeVerifyHeader(target, target.token, this.d.config.upstreamTimeoutMs);
+    const check = target.kind === "dns"
+      ? await probeVerifyDns(target.origin, target.token, this.d.txtLookup ?? txtLookupVia(this.d.config.dnsResolvers))
+      : await probeVerifyHeader(target, target.token, this.d.config.upstreamTimeoutMs);
     const outcome: OwnershipRecheckOutcome = check.ok ? "pass" : FAILED.includes(check.reason) ? "fail" : "error";
     const r = await recordOwnershipRecheck(this.d.sql, {
       apiId, outcome, detail: check.detail,
       nextAt: this.nextAt(now, outcome === "pass" ? this.d.config.ownershipRecheckMs : this.d.config.ownershipRetryMs),
-      pausedMessage: PAUSED_MESSAGE(check.detail), restoredMessage: RESTORED_MESSAGE,
+      pausedMessage: PAUSED_MESSAGE(check.detail, target.kind), restoredMessage: RESTORED_MESSAGE(target.kind),
     });
     if (r.changed) {
       console.log(`[monitor] ${apiId} ownership ${r.paused ? "paused" : "restored"} (${check.reason})`);

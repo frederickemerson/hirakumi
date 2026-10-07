@@ -7,14 +7,14 @@ import { resetDb } from "@/test/db";
 import { seedApi, seedSeller } from "@/test/factories";
 import { cookieFor, ctx, jsonRequest } from "@/test/requests";
 import { makeTestWallet, type TestWallet } from "@/test/wallet-fixture";
-import { POST as specCheck } from "./spec-check/route";
+import { POST as dnsCheck } from "./dns-check/route";
 import { POST as verify } from "./verify/route";
 import { POST as walletChallenge } from "./wallet-challenge/route";
 
 function fakeGateway(check: Gateway["checkChallenge"]): Gateway {
   return { checkChallenge: check, reloadApi: vi.fn(async () => undefined), getHealth: vi.fn(), getSettlement: vi.fn(async () => []) };
 }
-const PASS: ChallengeCheck = { ok: true, reason: "verified", triedUrl: "https://price.example.dev/", status: 200, detail: "Found your code in the X-Hirakumi-Verify header." };
+const PASS: ChallengeCheck = { ok: true, reason: "verified", record: "_hirakumi.price.example.dev", detail: "Found your code in the TXT record at _hirakumi.price.example.dev." };
 
 let wallet: TestWallet;
 let seller: Seller;
@@ -22,10 +22,10 @@ let api: Api;
 let cookie: string;
 
 function runCheck(asCookie = cookie, id = api.id) {
-  return specCheck(jsonRequest(`/api/apis/${id}/ownership/spec-check`, { cookie: asCookie, body: {} }), ctx(id));
+  return dnsCheck(jsonRequest(`/api/apis/${id}/ownership/dns-check`, { cookie: asCookie, body: {} }), ctx(id));
 }
 
-async function passSpecCheck() {
+async function passDnsCheck() {
   setGatewayForTests(fakeGateway(async () => PASS));
   const res = await runCheck();
   expect(res.status).toBe(200);
@@ -65,19 +65,22 @@ describe("ownership", () => {
   });
 
   it("records a pass only when the gateway found this API's code, then unlocks signing", async () => {
-    setGatewayForTests(fakeGateway(async () => ({ ok: false, reason: "missing", triedUrl: PASS.triedUrl, detail: "no header" })));
+    setGatewayForTests(fakeGateway(async () => ({ ok: false, reason: "missing", record: PASS.record, detail: "no record" })));
     const failed = await runCheck();
-    expect(await failed.json()).toEqual({ ok: false, reason: "missing", triedUrl: PASS.triedUrl, detail: "no header" });
+    expect(await failed.json()).toEqual({ ok: false, reason: "missing", record: PASS.record, detail: "no record" });
     expect((await getWalletMessage()).res.status).toBe(409);
-    await passSpecCheck();
+    await passDnsCheck();
     expect((await findVerifyCode(getSql(), api.id))?.passedAt).toBeTruthy();
     expect((await getWalletMessage()).res.status).toBe(200);
   });
 
-  it("passes the status through", async () => {
-    const r404: ChallengeCheck = { ok: false, reason: "missing", status: 404, triedUrl: PASS.triedUrl, detail: "Your API answered 404 without an X-Hirakumi-Verify header." };
-    setGatewayForTests(fakeGateway(async () => r404));
-    expect(await (await runCheck()).json()).toEqual(r404);
+  it("passes the gateway's answer through and records the record name on a pass", async () => {
+    const mismatch: ChallengeCheck = { ok: false, reason: "mismatch", record: PASS.record, detail: "Found a TXT record, but not with this API's code." };
+    setGatewayForTests(fakeGateway(async () => mismatch));
+    expect(await (await runCheck()).json()).toEqual(mismatch);
+    await passDnsCheck();
+    const [row] = await getSql()<{ record: string }[]>`select proof->>'record' as record from challenges where api_id = ${api.id} and kind = 'dns'`;
+    expect(row.record).toBe(PASS.record);
   });
 
   it("a pass for one API never unlocks another API of the same seller on the same origin", async () => {
@@ -92,11 +95,11 @@ describe("ownership", () => {
   });
 
   it("a pass older than 30 minutes no longer unlocks signing", async () => {
-    await passSpecCheck();
-    await getSql()`update challenges set proof = jsonb_set(proof, '{passedAt}', to_jsonb((now() - interval '31 minutes')::text)) where api_id = ${api.id} and kind = 'header'`;
+    await passDnsCheck();
+    await getSql()`update challenges set proof = jsonb_set(proof, '{passedAt}', to_jsonb((now() - interval '31 minutes')::text)) where api_id = ${api.id} and kind = 'dns'`;
     const { res, body } = await getWalletMessage();
     expect(res.status).toBe(409);
-    expect(body.error).toBe("Check your X-Hirakumi-Verify header first.");
+    expect(body.error).toBe("Add your DNS record first. We check it on this page.");
   });
 
   it("answers 502 in plain English when the gateway is unreachable", async () => {
@@ -111,11 +114,11 @@ describe("ownership", () => {
   it("refuses to issue a wallet message before the OpenAPI check passed", async () => {
     const { res, body } = await getWalletMessage();
     expect(res.status).toBe(409);
-    expect(body.error).toBe("Check your X-Hirakumi-Verify header first.");
+    expect(body.error).toBe("Add your DNS record first. We check it on this page.");
   });
 
   it("verifies the owner's signature, moves to ownership_verified and consumes the code", async () => {
-    await passSpecCheck();
+    await passDnsCheck();
     const { body } = await getWalletMessage();
     expect(body.message).toContain(api.id);
     expect(body.message).toContain(wallet.bech32);
@@ -130,7 +133,7 @@ describe("ownership", () => {
   });
 
   it("rejects a signature from a different wallet", async () => {
-    await passSpecCheck();
+    await passDnsCheck();
     const { body } = await getWalletMessage();
     const other = await makeTestWallet();
     const res = await sendVerify({ challengeId: body.challengeId, address: other.addressHex, ...other.sign(body.message) });
@@ -142,7 +145,7 @@ describe("ownership", () => {
   });
 
   it("refuses to reuse a consumed challenge", async () => {
-    await passSpecCheck();
+    await passDnsCheck();
     const { body } = await getWalletMessage();
     const signed = { challengeId: body.challengeId, ...wallet.sign(body.message) };
     expect((await sendVerify(signed)).status).toBe(200);
@@ -151,7 +154,7 @@ describe("ownership", () => {
   });
 
   it("refuses an expired challenge", async () => {
-    await passSpecCheck();
+    await passDnsCheck();
     const { body } = await getWalletMessage();
     await getSql()`update challenges set expires_at = now() - interval '1 minute' where id = ${body.challengeId}`;
     const res = await sendVerify({ challengeId: body.challengeId, ...wallet.sign(body.message) });

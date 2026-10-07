@@ -10,9 +10,9 @@ function gatewayWith(fetchImpl: typeof fetch) {
 
 describe("gateway client", () => {
   it("calls the challenge check with the bearer token and returns the result", async () => {
-    const fetchImpl = vi.fn(async () => jsonResponse({ ok: false, reason: "missing", status: 404, triedUrl: "https://x/", detail: "Your API answered 404 without an X-Hirakumi-Verify header." }));
+    const fetchImpl = vi.fn(async () => jsonResponse({ ok: false, reason: "missing", record: "_hirakumi.x.dev", detail: "No TXT record found at _hirakumi.x.dev yet." }));
     const result = await gatewayWith(fetchImpl).checkChallenge("api_1");
-    expect(result).toEqual({ ok: false, reason: "missing", status: 404, triedUrl: "https://x/", detail: "Your API answered 404 without an X-Hirakumi-Verify header." });
+    expect(result).toEqual({ ok: false, reason: "missing", record: "_hirakumi.x.dev", detail: "No TXT record found at _hirakumi.x.dev yet." });
     const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://gw.test/internal/challenge/api_1/check");
     expect(init.method).toBe("POST");
