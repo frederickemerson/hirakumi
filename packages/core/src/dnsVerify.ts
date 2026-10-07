@@ -55,3 +55,6 @@ export function isNoRecordError(e: unknown): boolean {
   const code = (e as { code?: unknown } | null)?.code;
   return code === "ENODATA" || code === "ENOTFOUND" || code === "NXDOMAIN";
 }
+
+/** A passing DNS check of the ownership record counts for this long (the ownership page, the coworker, /act). */
+export const VERIFY_PASS_TTL_MINUTES = 30;

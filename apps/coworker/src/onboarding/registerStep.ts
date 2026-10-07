@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type pg from "pg";
 import { withTx } from "../db.js";
 import { PermanentError } from "../errors.js";
-import { apiLink, registryTokenLink, reviewLink, SOKOSUMI_LISTING_FORM, statusPageLink, tryPageLink } from "../links.js";
+import { registryTokenLink, reviewLink, SOKOSUMI_LISTING_FORM, statusPageLink, tryPageLink } from "../links.js";
 import type { Listing } from "../llm/ruleText.js";
 import { enqueueMessage } from "../messages.js";
 import { opsNeedingPhrase } from "../sokosumi/sellerActions.js";
@@ -91,7 +91,7 @@ async function pollRegistration(deps: RegisterDeps, apiId: string, step: StepRow
           `Public status page: ${statusPageLink(deps.webBaseUrl, apiId)}\n` +
           `Try it: ${tryPageLink(deps.webBaseUrl, apiId)}\n` +
           `Registry token: ${registryTokenLink(id)}\n` +
-          `Your dashboard and buyer snippet: ${apiLink(deps.webBaseUrl, apiId)}. To also list it on Sokosumi, submit the prepared listing text at ${SOKOSUMI_LISTING_FORM}.`,
+          `To also list it on Sokosumi, submit the prepared listing text at ${SOKOSUMI_LISTING_FORM}.`,
         taskStatus: "COMPLETED",
         dedupeKey: `live:${apiId}`,
         step: "Register on Masumi",
@@ -122,13 +122,17 @@ async function sentBackForPhrase(deps: RegisterDeps, apiId: string): Promise<boo
   const needPhrase = await opsNeedingPhrase(deps.pool, apiId);
   if (!needPhrase.length) return false;
   return withTx(deps.pool, async (c) => {
-    const moved = await c.query(`update apis set state = 'priced' where id = $1 and state = 'registering'`, [apiId]);
+    const moved = await c.query<{ task: string | null }>(
+      `update apis set state = 'priced' where id = $1 and state = 'registering' returning sokosumi_task_id as task`, [apiId]);
     if (moved.rowCount !== 1) return false;
+    const one = needPhrase.length === 1;
     await c.query(`delete from onboard_steps where api_id = $1 and step = 'register' and status = 'pending'`, [apiId]);
     await enqueueMessage(c, {
       apiId,
       body: `Before I publish, ${needPhrase.join(", ")} needs a phrase every good answer contains, so an error page can't count as a good answer. ` +
-        `Add it on the review page, then publish again: ${reviewLink(deps.webBaseUrl, apiId)}`,
+        (moved.rows[0].task
+          ? `Reply \`phrase ${one ? "" : "<endpoint> "}<a word every good answer contains>\`, then \`publish\` for a new link to publish.`
+          : `Add it on the review page, then publish again: ${reviewLink(deps.webBaseUrl, apiId)}`),
       taskStatus: "INPUT_REQUIRED",
       dedupeKey: `needs_phrase:${apiId}:${randomUUID()}`,
       step: "Register on Masumi",

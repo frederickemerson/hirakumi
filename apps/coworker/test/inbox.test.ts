@@ -18,7 +18,7 @@ function fakeSoko(events: unknown[], taskStatus = "READY") {
 }
 
 describe("Sokosumi inbox", () => {
-  it("records a newly assigned task once and queues the setup link", async () => {
+  it("records a newly assigned task once and asks for the link here, with no web page to open", async () => {
     const soko = fakeSoko([
       { id: "evt_1", taskId: "tsk_new", createdAt: "t", status: "READY", actor: { type: "user", id: "user_1" } },
       { id: "evt_2", taskId: "tsk_new", createdAt: "t", comment: "please", actor: { type: "user", id: "user_1" } },
@@ -31,7 +31,9 @@ describe("Sokosumi inbox", () => {
     const { rows: [task] } = await db.pool.query(`select sokosumi_user_id, sokosumi_organization_id, setup_token from coworker_tasks where task_id = 'tsk_new'`);
     expect(task).toMatchObject({ sokosumi_user_id: "user_1", sokosumi_organization_id: "org_1" });
     const { rows: msgs } = await db.pool.query(`select body, task_status from messages where task_id = 'tsk_new'`);
-    expect(msgs).toEqual([{ body: expect.stringContaining(`https://web.test/setup?t=${task.setup_token}`), task_status: "INPUT_REQUIRED" }]);
+    expect(msgs).toEqual([{ body: expect.stringContaining("Reply with the https link to your OpenAPI file"), task_status: "INPUT_REQUIRED" }]);
+    expect(msgs[0].body).not.toContain("https://web.test");
+    expect(task.setup_token).toBeTruthy();
   });
 
   it("ignores tasks that are already finished", async () => {

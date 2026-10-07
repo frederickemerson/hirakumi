@@ -13,16 +13,18 @@ type LoginPayload = { addr: string; nonce: string; exp: number };
 
 const nowSeconds = () => Math.floor(Date.now() / 1000);
 
-function mac(kind: "session" | "login", body: string): Buffer {
+type SealKind = "session" | "login" | "act";
+
+function mac(kind: SealKind, body: string): Buffer {
   return createHmac("sha256", env.sessionSecret()).update(`${kind}.${body}`).digest();
 }
 
-function seal(kind: "session" | "login", payload: object): string {
+function seal(kind: SealKind, payload: object): string {
   const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
   return `${body}.${mac(kind, body).toString("base64url")}`;
 }
 
-function unseal<T extends { exp: number }>(kind: "session" | "login", token: string, now: number): T | null {
+function unseal<T extends { exp: number }>(kind: SealKind, token: string, now: number): T | null {
   const parts = token.split(".");
   if (parts.length !== 2) return null;
   const [body, sig] = parts;
@@ -99,4 +101,44 @@ export function openLoginChallenge(nonceToken: string, now = nowSeconds()): Logi
   const p = unseal<LoginPayload>("login", nonceToken, now);
   if (!p || typeof p.addr !== "string" || typeof p.nonce !== "string") return null;
   return { addr: p.addr, message: buildLoginMessage(p.addr, p.nonce, new Date(p.exp * 1000).toISOString()), nonce: p.nonce, exp: p.exp };
+}
+
+/**
+ * A wallet step on a one-time link (/act/<token>, lib/act.ts): the message the API owner signs to approve one action,
+ * sealed like a login challenge (same HMAC, a random nonce used up once in used_login_nonces). `act` is the link's
+ * row id, so a signature for one link can't be used on another. `lines` say what is approved, such as the price.
+ */
+type ActPayload = { addr: string; nonce: string; exp: number; act: string; lines: string[] };
+export type ActChallenge = { addr: string; actId: string; lines: string[]; message: string; nonce: string; exp: number };
+
+export function buildActMessage(addr: string, actId: string, lines: string[], nonce: string, expiresIso: string): string {
+  return [
+    ...lines,
+    "This approves one action on Hirakumi. It costs nothing and moves no funds.",
+    `Site: ${new URL(env.webBaseUrl()).host}`,
+    `Wallet: ${addr}`,
+    `Link: ${actId}`,
+    "Network: cardano:preprod",
+    `Nonce: ${nonce}`,
+    `Expires: ${expiresIso}`,
+  ].join("\n");
+}
+
+export function issueActChallenge(addr: string, actId: string, lines: string[], now = nowSeconds()): { message: string; nonceToken: string } {
+  const nonce = randomBytes(16).toString("hex");
+  const exp = now + LOGIN_TTL_S;
+  return {
+    message: buildActMessage(addr, actId, lines, nonce, new Date(exp * 1000).toISOString()),
+    nonceToken: seal("act", { addr, nonce, exp, act: actId, lines } satisfies ActPayload),
+  };
+}
+
+export function openActChallenge(nonceToken: string, now = nowSeconds()): ActChallenge | null {
+  const p = unseal<ActPayload>("act", nonceToken, now);
+  if (!p || typeof p.addr !== "string" || typeof p.nonce !== "string" || typeof p.act !== "string" || !Array.isArray(p.lines)
+    || !p.lines.every((l) => typeof l === "string")) return null;
+  return {
+    addr: p.addr, actId: p.act, lines: p.lines, nonce: p.nonce, exp: p.exp,
+    message: buildActMessage(p.addr, p.act, p.lines, p.nonce, new Date(p.exp * 1000).toISOString()),
+  };
 }

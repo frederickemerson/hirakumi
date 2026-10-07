@@ -150,9 +150,17 @@ A third-party API (`https://fx.patricksteveharrison.com`, key in the `X-API-Key`
 
 Escrow script address: [`addr_test1wq3a6jmeshhdn8wnzgrgtxzgsz26w8ggnupzty69sa2lwqs3jsjn3`](https://preprod.cardanoscan.io/address/addr_test1wq3a6jmeshhdn8wnzgrgtxzgsz26w8ggnupzty69sa2lwqs3jsjn3). Every requirement with its evidence: [submission evidence](docs/submission/submission-checklist.md).
 
-## Sokosumi coworker
+## Sokosumi coworker: list an API without leaving Sokosumi
 
-The Hirakumi coworker brings the same onboarding into Sokosumi. A seller assigns it a task such as "Put my API on the agent market" with an API link. The coworker reads the API, describes the endpoints, runs the test calls, sets the promise and registers the agent on Masumi, posting each step as a task comment. The seller answers in the task (`sell 1 2`, `price 2.5 for 100 calls`, `publish`, `link wallet`). Steps that need the seller's wallet (sign in, prove ownership, publish) get one deep link to that exact web step. After publishing, the same task receives health alerts when the API goes Down. Code: `apps/coworker/src/`.
+The Hirakumi coworker brings the whole onboarding into Sokosumi. A seller assigns it a task with an API link, and every step happens in the task's comments:
+
+1. The coworker reads the API and lists the endpoints. The seller replies `sell 1 2`.
+2. It posts the exact DNS record (Type, Name, Value), looks it up itself, and comments "Found your record".
+3. It runs the test calls and writes the promise in plain words; a text promise takes its phrase as a reply (`phrase Price`).
+4. It runs the leak check, takes the price (`price 2`), and registers the agent on Masumi once the seller has signed.
+5. After publishing, the same task receives health alerts when the API goes Down.
+
+Only a wallet signature or the API's key opens a browser tab, and each is one focused page with nothing else on it: "Sign to prove you own weather.example.com", "Add the key", "Sign to publish at 2 tUSDM for 100 calls". The link is one-time, bound to one API and one action, valid 30 minutes and stored only as a hash; the owner's wallet signature is the authority, so a forwarded link does nothing. The page ends with "Done. You can close this tab; the rest continues in Sokosumi." The first task links the Sokosumi account to a wallet the same way, and `link wallet` moves it to another wallet. Code: `apps/coworker/src/`, `apps/web/app/act/`.
 
 ## Architecture
 

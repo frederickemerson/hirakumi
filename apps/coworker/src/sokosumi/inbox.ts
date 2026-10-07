@@ -5,7 +5,8 @@ import { enqueueMessage } from "../messages.js";
 import type { StructuredCall } from "../llm/claude.js";
 import { createSpecFetcher } from "../openapi/fetchSpec.js";
 import type { SokosumiClient, SokosumiEvent } from "./client.js";
-import { handleBrief, handleReply, type ConversationDeps, type TaskRef } from "./conversation.js";
+import type { LeakCheck } from "../leakCheck.js";
+import { handleBrief, handleReply, resumeLinkedIntakes, type ConversationDeps, type TaskRef } from "./conversation.js";
 
 export const INBOX_PAGE_LIMIT = 50;
 export const INBOX_MAX_PAGES = 3;
@@ -20,6 +21,8 @@ export type InboxDeps = {
   allowInsecure?: boolean;
   /** Endpoints that need several keys at once are sold too (UPSTREAM_AUTH_V3). */
   multiPartKeys?: boolean;
+  /** The leak check before the publish link (leakCheck.ts). */
+  leakCheck?: LeakCheck | null;
 };
 
 type Row = { task_id: string; sokosumi_user_id: string; setup_token: string; created_at: Date };
@@ -42,9 +45,12 @@ export function createInbox(deps: InboxDeps): { poll(): Promise<number> } {
     llm: deps.llm ?? null,
     allowInsecure: deps.allowInsecure ?? false,
     multiPartKeys: deps.multiPartKeys ?? false,
+    leakCheck: deps.leakCheck ?? null,
   };
   return {
     async poll() {
+      // Sellers who just linked their wallet on the setup link: their intake starts now.
+      await resumeLinkedIntakes(convo).catch((e: unknown) => console.error(`[inbox] resuming linked intakes: ${(e as Error).message}`));
       const byTask = new Map<string, SokosumiEvent[]>();
       let cursor: string | undefined;
       for (let page = 0; page < INBOX_MAX_PAGES; page++) {

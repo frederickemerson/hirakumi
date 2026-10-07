@@ -42,6 +42,7 @@ describe("MoveSokosumiPanel", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("/api/sokosumi/link");
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ setupToken: "tok_1" });
     expect(screen.getByTestId("sokosumi-moved")).toHaveTextContent("Your Sokosumi account now uses this wallet (addr_test1qq…5vxkj4).");
+    expect(screen.getByTestId("sokosumi-moved")).toHaveTextContent("Done. You can close this tab; the rest continues in Sokosumi.");
     expect(nav.refresh).toHaveBeenCalled();
   });
 

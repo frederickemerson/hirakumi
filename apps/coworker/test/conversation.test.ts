@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import type { LeakCheck } from "../src/leakCheck.js";
 import type { StructuredCall } from "../src/llm/claude.js";
 import { describeStep } from "../src/onboarding/describeStep.js";
 import { parseStep } from "../src/onboarding/parseStep.js";
@@ -245,13 +246,13 @@ describe("an OpenAPI file hosted somewhere else (GitHub)", () => {
 });
 
 describe("replies on a task", () => {
-  async function setup(state: string, o: { llm?: StructuredCall } = {}) {
+  async function setup(state: string, o: { llm?: StructuredCall; leakCheck?: LeakCheck } = {}) {
     const t = await newTask();
     const sellerId = await linkSeller(t.user);
     const { soko, setEvents } = fakeSoko({ [t.id]: t.task });
     setEvents([{ id: `evt_${rand()}`, taskId: t.id, createdAt: past, status: "READY", actor: { type: "user", id: t.user } }]);
-    const inbox = createInbox({ pool: db.pool, soko, webBaseUrl: WEB, fetchSpec: vi.fn(), llm: o.llm ?? null });
-    await inbox.poll(); // takes the task (no link: setup message)
+    const inbox = createInbox({ pool: db.pool, soko, webBaseUrl: WEB, fetchSpec: vi.fn(), llm: o.llm ?? null, leakCheck: o.leakCheck ?? null });
+    await inbox.poll(); // takes the task (no link: welcome message)
     const apiId = await seedTaskApi(t.id, sellerId, state);
     const get = await seedOperation(db.pool, apiId, { opId: "getPrice", method: "GET", path: "/price" });
     const post = await seedOperation(db.pool, apiId, { opId: "createAlert", method: "POST", path: "/alerts" });
@@ -264,7 +265,7 @@ describe("replies on a task", () => {
     return { t, apiId, get, post, reply, setEvents, inbox, soko };
   }
 
-  it("`sell 2` chooses endpoints, then posts the one wallet deep link for ownership", async () => {
+  it("`sell 2` chooses endpoints, then posts the DNS record to add, with no link: the coworker looks it up itself", async () => {
     const { t, apiId, reply } = await setup("described");
     await reply("sell 2");
     const { rows: ops } = await db.pool.query(`select op_id, enabled, side_effects_confirmed_none from operations where api_id = $1 order by op_id`, [apiId]);
@@ -280,12 +281,12 @@ describe("replies on a task", () => {
       { body: "Step 3 of 7, Choose endpoints: Selling GET /price. Per-job hires (Masumi escrow) run getPrice.", task_status: "RUNNING", api_id: apiId },
       {
         body: [
-          `Step 4 of 7, Prove ownership: Prove you own price.example.dev: add this DNS TXT record where your domain's DNS is managed (your API itself doesn't change), then sign once with your Cardano wallet (no payment): ${WEB}/apis/${apiId}/ownership`,
+          "Step 4 of 7, Prove ownership: Prove you own price.example.dev: add this DNS TXT record where your domain's DNS is managed (your API itself doesn't change):",
           "- Type: `TXT`",
           "- Name: `_hirakumi.price` (the full name is `_hirakumi.price.example.dev`)",
           `- Value: \`${code}\``,
           "",
-          "Open the link to finish: the page checks every 10 seconds and unlocks the wallet signature once the record is live.",
+          "I look for it every 15 seconds and post here when I find it. Then you sign once with your Cardano wallet (no payment).",
         ].join("\n"),
         task_status: "INPUT_REQUIRED", api_id: apiId,
       },
@@ -315,8 +316,9 @@ describe("replies on a task", () => {
     expect((await messagesForTask(t.id)).filter((m) => m.body.includes("Choose endpoints"))).toHaveLength(1);
   });
 
-  it("`price 2.5 for 200 calls` saves the pack before publishing; publishing itself needs the wallet", async () => {
-    const { t, apiId, get, reply } = await setup("rule_built");
+  it("`price 2.5 for 200 calls` saves the pack, runs the leak check, then gives the one-time publish link", async () => {
+    const leakCheck = vi.fn().mockResolvedValue({ exposure: "protected", endpoints: [] });
+    const { t, apiId, get, reply } = await setup("rule_built", { leakCheck });
     await db.pool.query(`update operations set enabled = (id = $1) where api_id = $2`, [get, apiId]);
     await db.pool.query(`insert into rules (id, operation_id, version, definition, hash) values ($1, $2, 1, '{}'::jsonb, 'sha256:x')`, [`rule_${rand()}`, get]);
     await reply("price 0.5");
@@ -329,13 +331,32 @@ describe("replies on a task", () => {
       .toEqual([{ calls: 200, price_micros: "2500000", escrow_price_micros: "2000000" }]);
     expect((await db.pool.query(`select state from apis where id = $1`, [apiId])).rows[0].state).toBe("priced");
     expect((await messagesForTask(t.id)).at(-1)).toEqual({
-      body: `Step 6 of 7, Write the promise: Price saved: 2.5 tUSDM for 200 calls, and 2 tUSDM per escrow job. Publishing needs your wallet signature: approve it here (one signature): ${WEB}/apis/${apiId}/review`,
+      body: "Step 6 of 7, Write the promise: Price saved: 2.5 tUSDM for 200 calls, and 2 tUSDM per escrow job.\n" +
+        "Leak check passed: your API refuses calls without its key. Approve publishing at 2.5 tUSDM for 200 calls with your Cardano wallet (one signature, no payment): [[act:publish]]",
       task_status: "INPUT_REQUIRED", api_id: apiId,
     });
+    expect(leakCheck).toHaveBeenCalledWith(apiId);
     await reply("publish");
     expect((await db.pool.query(`select state from apis where id = $1`, [apiId])).rows[0].state).toBe("priced");
     expect((await messagesForTask(t.id)).at(-1)?.body).toBe(
-      `Step 7 of 7, Register on Masumi: Publishing needs your wallet signature, so I can't do it from a comment. Approve it here (one signature): ${WEB}/apis/${apiId}/review`);
+      "Step 7 of 7, Register on Masumi: Leak check passed: your API refuses calls without its key. Approve publishing at 2.5 tUSDM for 200 calls with your Cardano wallet (one signature, no payment): [[act:publish]]");
+  });
+
+  it("an API anyone can call for free gets the key link, not the publish link", async () => {
+    const leakCheck = vi.fn().mockResolvedValue({ exposure: "open", endpoints: [
+      { opId: "getPrice", method: "GET", path: "/price", url: "https://price.example.dev/price?symbol=ADA", exposure: "open", detail: "GET answered 200" },
+    ] });
+    const { t, apiId, get, reply } = await setup("rule_built", { leakCheck });
+    await db.pool.query(`update operations set enabled = (id = $1) where api_id = $2`, [get, apiId]);
+    await db.pool.query(`insert into rules (id, operation_id, version, definition, hash) values ($1, $2, 1, '{}'::jsonb, 'sha256:x')`, [`rule_${rand()}`, get]);
+    await reply("price 2");
+    const body = (await messagesForTask(t.id)).at(-1)!.body;
+    expect(body).toContain("Anyone can call your API for free at https://price.example.dev/price?symbol=ADA");
+    expect(body).toContain("[[act:key]] Then reply `publish`.");
+    expect(body).not.toContain("[[act:publish]]");
+    leakCheck.mockResolvedValue({ exposure: "unknown", endpoints: [{ opId: "getPrice", method: "GET", path: "/price", url: null, exposure: "unknown", detail: "GET did not answer within 10 seconds" }] });
+    await reply("publish");
+    expect((await messagesForTask(t.id)).at(-1)!.body).toMatch(/couldn't confirm .*did not answer within 10 seconds.*Reply `publish` in a minute/);
   });
 
   it("`price` on a status-only text promise reminds the seller to set the phrase before publishing", async () => {
@@ -344,11 +365,14 @@ describe("replies on a task", () => {
     const statusOnly = inferRuleFromResponses([{ status: 200, contentType: "text/plain", body: "1.5", latencyMs: 1 }]);
     await db.pool.query(`insert into rules (id, operation_id, version, definition, hash) values ($1, $2, 1, $3::jsonb, 'sha256:x')`, [`rule_${rand()}`, get, JSON.stringify(statusOnly)]);
     await reply("price 2");
-    expect((await messagesForTask(t.id)).at(-1)?.body).toMatch(/approve it here \(one signature\): \S+\/review Before publishing, set the phrase every good answer must contain on the same page\.$/);
-    const phrased = withRequiredPhrase(statusOnly, "price");
-    await db.pool.query(`insert into rules (id, operation_id, version, definition, hash) values ($1, $2, 2, $3::jsonb, 'sha256:y')`, [`rule_${rand()}`, get, JSON.stringify(phrased)]);
-    await reply("price 3");
-    expect((await messagesForTask(t.id)).at(-1)?.body).toMatch(/approve it here \(one signature\): \S+\/review$/);
+    const asked = (await messagesForTask(t.id)).at(-1)!.body;
+    expect(asked).toContain("This promise only checks the status, so it needs a phrase before you can publish. Reply `phrase Price` with a word or label");
+    expect(asked).not.toContain("[[act:publish]]");
+    await reply("phrase 1.5");
+    expect((await messagesForTask(t.id)).at(-1)?.body).toMatch(/Saved\. Every good answer from GET \/price must contain "1\.5"\..*\nApprove publishing at 2 tUSDM for 100 calls with your Cardano wallet \(one signature, no payment\): \[\[act:publish\]\]$/s);
+    const { rows: versions } = await db.pool.query(`select version from rules where operation_id = $1 order by version`, [get]);
+    expect(versions.map((v) => v.version)).toEqual([1, 2]);
+    void withRequiredPhrase;
   });
 
   it("`price` before the test calls are done is refused", async () => {
@@ -427,11 +451,12 @@ describe("replies on a task", () => {
     await reply("what now?");
     const body = (await messagesForTask(t.id)).at(-1)?.body ?? "";
     const code: string = (await db.pool.query(`select token from challenges where api_id = $1 and kind = 'dns' and consumed_at is null`, [apiId])).rows[0].token;
-    expect(body).toContain("Next: Prove you own price.example.dev: add this DNS TXT record where your domain's DNS is managed (your API itself doesn't change), then sign once with your Cardano wallet");
+    expect(body).toContain("Next: Prove you own price.example.dev: add this DNS TXT record where your domain's DNS is managed (your API itself doesn't change):");
+    expect(body).toContain("I look for it every 15 seconds and post here when I find it.");
     expect(body).toContain("- Name: `_hirakumi.price` (the full name is `_hirakumi.price.example.dev`)");
     expect(body).toContain(`- Value: \`${code}\``);
     expect(body).not.toMatch(/x-hirakumi-verify|hirakumi-verify\.json|OpenAPI file/i);
-    expect(body).toContain(`${WEB}/apis/${apiId}/ownership`);
+    expect(body).not.toContain(WEB);
     expect(body).not.toMatch(/well-known|challenge|download|upload/i);
     expect(body).not.toMatch(/[–—]/);
   });
@@ -466,8 +491,7 @@ describe("describeStep on a Sokosumi task", () => {
       "1. POST /alerts (createAlert): Creates an alert. [may change data]",
       "2. GET /history/{symbol} (get_history_symbol): Daily price history.",
       "3. GET /price (getPrice): Latest price for a ticker.",
-      "Next, choose the endpoints to sell: reply `sell 1` with their numbers (for example `sell 1 2`). Endpoints marked [may change data] also need `readonly` at the end, to confirm they change nothing on your server. " +
-        `You can also choose on the web: ${WEB}/apis/${apiId}`,
+      "Next, choose the endpoints to sell: reply `sell 1` with their numbers (for example `sell 1 2`). Endpoints marked [may change data] also need `readonly` at the end, to confirm they change nothing on your server.",
     ].join("\n"));
   });
 });

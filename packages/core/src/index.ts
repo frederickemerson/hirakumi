@@ -18,3 +18,5 @@ export * from "./reasons";
 export * from "./routeMatch";
 export * from "./upstreamRequest";
 export * from "./exposure";
+export * from "./act";
+export * from "./phrase";

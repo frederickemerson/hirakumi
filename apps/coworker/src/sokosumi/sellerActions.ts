@@ -1,4 +1,6 @@
-import { isStatusOnlyRule, newId, newVerifyCode, type RuleDefinition } from "@hirakumi/core";
+import {
+  addRequiredPhraseTx, isStatusOnlyRule, newId, newVerifyCode, RuleInferenceError, VERIFY_PASS_TTL_MINUTES, type RuleDefinition,
+} from "@hirakumi/core";
 import type pg from "pg";
 import type { Db } from "../db.js";
 import type { AuthHint } from "../openapi/parse.js";
@@ -156,16 +158,6 @@ export async function linkedWallet(db: Db, sokosumiUserId: string): Promise<stri
   return rows[0]?.cardano_addr ?? null;
 }
 
-/**
- * The wallet that owns this API (apis.seller_id), when that seller is linked to a Sokosumi account. The API's pages
- * only open for this wallet, so it is the one a link to them names.
- */
-export async function apiOwnerWallet(db: Db, apiId: string): Promise<string | null> {
-  const { rows } = await db.query<{ cardano_addr: string }>(
-    `select s.cardano_addr from apis a join sellers s on s.id = a.seller_id where a.id = $1 and s.sokosumi_user_id is not null`, [apiId]);
-  return rows[0]?.cardano_addr ?? null;
-}
-
 /** How a comment names a wallet: its last 6 characters, as a Markdown code span. */
 export const walletTail = (addr: string) => `\`…${addr.slice(-6)}\``;
 
@@ -210,4 +202,59 @@ export async function ensureVerifyCode(db: pg.Pool, apiId: string): Promise<stri
       [newId("ch"), apiId, token]);
     return token;
   });
+}
+
+/**
+ * `phrase Price` (or `phrase 2 Price` for endpoint 2): a phrase every good answer must contain, added to a text
+ * promise with the web review page's rule (@hirakumi/core addRequiredPhraseTx). Without an endpoint named, it goes to
+ * the one endpoint that needs a phrase, or the only endpoint on sale. Quotes around the phrase are dropped.
+ */
+export async function addPhrase(pool: pg.Pool, apiId: string, text: string): Promise<ActionResult> {
+  // Numbered as in the endpoint list (listOps), so `phrase 2 …` means the endpoint the seller chose as 2.
+  const { rows: enabled } = await pool.query<{ id: string }>(`select id from operations where api_id = $1 and enabled`, [apiId]);
+  const on = (await listOps(pool, apiId)).filter((o) => enabled.some((e) => e.id === o.id));
+  const [first, ...rest] = text.split(/\s+/);
+  const named = rest.length ? on.find((o) => o.ref === first || o.opId === first) : undefined;
+  const needing = await opsNeedingPhrase(pool, apiId);
+  const target = named
+    ?? (needing.length === 1 ? on.find((o) => o.opId === needing[0]) : on.length === 1 ? on[0] : undefined);
+  if (!target) {
+    const list = (needing.length ? on.filter((o) => needing.includes(o.opId)) : on).map((o) => `${o.ref} (${o.method} ${o.path})`).join(", ");
+    return { ok: false, error: `Name the endpoint first, like \`phrase 1 Price\`. Endpoints: ${list}.` };
+  }
+  const phrase = (named ? rest.join(" ") : text).trim().replace(/^["'\u201c\u2018](.*)["'\u201d\u2019]$/, "$1").trim();
+  try {
+    const r = await withTx(pool, (c) => addRequiredPhraseTx((q, p) => c.query(q, p).then((x) => x.rows), { apiId, operationId: target.id, phrase }));
+    if (!r.ok) {
+      return { ok: false, error: r.reason === "locked" ? "Your promise is published, so it can't change any more." : "I couldn't find that endpoint's promise." };
+    }
+    return { ok: true, message: `Saved. Every good answer from ${target.method} ${target.path} must contain "${phrase}". The promise now reads: ${r.plainEnglish}` };
+  } catch (e) {
+    if (e instanceof RuleInferenceError) return { ok: false, error: e.message };
+    throw e;
+  }
+}
+
+/** The phrase QA suggested for each operation (onboard_steps(step='qa').output.suggestedPhrases), by op id. */
+export async function suggestedPhrases(db: Db, apiId: string): Promise<Record<string, string>> {
+  const { rows } = await db.query<{ s: unknown }>(`select output->'suggestedPhrases' as s from onboard_steps where api_id = $1 and step = 'qa'`, [apiId]);
+  const s = rows[0]?.s;
+  if (!s || typeof s !== "object" || Array.isArray(s)) return {};
+  return Object.fromEntries(Object.entries(s).filter((e): e is [string, string] => typeof e[1] === "string"));
+}
+
+/** The saved pack: price and calls, or null before a price was set. */
+export async function savedPack(db: Db, apiId: string): Promise<{ priceMicros: string; calls: number } | null> {
+  const { rows } = await db.query<{ price_micros: string; calls: number }>(
+    `select price_micros::text, calls from packs where api_id = $1 order by id limit 1`, [apiId]);
+  return rows[0] ? { priceMicros: rows[0].price_micros, calls: rows[0].calls } : null;
+}
+
+/** The API's DNS record passed the ownership check in the last 30 minutes (onboarding/dnsWatch.ts records it). */
+export async function hasFreshDnsPass(db: Db, apiId: string): Promise<boolean> {
+  const { rows } = await db.query(
+    `select 1 from challenges where api_id = $1 and kind = 'dns' and consumed_at is null
+       and (proof->>'passedAt')::timestamptz > now() - make_interval(mins => $2)`,
+    [apiId, VERIFY_PASS_TTL_MINUTES]);
+  return rows.length > 0;
 }
