@@ -21,6 +21,7 @@
     "@hirakumi/core": "workspace:*",
     "@hirakumi/escrow": "workspace:*",
     "@meshsdk/core-cst": "1.9.1",
+    "@utxos/sdk": "0.2.8",
     "@x402/cardano": "2.26.0",
     "@x402/core": "2.26.0",
     "class-variance-authority": "0.7.1",

@@ -163,7 +163,7 @@ cd contracts/pack-escrow && aiken check      # 175 contract tests
 ## Deploy
 
 - **Gateway, coworker, Masumi payment service, demo sellers:** one EC2 host, `docker compose up -d` (`docker-compose.yml`, `deploy/app.Dockerfile`). Caddy serves HTTPS for `$PUBLIC_DOMAIN`, `price.$PUBLIC_DOMAIN` and `mika.$PUBLIC_DOMAIN`. The payment service uses the local Postgres; Hirakumi's data is in Neon (`DATABASE_URL`). The gateway applies migrations at boot. Payment-service settings go in `deploy/masumi.env` (template: `deploy/masumi.env.example`).
-- **Web:** Vercel, root `apps/web`, with `DATABASE_URL`, `SESSION_SECRET`, `INTERNAL_TOKEN`, `PUBLIC_BASE_URL`, `WEB_BASE_URL` and `UPSTREAM_AUTH_PUBLIC_KEY`.
+- **Web:** Vercel, root `apps/web`, with `DATABASE_URL`, `SESSION_SECRET`, `INTERNAL_TOKEN`, `PUBLIC_BASE_URL`, `WEB_BASE_URL` and `UPSTREAM_AUTH_PUBLIC_KEY`. Optional: `NEXT_PUBLIC_UTXOS_PROJECT_ID` (a UTXOS project id) adds "Continue with email or Google", a non-custodial Cardano wallet opened with Google or an email code, for sign-in, ownership signing and wallet payment; unset, it is hidden. It is inlined at build time, so redeploy after changing it.
 - **Scaling:** a paid call is one indexed lookup and one atomic update in Postgres, with nothing on chain per call. The gateway keeps no per-call state outside Postgres except health counters, so it runs as several instances once those move to Postgres or Redis. One payment-service node serves many sellers.
 
 ## Security model and known limits
