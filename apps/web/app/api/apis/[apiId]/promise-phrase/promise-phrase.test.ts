@@ -66,6 +66,31 @@ describe("Every good answer contains (text promises)", () => {
     expect(latest).toMatchObject({ version: 3, requiredPhrases: ["USD", "price"] });
   });
 
+  it("refuses a phrase one of the stored good test answers lacks, in any case it is typed", async () => {
+    await setup("rule_built");
+    const answers = [{ body: "BTC price: 64000 USD", complete: true }, { body: "ETH price: 3100 USD", complete: true }, { body: `BTC ${"x".repeat(50)}`, complete: false }];
+    await getSql()`insert into onboard_steps (api_id, step, status, attempts, output)
+      values (${api.id}, 'qa', 'done', 0, ${getSql().json({ goodAnswers: { [op.opId]: answers } })})`;
+    const res = await addPhrase("BTC");
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: 'Not every good answer from your test calls contains "BTC", so the promise would refuse your own answers. Pick a word or label every answer has.',
+    });
+    expect(await versions()).toHaveLength(1);
+    // Every whole answer has it in another case; the cut answer does not count.
+    expect((await addPhrase("PRICE:")).status).toBe(200);
+    expect((await listLatestRules(getSql(), api.id))[0]).toMatchObject({ version: 2, requiredPhrases: ["PRICE:"] });
+  });
+
+  it("drops the status-only sentence from the promise text once a phrase is saved", async () => {
+    seller = await seedSeller();
+    api = await seedApi(seller.id, "rule_built");
+    op = await seedOperation(api.id, { enabled: true });
+    await seedRule(op.id, { definition: TEXT_RULE, plainEnglish: `${PLAIN} This is a status-only promise: it does not check the content.` });
+    expect((await addPhrase("USD")).status).toBe(200);
+    expect((await versions())[1].plainEnglish).toBe(`${PLAIN} Every good answer contains "USD".`);
+  });
+
   it("refuses once the listing is registering or live: the promise is published", async () => {
     for (const state of ["registering", "live"] as const) {
       await resetDb();

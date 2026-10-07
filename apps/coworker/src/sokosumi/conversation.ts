@@ -15,7 +15,7 @@ import {
   parseCommand, SUGGESTED_PACK, validateOpenApiUrl, type Command, type SamplesIntake,
 } from "./replies.js";
 import {
-  apiAuthHint, apiForTask, confirmSell, createTaskApi, linkedSeller, listOps, opLine, savePrice, type ListedOp, type TaskApi,
+  apiAuthHint, apiForTask, confirmSell, createTaskApi, linkedSeller, listOps, opLine, opsNeedingPhrase, savePrice, type ListedOp, type TaskApi,
 } from "./sellerActions.js";
 
 /**
@@ -170,9 +170,12 @@ export async function handleReply(deps: ConversationDeps, task: TaskRef, eventId
   }
   if (cmd?.kind === "price") {
     const r = await savePrice(deps.pool, api.id, cmd.priceText, cmd.calls);
+    const phrase = r.ok && (await opsNeedingPhrase(deps.pool, api.id)).length
+      ? " Before publishing, set the phrase every good answer must contain on the same page."
+      : "";
     await say(deps.pool, task, key,
       r.ok
-        ? `${understood}${r.message} Publishing needs your wallet signature: approve it here (one signature): ${reviewLink(deps.webBaseUrl, api.id)}`
+        ? `${understood}${r.message} Publishing needs your wallet signature: approve it here (one signature): ${reviewLink(deps.webBaseUrl, api.id)}${phrase}`
         : `${understood}${r.error}`,
       { apiId: api.id, step: "Write the promise", status: "INPUT_REQUIRED" });
     return;

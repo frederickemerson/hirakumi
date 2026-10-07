@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  compileRule, inferRuleFromResponses, inferTextRule, isStatusOnlyRule, requiredPhrasesOf, RuleInferenceError, withRequiredPhrase,
+  compileRule, inferRuleFromResponses, inferTextRule, isStatusOnlyRule, requiredPhrasesOf, RuleInferenceError, ruleHash, withRequiredPhrase,
   type RuleDefinition, type UpstreamResult,
 } from "../src/index";
 import * as mediaTypes from "../src/mediaTypes";
@@ -25,10 +25,11 @@ describe("text promises refuse error bodies sent with 2xx", () => {
     expect(plain.check(res(body, "text/plain")).pass).toBe(true);
   });
 
-  it("refuses only short error texts: a long answer starting with an error word is data", () => {
-    expect(plain.check(res(`Error rates by region\n${"eu,0.1\n".repeat(40)}`, "text/plain")).pass).toBe(true);
-    expect(plain.check(res(`Error ${"x".repeat(193)}`, "text/plain")).pass).toBe(false);
-    expect(plain.check(res(`Error ${"x".repeat(194)}`, "text/plain")).pass).toBe(true);
+  it("refuses a short text starting with a weaker error word, and takes it when long; the word Error is refused at any length", () => {
+    expect(plain.check(res(`Timeout ${"x".repeat(191)}`, "text/plain")).pass).toBe(false);
+    expect(plain.check(res(`Timeout ${"x".repeat(192)}`, "text/plain")).pass).toBe(true);
+    expect(plain.check(res(`Error rates by region\n${"eu,0.1\n".repeat(40)}`, "text/plain")).pass).toBe(false);
+    expect(plain.check(res(`Error ${"x".repeat(194)}`, "text/plain")).pass).toBe(false);
   });
 
   it("HTML and XML promises take markup but refuse a short error text", () => {
@@ -91,13 +92,17 @@ describe("isStatusOnlyRule and withRequiredPhrase", () => {
     expect(isStatusOnlyRule({ ...status, schema: { ...status.schema, not: { pattern: "x" } } })).toBe(false);
   });
 
-  it("requires the phrase as typed, regex characters included", () => {
+  it("requires the phrase as typed in any case, regex characters included", () => {
     const def = withRequiredPhrase(status, "  price (usd): ");
-    expect(def.schema).toEqual({ type: "string", minLength: 1, not: status.schema.not, allOf: [{ pattern: "\\S" }, { pattern: "price \\(usd\\):" }] });
+    expect(def.schema).toEqual({
+      type: "string", minLength: 1, not: status.schema.not,
+      allOf: [{ pattern: "\\S" }, { pattern: "[pP][rR][iI][cC][eE] \\([uU][sS][dD]\\):" }],
+    });
     expect(status.schema.pattern).toBe("\\S");
     expect(requiredPhrasesOf(def)).toEqual(["price (usd):"]);
     const rule = compileRule(def);
     expect(rule.check(res("ADA price (usd): 0.35", "text/plain")).pass).toBe(true);
+    expect(rule.check(res("ADA Price (USD): 0.35", "text/plain")).pass).toBe(true);
     expect(rule.check(res("ADA price usd: 0.35", "text/plain")).reasons).toEqual(['/ does not contain "price (usd):"']);
     expect(rule.check(res("Not Found", "text/plain")).pass).toBe(false);
     expect(rule.check(res(" ", "text/plain")).reasons).toContain("/ is blank");
@@ -105,10 +110,30 @@ describe("isStatusOnlyRule and withRequiredPhrase", () => {
 
   it("keeps a pinned header and adds phrases once", () => {
     const def = withRequiredPhrase(withRequiredPhrase(withRequiredPhrase(header, "ADA"), "ADA"), "BTC");
-    expect(def.schema.allOf).toEqual([{ pattern: "^symbol,price\\r?\\n" }, { pattern: "ADA" }, { pattern: "BTC" }]);
+    expect(def.schema.allOf).toEqual([{ pattern: "^symbol,price\\r?\\n" }, { pattern: "[Aa][Dd][Aa]" }, { pattern: "[Bb][Tt][Cc]" }]);
     expect(requiredPhrasesOf(def)).toEqual(["ADA", "BTC"]);
     expect(compileRule(def).check(res("symbol,price\nADA,1\nBTC,2\n", "text/csv")).pass).toBe(true);
     expect(compileRule(def).check(res("symbol,price\nADA,1\n", "text/csv")).pass).toBe(false);
+  });
+
+  it("reads a phrase back in the case the seller typed it, accents and brackets included", () => {
+    const def = withRequiredPhrase(status, "Prix en Été [EUR] ß 1.5");
+    expect(requiredPhrasesOf(def)).toEqual(["Prix en Été [EUR] ß 1.5"]);
+    const rule = compileRule(def);
+    expect(rule.check(res("x PRIX EN été [eur] ß 1.5 y", "text/plain")).pass).toBe(true);
+    expect(rule.check(res("x prix en ete [eur] ß 1.5 y", "text/plain")).reasons).toEqual(['/ does not contain "Prix en Été [EUR] ß 1.5"']);
+  });
+
+  it("keeps the exact case of a phrase stored before, with the same hash", () => {
+    // As the previous release wrote it: the escaped phrase, matched in its exact case.
+    const stored = { ...status, schema: { type: "string", minLength: 1, not: status.schema.not, allOf: [{ pattern: "\\S" }, { pattern: "Price \\[usd\\]" }] } };
+    const hash = ruleHash(stored);
+    expect(requiredPhrasesOf(stored)).toEqual(["Price [usd]"]);
+    const rule = compileRule(stored);
+    expect(rule.hash).toBe(hash);
+    expect(rule.check(res("ADA Price [usd] 0.35", "text/plain")).pass).toBe(true);
+    expect(rule.check(res("ADA price [usd] 0.35", "text/plain")).reasons).toEqual(['/ does not contain "Price [usd]"']);
+    expect(isStatusOnlyRule(stored)).toBe(false);
   });
 
   it("refuses JSON rules and bad phrases", () => {

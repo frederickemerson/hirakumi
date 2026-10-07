@@ -1,4 +1,4 @@
-import { isJsonMediaType, isStatusOnlyRule, requiredPhrasesOf, type RuleDefinition } from "@hirakumi/core";
+import { isJsonMediaType, isStatusOnlyRule, JSON_ERROR_KEYS_REFUSED, requiredPhrasesOf, type RuleDefinition } from "@hirakumi/core";
 import { z } from "zod";
 import { LlmOutputError, LlmRefusalError, quoteAsData, type StructuredCall } from "./claude.js";
 
@@ -63,7 +63,7 @@ function patternMatches(pattern: unknown, yes: string[], no: string[]): boolean 
 }
 
 /** The checks in a text rule's `not`: the entries of not.anyOf (core errorBodyNot), or `not` itself in older rules. */
-function notChecks(not: unknown): { pattern?: unknown }[] {
+function notChecks(not: unknown): { pattern?: unknown; maxLength?: unknown }[] {
   if (typeof not !== "object" || not === null) return [];
   const anyOf = (not as { anyOf?: unknown }).anyOf;
   return (Array.isArray(anyOf) ? anyOf : [not]).filter((c): c is { pattern?: unknown } => typeof c === "object" && c !== null);
@@ -74,6 +74,13 @@ const refusesHtmlPage = (c: { pattern?: unknown }) => patternMatches(c.pattern, 
 /** A check that refuses a short error text (core ERROR_BODY), tested by what it matches. */
 const refusesErrorText = (c: { pattern?: unknown }) =>
   patternMatches(c.pattern, ["Internal Server Error", "404 Not Found", "Rate limit exceeded"], ["date,price", "<html>"]);
+
+/**
+ * A check that refuses an error text of any length by how it starts (core LEADING_ERROR): no length limit, so a long
+ * "Error: ..." or an HTTP status line is refused too. Text rules made before it have only the short ERROR_BODY check.
+ */
+const refusesLongErrorText = (c: { pattern?: unknown; maxLength?: unknown }) =>
+  c.maxLength === undefined && patternMatches(c.pattern, ["Error: the database is down", "HTTP/1.1 500 Internal Server Error"], ["date,price", "0 errors found"]);
 
 /** The rule's own pattern: the top-level one, or the first allOf entry once phrases were added (core withRequiredPhrase). */
 function basePatternOf(s: SchemaShape): unknown {
@@ -95,12 +102,30 @@ function textRuleText(def: RuleDefinition, s: SchemaShape): string {
   const checks = notChecks(s.not);
   const html = checks.some(refusesHtmlPage);
   const error = checks.some(refusesErrorText);
-  if (html && error) parts.push("and not an HTML page or an error message");
+  if (checks.some(refusesLongErrorText)) parts.push(html ? "and not an HTML page, an error page or an error message" : "and not an error page or error message");
+  else if (html && error) parts.push("and not an HTML page or an error message");
   else if (html) parts.push("and not an HTML page");
   else if (error) parts.push("and not an error message");
   const text = `${parts.join(", ")}.`;
   return isStatusOnlyRule(def) ? `${text} This is a status-only promise: it does not check the content.` : text;
 }
+
+/**
+ * The top-level keys a JSON rule refuses (core inferRule: not.anyOf of { required: [key] }), but only when the rule
+ * has core's error key check: every one of JSON_ERROR_KEYS_REFUSED is refused or is a field of good answers. Rules
+ * made before that check refused only the error sample's own keys and say nothing about them.
+ */
+function refusedErrorKeys(s: SchemaShape): string[] {
+  const anyOf = (s.not as { anyOf?: unknown } | undefined)?.anyOf;
+  if (!Array.isArray(anyOf)) return [];
+  const keys = anyOf.flatMap((c: { required?: unknown }) =>
+    Array.isArray(c?.required) && c.required.length === 1 && typeof c.required[0] === "string" ? [c.required[0]] : []);
+  const fields = new Set(Object.keys(s.properties ?? {}));
+  const checked = JSON_ERROR_KEYS_REFUSED.every((k) => keys.includes(k) || fields.has(k));
+  return checked && keys.some((k) => JSON_ERROR_KEYS_REFUSED.includes(k)) ? keys : [];
+}
+
+const orList = (words: string[]) => (words.length < 2 ? words.join("") : `${words.slice(0, -1).join(", ")} or ${words.at(-1)}`);
 
 /** Deterministic plain English for a rule: the only promise text buyers see. */
 export function fallbackRuleText(def: RuleDefinition): string {
@@ -113,6 +138,8 @@ export function fallbackRuleText(def: RuleDefinition): string {
   for (const [k, p] of Object.entries(s.properties ?? {})) {
     if (typeof p.maxAgeSeconds === "number") parts.push(`"${k}" is no older than ${p.maxAgeSeconds} seconds`);
   }
+  const refused = refusedErrorKeys(s);
+  if (refused.length) parts.push(`and it has no ${orList(refused.map((k) => `"${k}"`))} field`);
   return `${parts.join(", ")}.`;
 }
 

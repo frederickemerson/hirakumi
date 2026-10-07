@@ -33,14 +33,14 @@ describe("inferRuleFromResponses", () => {
     expect(def.contentType).toBe("application/vnd.api+json");
     const rule = compileRule(def);
     expect(rule.check(res('{"data":{"id":"2"}}', "application/vnd.api+json")).pass).toBe(true);
-    expect(rule.check(res('{"errors":[]}', "application/vnd.api+json")).reasons).toEqual(["/data is missing"]);
+    expect(rule.check(res('{"errors":[]}', "application/vnd.api+json")).reasons).toEqual(["/ looks like an error response", "/data is missing"]);
   });
 
   it("builds a text promise: media type, 2xx and a non-empty body", () => {
     const def = inferRuleFromResponses([res("ADA 0.35", "text/plain"), res("BTC 62000", "text/plain")], res("unknown symbol", "text/plain", 404));
     expect(def).toEqual({
       version: 1, status: { min: 200, max: 299 }, contentType: "text/plain",
-      schema: { type: "string", minLength: 1, pattern: "\\S", not: { anyOf: [{ pattern: expect.any(String) }, { maxLength: 199, pattern: expect.any(String) }] } },
+      schema: { type: "string", minLength: 1, pattern: "\\S", not: { anyOf: [{ pattern: expect.any(String) }, { maxLength: 199, pattern: expect.any(String) }, ...Array.from({ length: 6 }, () => ({ pattern: expect.any(String) }))] } },
     });
     const rule = compileRule(def);
     expect(rule.check(res("ETH 3000", "text/plain; charset=utf-8")).pass).toBe(true);

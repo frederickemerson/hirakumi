@@ -1,5 +1,7 @@
 import type postgres from "postgres";
-import { isStatusOnlyRule, newId, requiredPhrasesOf, ruleHash, withRequiredPhrase, type RuleDefinition } from "@hirakumi/core";
+import {
+  compileRule, isStatusOnlyRule, newId, requiredPhrasesOf, ruleHash, RuleInferenceError, withRequiredPhrase, type RuleDefinition,
+} from "@hirakumi/core";
 import type { Sql } from "../db";
 import type { RuleView } from "../types";
 
@@ -23,6 +25,24 @@ export async function listLatestRules(sql: Sql, apiId: string): Promise<RuleView
   });
 }
 
+/**
+ * The phrase QA suggests for each status-only text promise, by operation id: onboard_steps(step='qa').output
+ * .suggestedPhrases is keyed by opId (the OpenAPI operationId), like seller_samples. Only one-line strings count;
+ * the seller confirms or edits the suggestion before it becomes part of the promise.
+ */
+export async function getSuggestedPhrases(sql: Sql, apiId: string): Promise<Record<string, string>> {
+  const [row] = await sql<{ suggested: unknown }[]>`
+    select output->'suggestedPhrases' as suggested from onboard_steps where api_id = ${apiId} and step = 'qa'`;
+  const byOpId = row?.suggested && typeof row.suggested === "object" ? (row.suggested as Record<string, unknown>) : {};
+  const ops = await sql<{ id: string; opId: string }[]>`select id, op_id from operations where api_id = ${apiId}`;
+  const out: Record<string, string> = {};
+  for (const op of ops) {
+    const phrase = byOpId[op.opId];
+    if (typeof phrase === "string" && phrase.trim() && !/[\r\n]/.test(phrase)) out[op.id] = phrase.trim();
+  }
+  return out;
+}
+
 export async function countEnabledWithoutRule(sql: Sql, apiId: string): Promise<number> {
   const [row] = await sql<{ count: number }[]>`
     select count(*)::int as count from operations o
@@ -30,8 +50,27 @@ export async function countEnabledWithoutRule(sql: Sql, apiId: string): Promise<
   return row.count;
 }
 
+/** The last sentence of a status-only promise's plain English (apps/coworker src/llm/ruleText.ts). */
+const STATUS_ONLY_SENTENCE = " This is a status-only promise: it does not check the content.";
+
 /** The states in which the promise can still change: once the listing registers, its hash is published. */
 export const PROMISE_EDITABLE_STATES = ["rule_built", "priced"] as const;
+
+/**
+ * The good test answers QA stored for an operation: onboard_steps(step='qa').output.goodAnswers, keyed by opId
+ * (apps/coworker qaStep). Only answers stored whole count; a cut answer can't show that a phrase is missing.
+ * Empty for an API tested before QA stored them.
+ */
+async function storedGoodAnswers(tx: postgres.TransactionSql, apiId: string, operationId: string): Promise<string[]> {
+  const [row] = await tx<{ answers: unknown }[]>`
+    select s.output->'goodAnswers'->o.op_id as answers
+    from operations o join onboard_steps s on s.api_id = o.api_id and s.step = 'qa'
+    where o.id = ${operationId} and o.api_id = ${apiId}`;
+  if (!Array.isArray(row?.answers)) return [];
+  return (row.answers as { body?: unknown; complete?: unknown }[])
+    .filter((a) => a && typeof a.body === "string" && a.complete === true)
+    .map((a) => a.body as string);
+}
 
 export type AddPhraseResult =
   | { ok: true; version: number; hash: string; plainEnglish: string }
@@ -59,10 +98,19 @@ export async function addRequiredPhrase(
       order by r.version desc limit 1`;
     if (!latest) return { ok: false, reason: "not_found" };
     const next = withRequiredPhrase(latest.definition, a.phrase);
+    // A phrase one of the seller's own good answers lacks would make the promise refuse them.
+    const rule = compileRule(next);
+    const missing = (await storedGoodAnswers(tx, a.apiId, a.operationId)).some((body) =>
+      rule.check({ status: 200, contentType: next.contentType, body, latencyMs: 0 }).reasons.some((r) => r.includes(" does not contain ")));
+    if (missing) {
+      throw new RuleInferenceError(`Not every good answer from your test calls contains "${a.phrase.trim()}", so the promise would refuse your own answers. Pick a word or label every answer has.`);
+    }
     const hash = ruleHash(next);
     // The phrase is there already: nothing changes.
     if (hash === latest.hash) return { ok: true, version: latest.version, hash, plainEnglish: latest.plainEnglish ?? "" };
-    const plainEnglish = `${latest.plainEnglish ?? ""} Every good answer contains "${a.phrase.trim()}".`.trim();
+    // The coworker ends a status-only promise's text with STATUS_ONLY_SENTENCE; with a phrase it no longer is one.
+    const previous = (latest.plainEnglish ?? "").replace(STATUS_ONLY_SENTENCE, "");
+    const plainEnglish = `${previous} Every good answer contains "${a.phrase.trim()}".`.trim();
     const version = latest.version + 1;
     await tx`
       insert into rules (id, operation_id, version, definition, hash, plain_english)

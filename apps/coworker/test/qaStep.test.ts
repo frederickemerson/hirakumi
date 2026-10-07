@@ -1,5 +1,6 @@
+import { inferRuleFromResponses } from "@hirakumi/core";
 import { fallbackRuleText } from "../src/llm/ruleText.js";
-import { qaSummaryLine } from "../src/onboarding/qaStep.js";
+import { phraseLines, qaSummaryLine } from "../src/onboarding/qaStep.js";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { GatewayClient, PreviewResult } from "../src/gateway.js";
 import type { StructuredCall } from "../src/llm/claude.js";
@@ -94,6 +95,65 @@ describe("qaStep (ownership_verified → rule_built)", () => {
     expect(await qaStep({ pool: db.pool, gateway: { preview } as GatewayClient, llm, webBaseUrl: "https://web.test" }, apiId)).toBe("failed");
     expect((await messagesFor(db.pool, apiId)).at(-1)?.body)
       .toMatch(new RegExp(`refused \\(HTTP 401\\)\\. If your API needs a key, add it on the review page\\. The test calls then run again\\. Review page: https://web\\.test/apis/${apiId}/review$`));
+  });
+});
+
+const apiId8 = () => Math.random().toString(36).slice(2, 10);
+
+describe("qaStep for a text answer with no header line (status-only)", () => {
+  const text = (status: number, body: string): PreviewResult => ({ status, contentType: "text/plain", body, latencyMs: 5 });
+  const run = async (answer: (symbol: string) => string, sokosumi = false) => {
+    const apiId = await seedApi(db.pool, { state: "ownership_verified", ...(sokosumi ? { sokosumiTaskId: `task_${apiId8()}` } : {}) });
+    await seedOperation(db.pool, apiId);
+    const preview = vi.fn(async (_a: string, _o: string, i: Record<string, unknown>) =>
+      i.symbol === INVALID_STRING ? text(404, "Unknown symbol") : text(200, answer(String(i.symbol))));
+    expect(await qaStep({ pool: db.pool, gateway: { preview } as GatewayClient, llm, webBaseUrl: "https://web.test" }, apiId)).toBe("ran");
+    return { apiId, preview };
+  };
+
+  it("stores the suggested phrase and tells the seller every good answer will have to contain it", async () => {
+    const { apiId } = await run((s) => `Price of ${s}: 1 USD`, true);
+    // The different good answers too, so the review page can check a phrase the seller types against them.
+    const output = (await getStep(db.pool, apiId, "qa"))?.output;
+    expect(output).toMatchObject({ suggestedPhrases: { getPrice: "Price of" } });
+    expect(output?.goodAnswers).toEqual({ getPrice: [{ body: "Price of ADA: 1 USD", complete: true }, { body: "Price of BTC: 1 USD", complete: true }] });
+    const body = (await messagesFor(db.pool, apiId)).at(-1)?.body ?? "";
+    expect(body).toContain('This is a status-only promise: it does not check the content. Every good answer will have to contain "Price of". Change it on the review page. Suggested price:');
+    // The rule itself is unchanged: the seller confirms the phrase on the review page, which writes a new version.
+    expect((await db.pool.query(`select count(*)::int as n from rules r join operations o on o.id = r.operation_id where o.api_id = $1`, [apiId])).rows[0].n).toBe(1);
+  });
+
+  it("with no suggestion, says a phrase is required before publishing and how to pick one", async () => {
+    const { apiId } = await run((s) => (s === "ADA" ? "0.31" : "61000"));
+    expect((await getStep(db.pool, apiId, "qa"))?.output).toMatchObject({ suggestedPhrases: {} });
+    expect((await messagesFor(db.pool, apiId)).at(-1)?.body).toContain(
+      "This promise only checks the status, so it needs a phrase before you can publish. Add one on the review page: a word or label every good answer contains, like Price or Symbol. Capital letters don't matter. Review the price and publish:",
+    );
+  });
+
+  it("keeps a saved suggestion when a re-run reuses the rule", async () => {
+    const { apiId } = await run((s) => `Price of ${s}: 1 USD`);
+    await db.pool.query(`update apis set state = 'ownership_verified' where id = $1`, [apiId]);
+    await db.pool.query(`update onboard_steps set status = 'running' where api_id = $1 and step = 'qa'`, [apiId]);
+    const preview = vi.fn();
+    await qaStep({ pool: db.pool, gateway: { preview } as unknown as GatewayClient, llm, webBaseUrl: "https://web.test" }, apiId);
+    expect(preview).not.toHaveBeenCalled();
+    expect((await getStep(db.pool, apiId, "qa"))?.output).toMatchObject({ suggestedPhrases: { getPrice: "Price of" }, goodAnswers: { getPrice: expect.any(Array) } });
+  });
+});
+
+describe("phraseLines", () => {
+  const answer = (contentType: string, body: string) => ({ status: 200, contentType, body, latencyMs: 1 });
+  const statusOnly = inferRuleFromResponses([answer("text/plain", "1.5")]);
+  const csv = inferRuleFromResponses([answer("text/csv", "a,b\n1,2\n"), answer("text/csv", "a,b\n3,4\n")]);
+  const json = inferRuleFromResponses([answer("application/json", '{"price":1}')]);
+
+  it("asks only about status-only text promises, naming the endpoint when there are several", () => {
+    expect(phraseLines([{ opId: "a", rule: csv }, { opId: "b", rule: json }], {})).toEqual([]);
+    expect(phraseLines([{ opId: "a", rule: statusOnly }, { opId: "b", rule: csv }, { opId: "c", rule: statusOnly }], { a: 'say "hi"' })).toEqual([
+      'For a, every good answer will have to contain "say \\"hi\\"". Change it on the review page.',
+      "The promise for c only checks the status, so it needs a phrase before you can publish. Add one on the review page: a word or label every good answer contains, like Price or Symbol. Capital letters don't matter.",
+    ]);
   });
 });
 

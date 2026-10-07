@@ -25,13 +25,13 @@ describe("fallbackRuleText for answers that are not JSON", () => {
 
   it("says the type, that it is not empty, and the header line every answer starts with", () => {
     const rule = inferRuleFromResponses([answer("text/csv; charset=utf-8", "date,price (usd)\n2024-01-01,1.5\n"), answer("text/csv", "date,price (usd)\n2024-01-02,1.6\n")]);
-    expect(fallbackRuleText(rule)).toBe('A response counts as good when the status is 200-299 and the body is text/csv text, not empty, starting with the line "date,price (usd)", and not an HTML page or an error message.');
+    expect(fallbackRuleText(rule)).toBe('A response counts as good when the status is 200-299 and the body is text/csv text, not empty, starting with the line "date,price (usd)", and not an HTML page, an error page or an error message.');
   });
 
   it("leaves the header out when the answers share none", () => {
     const rule = inferRuleFromResponses([answer("text/plain", "1.5"), answer("text/plain", "1.6")]);
     expect(fallbackRuleText(rule)).toBe(
-      "A response counts as good when the status is 200-299 and the body is text/plain text, not empty, and not an HTML page or an error message. This is a status-only promise: it does not check the content.",
+      "A response counts as good when the status is 200-299 and the body is text/plain text, not empty, and not an HTML page, an error page or an error message. This is a status-only promise: it does not check the content.",
     );
     expect(fallbackRuleText(rule)).not.toMatch(/JSON|format/);
   });
@@ -40,7 +40,7 @@ describe("fallbackRuleText for answers that are not JSON", () => {
     for (const ct of ["text/html", "application/xml"]) {
       const rule = inferRuleFromResponses([answer(ct, "<p>1.5</p>"), answer(ct, "<p>1.6</p>")]);
       expect(fallbackRuleText(rule)).toBe(
-        `A response counts as good when the status is 200-299 and the body is ${ct} text, not empty, and not an error message. This is a status-only promise: it does not check the content.`,
+        `A response counts as good when the status is 200-299 and the body is ${ct} text, not empty, and not an error page or error message. This is a status-only promise: it does not check the content.`,
       );
     }
   });
@@ -49,11 +49,25 @@ describe("fallbackRuleText for answers that are not JSON", () => {
     const csv = inferRuleFromResponses([answer("text/csv", "date,price\n2024-01-01,1.5\n"), answer("text/csv", "date,price\n2024-01-02,1.6\n")]);
     const both = withRequiredPhrase(withRequiredPhrase(csv, "BTC"), 'say "hi"');
     expect(fallbackRuleText(both)).toBe(
-      'A response counts as good when the status is 200-299 and the body is text/csv text, not empty, starting with the line "date,price", containing "BTC", containing "say \\"hi\\"", and not an HTML page or an error message.',
+      'A response counts as good when the status is 200-299 and the body is text/csv text, not empty, starting with the line "date,price", containing "BTC", containing "say \\"hi\\"", and not an HTML page, an error page or an error message.',
     );
     const plain = inferRuleFromResponses([answer("text/plain", "1.5"), answer("text/plain", "1.6")]);
     expect(fallbackRuleText(withRequiredPhrase(plain, "price: 1.5 (usd)"))).toBe(
-      'A response counts as good when the status is 200-299 and the body is text/plain text, not empty, containing "price: 1.5 (usd)", and not an HTML page or an error message.',
+      'A response counts as good when the status is 200-299 and the body is text/plain text, not empty, containing "price: 1.5 (usd)", and not an HTML page, an error page or an error message.',
+    );
+  });
+
+  it("keeps the wording of rules made before long error texts were refused", () => {
+    const rule = inferRuleFromResponses([answer("text/csv", "date,price\n2024-01-01,1.5\n"), answer("text/csv", "date,price\n2024-01-02,1.6\n")]);
+    const not = (rule.schema as { not: { anyOf: { maxLength?: number }[] } }).not;
+    // Only the HTML page and the short error text, as text rules had before.
+    const legacy = { ...rule, schema: { ...rule.schema, not: { anyOf: not.anyOf.slice(0, 2) } } };
+    expect(not.anyOf[1].maxLength).toBe(199);
+    expect(fallbackRuleText(legacy)).toBe('A response counts as good when the status is 200-299 and the body is text/csv text, not empty, starting with the line "date,price", and not an HTML page or an error message.');
+    const xml = inferRuleFromResponses([answer("application/xml", "<p>1.5</p>"), answer("application/xml", "<p>1.6</p>")]);
+    const xmlNot = (xml.schema as { not: { anyOf: unknown[] } }).not;
+    expect(fallbackRuleText({ ...xml, schema: { ...xml.schema, not: { anyOf: xmlNot.anyOf.slice(0, 1) } } })).toBe(
+      "A response counts as good when the status is 200-299 and the body is application/xml text, not empty, and not an error message. This is a status-only promise: it does not check the content.",
     );
   });
 
@@ -72,6 +86,20 @@ describe("fallbackRuleText for answers that are not JSON", () => {
     expect(fallbackRuleText({ ...base, schema: { type: "string", pattern: "\\S" } })).toBe(
       "A response counts as good when the status is 200-299 and the body is text/plain text, not empty. This is a status-only promise: it does not check the content.",
     );
+  });
+
+  it("says which error fields a new JSON rule refuses, and nothing for rules made before that check", () => {
+    const json = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body), latencyMs: 1 });
+    const rule = inferRuleFromResponses([json({ price: 1.5 }), json({ price: 1.6 })]);
+    expect(fallbackRuleText(rule)).toBe(
+      'A response counts as good when the status is 200-299 and the body is JSON, it contains "price" (a number), and it has no "error", "errors", "exception" or "fault" field.',
+    );
+    // An answer that has an "errors" field of its own: the other three are still refused.
+    const withErrors = inferRuleFromResponses([json({ rows: [], errors: 0 }), json({ rows: [1], errors: 0 })]);
+    expect(fallbackRuleText(withErrors)).toMatch(/, and it has no "error", "exception" or "fault" field\.$/);
+    // Before the check, only the error sample's own keys were refused, and the text said nothing about them.
+    const old: RuleDefinition = { ...RULE, schema: { ...RULE.schema, not: { anyOf: [{ required: ["error"] }] } } };
+    expect(fallbackRuleText(old)).toBe(fallbackRuleText(RULE));
   });
 
   it("names a vendor JSON type, and keeps plain JSON wording unchanged", () => {

@@ -1,4 +1,4 @@
-import { newId } from "@hirakumi/core";
+import { isStatusOnlyRule, newId, type RuleDefinition } from "@hirakumi/core";
 import type pg from "pg";
 import type { Db } from "../db.js";
 import type { AuthHint } from "../openapi/parse.js";
@@ -127,6 +127,19 @@ export async function savePrice(pool: pg.Pool, apiId: string, priceText: string,
     const escrow = pack ? BigInt(pack.escrow_price_micros) : SUGGESTED_PACK.escrowPriceMicros;
     return { ok: true, message: `Price saved: ${priceText} tUSDM for ${packCalls} calls, and ${formatTusdm(escrow)} tUSDM per escrow job.` };
   });
+}
+
+/**
+ * The enabled operations whose latest promise is status-only (core isStatusOnlyRule): publishing is refused until the
+ * seller adds a phrase every good answer contains on the review page.
+ */
+export async function opsNeedingPhrase(db: Db, apiId: string): Promise<string[]> {
+  const { rows } = await db.query<{ op_id: string; definition: RuleDefinition }>(
+    `select distinct on (o.id) o.op_id, r.definition from operations o join rules r on r.operation_id = o.id
+     where o.api_id = $1 and o.enabled order by o.id, r.version desc`,
+    [apiId],
+  );
+  return rows.filter((r) => r.definition?.schema && isStatusOnlyRule(r.definition)).map((r) => r.op_id).sort();
 }
 
 /** The seller already linked this Sokosumi account to a wallet (a setup link they signed in with). Exactly one, or null. */

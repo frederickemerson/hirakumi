@@ -52,7 +52,7 @@ APIS THAT NEED A KEY
 
 ANSWER FORMATS
 - JSON answers are checked field by field against the promise.
-- Text answers such as CSV, XML, YAML or plain text work too. They are checked as text: the content type, the status and a non-empty answer, plus a shared first line such as a CSV header. Before publishing, the seller can add a phrase every good answer contains on the review page. A text promise with no first line and no phrase only checks the status and that the answer is not an error page; buyers see it marked as a status-only promise.
+- Text answers such as CSV, XML, YAML or plain text work too. They are checked as text: the content type, the status and a non-empty answer, plus a shared first line such as a CSV header. Before publishing, the seller can add a phrase every good answer contains on the review page. A text promise with no shared first line must get a phrase before it can be published, because without one an error page sent with status 200 could count as a good answer. The review page suggests a phrase found in every good test answer and not in the wrong one; the seller checks or changes it, or types a word or label every good answer contains, like Price or Symbol, in any case. The phrase must be in every good test answer, or it is refused. Listings published before this rule may still have a status-only promise; buyers see those marked as status-only.
 - Binary answers such as images, PDF or files are not supported yet. All answers of one endpoint must have the same content type.
 
 PRICING AND PACKS (what an agent pays)

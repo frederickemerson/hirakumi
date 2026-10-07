@@ -12,7 +12,7 @@ import { loadProgress } from "@/lib/repo/progress";
 import { getPack } from "@/lib/repo/packs";
 import { hasAnyApiSchema } from "@/lib/repo/schema";
 import { getAuthHint, getUpstreamAuth } from "@/lib/repo/upstream-auth";
-import { listLatestRules } from "@/lib/repo/rules";
+import { getSuggestedPhrases, listLatestRules } from "@/lib/repo/rules";
 
 export const metadata: Metadata = { title: "Review and price" };
 
@@ -51,7 +51,9 @@ export default async function ReviewPage({ params }: { params: Promise<{ apiId: 
   }
   if (api.state !== "rule_built" && api.state !== "priced") redirect(`/apis/${apiId}/${stepForState(api.state)}`);
 
-  const [promises, pack, upstreamAuth] = await Promise.all([listLatestRules(sql, apiId), getPack(sql, apiId), getUpstreamAuth(sql, apiId)]);
+  const [promises, pack, upstreamAuth, suggestedPhrases] = await Promise.all([
+    listLatestRules(sql, apiId), getPack(sql, apiId), getUpstreamAuth(sql, apiId), getSuggestedPhrases(sql, apiId),
+  ]);
   return (
     <section className="space-y-6">
       {heading}
@@ -59,7 +61,7 @@ export default async function ReviewPage({ params }: { params: Promise<{ apiId: 
       {promises.length === 0 ? (
         <WaitingState title="Writing your promise" detail="The test calls finished; the promise appears here in a moment." />
       ) : (
-        <ReviewPanel apiId={apiId} state={api.state} promises={promises} pack={pack} />
+        <ReviewPanel apiId={apiId} state={api.state} promises={promises} pack={pack} suggestedPhrases={suggestedPhrases} />
       )}
       {/* For key rotation before publishing: a new key takes effect on the next call. */}
       {keysOn && <UpstreamAuthForm apiId={apiId} initial={upstreamAuth} hint={null} title="Your API's key" />}

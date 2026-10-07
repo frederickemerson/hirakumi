@@ -1,9 +1,11 @@
+import { randomUUID } from "node:crypto";
 import type pg from "pg";
 import { withTx } from "../db.js";
 import { PermanentError } from "../errors.js";
-import { apiLink, registryTokenLink, SOKOSUMI_LISTING_FORM, statusPageLink, tryPageLink } from "../links.js";
+import { apiLink, registryTokenLink, reviewLink, SOKOSUMI_LISTING_FORM, statusPageLink, tryPageLink } from "../links.js";
 import type { Listing } from "../llm/ruleText.js";
 import { enqueueMessage } from "../messages.js";
+import { opsNeedingPhrase } from "../sokosumi/sellerActions.js";
 import { finishStep, getStep, runStep, saveStepOutput, touchStep, type StepRow } from "../steps.js";
 
 import { MasumiInputError, type MasumiConfig } from "@hirakumi/masumi";
@@ -107,9 +109,39 @@ async function pollRegistration(deps: RegisterDeps, apiId: string, step: StepRow
   }
 }
 
+/**
+ * The publish route refuses a status-only text promise (an error page sent with status 200 would keep it), but a
+ * listing published before that check can still be registering with one. Before anything is minted, it goes back to
+ * priced, where the review page and its phrase form accept it, and the seller is told to add a phrase and publish
+ * again. A pending register step (a retry before any mint) is cleared so the next publish starts it afresh. True
+ * when the listing was sent back.
+ */
+async function sentBackForPhrase(deps: RegisterDeps, apiId: string): Promise<boolean> {
+  const needPhrase = await opsNeedingPhrase(deps.pool, apiId);
+  if (!needPhrase.length) return false;
+  return withTx(deps.pool, async (c) => {
+    const moved = await c.query(`update apis set state = 'priced' where id = $1 and state = 'registering'`, [apiId]);
+    if (moved.rowCount !== 1) return false;
+    await c.query(`delete from onboard_steps where api_id = $1 and step = 'register' and status = 'pending'`, [apiId]);
+    await enqueueMessage(c, {
+      apiId,
+      body: `Before I publish, ${needPhrase.join(", ")} needs a phrase every good answer contains, so an error page can't count as a good answer. ` +
+        `Add it on the review page, then publish again: ${reviewLink(deps.webBaseUrl, apiId)}`,
+      taskStatus: "INPUT_REQUIRED",
+      dedupeKey: `needs_phrase:${apiId}:${randomUUID()}`,
+      step: "Register on Masumi",
+    });
+    return true;
+  });
+}
+
 /** registering → live. registerAgent runs at most once per API unless an operator resets the step. */
 export async function registerStep(deps: RegisterDeps, apiId: string): Promise<void> {
   const now = deps.now?.() ?? new Date();
+  const step = await getStep(deps.pool, apiId, "register");
+  const registrationId = step?.output?.registrationId;
+  // Only before a registration was ever attempted: a failed or interrupted attempt may have minted, so an operator decides.
+  if (typeof registrationId !== "string" && (!step || step.status === "pending") && (await sentBackForPhrase(deps, apiId))) return;
   await enqueueMessage(deps.pool, {
     apiId,
     body: "Publishing your API to the Masumi registry. This usually takes about a minute.",
@@ -117,8 +149,6 @@ export async function registerStep(deps: RegisterDeps, apiId: string): Promise<v
     dedupeKey: `registering:${apiId}`,
     step: "Register on Masumi",
   });
-  const step = await getStep(deps.pool, apiId, "register");
-  const registrationId = step?.output?.registrationId;
   if (step && typeof registrationId === "string") return pollRegistration(deps, apiId, step, registrationId, now);
   await runStep(deps.pool, apiId, "register", async (previous) => {
     if (previous?.status === "running") {

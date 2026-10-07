@@ -8,7 +8,7 @@ import { toast } from "@/components/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { isTextPromise, promiseFormatNote } from "@/lib/answer-format";
+import { isTextPromise, promiseFormatNote, statusOnlyRefusal, WHY_PHRASE } from "@/lib/answer-format";
 import { postJson, RequestError } from "@/lib/client-fetch";
 import { formatTusdm, parsePackCalls, parseTusdm, perCallTusdm } from "@/lib/money";
 import { startRouteProgress } from "@/lib/route-progress";
@@ -18,13 +18,16 @@ type Status = { kind: "idle" } | { kind: "saving" } | { kind: "publishing"; text
 
 /**
  * The last onboarding step: read the promise, set the price, publish. "Publish at this price" saves
- * the price as typed and publishes in one click; "Save price" only saves.
+ * the price as typed and publishes in one click; "Save price" only saves. Publishing waits until every
+ * status-only text promise has a phrase (the publish route refuses it too).
  */
-export function ReviewPanel({ apiId, promises, pack }: {
+export function ReviewPanel({ apiId, promises, pack, suggestedPhrases = {} }: {
   apiId: string;
   state: "rule_built" | "priced";
   promises: RuleView[];
   pack: Pack | null;
+  /** QA's suggested phrase for a status-only text promise, by operation id (lib/repo/rules getSuggestedPhrases). */
+  suggestedPhrases?: Record<string, string>;
 }) {
   const router = useRouter();
   const [calls, setCalls] = useState(pack ? String(pack.calls) : "100");
@@ -32,6 +35,7 @@ export function ReviewPanel({ apiId, promises, pack }: {
   const [escrow, setEscrow] = useState(pack ? formatTusdm(pack.escrowPriceMicros) : "2");
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const busy = status.kind === "saving" || status.kind === "publishing";
+  const needsPhrase = statusOnlyRefusal(promises);
 
   const perCall = useMemo(() => {
     try {
@@ -79,7 +83,7 @@ export function ReviewPanel({ apiId, promises, pack }: {
             <p className="flex items-center gap-2 text-body-lg"><Badge variant="sky">{p.method.toUpperCase()}</Badge><code>{p.path}</code></p>
             <p className="text-body-lg">{p.plainEnglish ?? "The plain-English summary isn't ready yet. The exact check is below."}</p>
             {promiseFormatNote(p.definition) && <p className="text-body text-graphite">{promiseFormatNote(p.definition)}</p>}
-            {isTextPromise(p.definition) && <PhraseField apiId={apiId} promise={p} disabled={busy} />}
+            {isTextPromise(p.definition) && <PhraseField apiId={apiId} promise={p} suggestion={suggestedPhrases[p.operationId] ?? ""} disabled={busy} />}
             <details className="group">
               <summary className="cursor-pointer text-body underline underline-offset-4">Show the exact check (JSON)</summary>
               <pre className="mt-3 overflow-x-auto rounded-[2px] bg-ink p-3 text-caption text-cream">{JSON.stringify(p.definition, null, 2)}</pre>
@@ -110,13 +114,14 @@ export function ReviewPanel({ apiId, promises, pack }: {
           Pack money locks in an escrow contract: you are paid per signed call when the pack settles, less Hirakumi's 3%, and the buyer gets back the rest. For per-job hires, Masumi holds the payment and keeps 5%.
         </p>
         <div className="flex flex-col gap-4 border-t border-ink pt-5 sm:flex-row sm:items-center">
-          <Button disabled={busy} pending={status.kind === "publishing"} pendingLabel="Publishing…" onClick={publishAtThisPrice}>
+          <Button disabled={busy || needsPhrase !== null} pending={status.kind === "publishing"} pendingLabel="Publishing…" onClick={publishAtThisPrice}>
             Publish at this price
           </Button>
           <Button variant="outline" disabled={busy} pending={status.kind === "saving"} pendingLabel="Saving…" onClick={save}>
             Save price
           </Button>
         </div>
+        {needsPhrase && <p className="text-body" data-testid="publish-needs-phrase">{needsPhrase}</p>}
         {status.kind === "publishing" && (
           <InlineStatus busy>
             {status.text} <Elapsed prefix=" " className="text-graphite" />
@@ -129,18 +134,23 @@ export function ReviewPanel({ apiId, promises, pack }: {
 }
 
 export const STATUS_ONLY_NOTICE =
-  "This promise only checks the status and that the answer is not an error page. Add a phrase every good answer contains to make it stronger.";
+  `This promise only checks the status. Add a phrase every good answer contains before you publish. ${WHY_PHRASE}`;
+export const NO_SUGGESTION_HINT = "Type a word or label every good answer contains, like Price or Symbol. Capital letters don't matter.";
+export const SUGGESTION_HINT = "We found this in every good test answer and not in the wrong one. Check it or change it.";
 
 /**
- * "Every good answer contains": an optional phrase for a text promise. Saving it makes a new promise version
- * (POST /api/apis/[apiId]/promise-phrase); the page then shows the new promise.
+ * "Every good answer contains": a phrase for a text promise. Saving it makes a new promise version
+ * (POST /api/apis/[apiId]/promise-phrase); the page then shows the new promise. Required for a status-only
+ * promise, prefilled with QA's suggestion when there is one; optional otherwise.
  */
-function PhraseField({ apiId, promise, disabled }: { apiId: string; promise: RuleView; disabled: boolean }) {
+function PhraseField({ apiId, promise, suggestion, disabled }: { apiId: string; promise: RuleView; suggestion: string; disabled: boolean }) {
   const router = useRouter();
-  const [phrase, setPhrase] = useState("");
+  const required = promise.statusOnly;
+  const [phrase, setPhrase] = useState(required ? suggestion : "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const id = `phrase-${promise.operationId}`;
+  const hintId = `${id}-hint`;
 
   async function save(e: FormEvent) {
     e.preventDefault();
@@ -160,13 +170,17 @@ function PhraseField({ apiId, promise, disabled }: { apiId: string; promise: Rul
 
   return (
     <form onSubmit={save} className="space-y-2 border-t border-ink pt-3" aria-busy={saving || undefined}>
-      {promise.statusOnly && <p className="text-body" data-testid="status-only-notice">{STATUS_ONLY_NOTICE}</p>}
+      {required && <p className="text-body" data-testid="status-only-notice">{STATUS_ONLY_NOTICE}</p>}
       {promise.requiredPhrases.length > 0 && (
         <p className="text-body text-graphite">Every good answer contains: {promise.requiredPhrases.map((t) => `"${t}"`).join(", ")}</p>
       )}
-      <label htmlFor={id} className="block text-body font-medium">Every good answer contains (optional)</label>
+      <label htmlFor={id} className="block text-body font-medium">
+        {required ? "Every good answer contains (required)" : "Every good answer contains (optional)"}
+      </label>
+      {required && <p id={hintId} className="text-body text-graphite">{suggestion ? SUGGESTION_HINT : NO_SUGGESTION_HINT}</p>}
       <div className="flex flex-col gap-2 sm:flex-row">
-        <Input id={id} type="text" maxLength={200} value={phrase} onChange={(e) => setPhrase(e.target.value)} disabled={disabled || saving} />
+        <Input id={id} type="text" maxLength={200} value={phrase} onChange={(e) => setPhrase(e.target.value)} disabled={disabled || saving}
+          required={required} aria-describedby={required ? hintId : undefined} />
         <Button type="submit" variant="outline" disabled={disabled || saving || !phrase.trim()} pending={saving} pendingLabel="Saving…">
           Add phrase
         </Button>

@@ -32,3 +32,16 @@ export function promiseFormatNote(definition: unknown): string | null {
   const ct = promiseMediaType(definition);
   return isJsonMediaType(ct) ? null : `Answers are ${answerFormatLabel(ct)} (${ct}), checked as text.`;
 }
+
+/**
+ * Why a text promise needs a phrase every good answer contains (or a pinned header) before publishing: a promise
+ * that only checks the status would let an error page sent with status 200 count as a good answer.
+ */
+export const WHY_PHRASE = "Without a phrase, an error page sent with status 200 could count as a good answer.";
+
+/** The 409 publishing returns while any text promise only checks the status, naming those endpoints. Null if none. */
+export function statusOnlyRefusal(promises: { method: string; path: string; statusOnly: boolean }[]): string | null {
+  const open = promises.filter((p) => p.statusOnly).map((p) => `${p.method.toUpperCase()} ${p.path}`);
+  if (open.length === 0) return null;
+  return `Add a phrase every good answer contains for ${open.join(", ")} before publishing. ${WHY_PHRASE}`;
+}

@@ -15,7 +15,11 @@ const promises: RuleView[] = [{
   plainEnglish: 'The response has a number "price" and a "last_updated" time under 5 minutes old.',
   statusOnly: false, requiredPhrases: [],
 }];
-const STATUS_ONLY_NOTICE = "This promise only checks the status and that the answer is not an error page. Add a phrase every good answer contains to make it stronger.";
+const STATUS_ONLY_NOTICE = "This promise only checks the status. Add a phrase every good answer contains before you publish. Without a phrase, an error page sent with status 200 could count as a good answer.";
+const statusOnly: RuleView = {
+  ...promises[0], operationId: "op_2", path: "/quote", statusOnly: true,
+  definition: { version: 1, contentType: "text/plain", schema: { type: "string", minLength: 1 } },
+};
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -38,14 +42,37 @@ describe("ReviewPanel", () => {
     expect(screen.getByText("Answers are CSV (text/csv), checked as text.")).toBeInTheDocument();
   });
 
-  it("offers a phrase field only for a text promise, and warns about a status-only one", () => {
-    const text: RuleView = {
-      ...promises[0], operationId: "op_2", statusOnly: true,
-      definition: { version: 1, contentType: "text/plain", schema: { type: "string", minLength: 1 } },
-    };
-    render(<ReviewPanel apiId="api_1" state="rule_built" promises={[promises[0], text]} pack={null} />);
-    expect(screen.getAllByLabelText("Every good answer contains (optional)")).toHaveLength(1);
+  it("offers a phrase field only for a text promise; a status-only one needs it before publishing", () => {
+    render(<ReviewPanel apiId="api_1" state="priced" promises={[promises[0], statusOnly]} pack={null} />);
+    expect(screen.getAllByLabelText(/^Every good answer contains/)).toHaveLength(1);
+    expect(screen.getByLabelText("Every good answer contains (required)")).toHaveValue("");
     expect(screen.getByTestId("status-only-notice")).toHaveTextContent(STATUS_ONLY_NOTICE);
+    expect(screen.getByText("Type a word or label every good answer contains, like Price or Symbol. Capital letters don't matter.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Publish at this price" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save price" })).toBeEnabled();
+    expect(screen.getByTestId("publish-needs-phrase")).toHaveTextContent(
+      "Add a phrase every good answer contains for GET /quote before publishing. Without a phrase, an error page sent with status 200 could count as a good answer.",
+    );
+  });
+
+  it("prefills QA's suggested phrase for a status-only promise and saves it as confirmed", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ ok: true, version: 2 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<ReviewPanel apiId="api_1" state="priced" promises={[statusOnly]} pack={null} suggestedPhrases={{ op_2: "Last price:" }} />);
+    expect(screen.getByLabelText("Every good answer contains (required)")).toHaveValue("Last price:");
+    expect(screen.getByText("We found this in every good test answer and not in the wrong one. Check it or change it.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add phrase" }));
+    await vi.waitFor(() => expect(nav.refresh).toHaveBeenCalled());
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ operationId: "op_2", phrase: "Last price:" });
+  });
+
+  it("ignores a suggestion for a promise that already checks more than the status", () => {
+    const csv: RuleView = { ...promises[0], operationId: "op_3", definition: { version: 1, contentType: "text/csv", schema: { type: "string", pattern: "^symbol,price" } } };
+    render(<ReviewPanel apiId="api_1" state="priced" promises={[csv]} pack={null} suggestedPhrases={{ op_3: "symbol" }} />);
+    expect(screen.getByLabelText("Every good answer contains (optional)")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Publish at this price" })).toBeEnabled();
+    expect(screen.queryByTestId("publish-needs-phrase")).toBeNull();
   });
 
   it("saves a phrase for a text promise and refreshes; shows the phrases already required", async () => {

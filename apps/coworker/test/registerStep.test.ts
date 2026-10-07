@@ -2,7 +2,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { registerStep, type MasumiPort, type RegisterDeps, type RegistryStatus } from "../src/onboarding/registerStep.js";
 import { MasumiApiError, validateListing } from "@hirakumi/masumi";
 import { finishStep, getStep } from "../src/steps.js";
-import { createTestDb, messagesFor, seedApi, type TestDb } from "./helpers/db.js";
+import { createTestDb, messagesFor, seedApi, seedOperation, type TestDb } from "./helpers/db.js";
+import { inferRuleFromResponses, withRequiredPhrase } from "@hirakumi/core";
 
 let db: TestDb;
 beforeAll(async () => (db = await createTestDb()));
@@ -90,6 +91,50 @@ describe("registerStep (registering → live)", () => {
     expect(msgs[1].body).toContain(`Public status page: https://web.test/p/${apiId}\n`);
     expect(msgs[1].body).toContain(`Try it: https://web.test/p/${apiId}/try\n`);
     expect(msgs[1].body).toContain("Registry token: https://preprod.cardanoscan.io/token/agent_abc\n");
+  });
+
+  it("sends a listing whose text promise only checks the status back to the review page, and registers once it has a phrase", async () => {
+    const apiId = await seedPublished();
+    const opId = await seedOperation(db.pool, apiId, { opId: "getQuote" });
+    const statusOnly = inferRuleFromResponses([{ status: 200, contentType: "text/plain", body: "1.5", latencyMs: 1 }]);
+    await db.pool.query(`insert into rules (id, operation_id, version, definition, hash) values ($1, $2, 1, $3::jsonb, 'sha256:x')`, [`rule_${opId}_1`, opId, JSON.stringify(statusOnly)]);
+    const masumi = fakeMasumi();
+    await registerStep(deps(masumi), apiId);
+    expect(masumi.registerAgent).not.toHaveBeenCalled();
+    // priced is a state the review page and its phrase form accept, so the seller can act on the message.
+    expect((await db.pool.query(`select state from apis where id = $1`, [apiId])).rows[0].state).toBe("priced");
+    expect(await getStep(db.pool, apiId, "register")).toBeNull();
+    const msgs = await messagesFor(db.pool, apiId);
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].body).toMatch(/getQuote needs a phrase every good answer contains/);
+    expect(msgs[0].body).toContain(`/apis/${apiId}/review`);
+    expect(msgs[0].task_status).toBe("INPUT_REQUIRED");
+
+    // The seller adds a phrase and publishes again: it registers.
+    await db.pool.query(`insert into rules (id, operation_id, version, definition, hash) values ($1, $2, 2, $3::jsonb, 'sha256:y')`, [`rule_${opId}_2`, opId, JSON.stringify(withRequiredPhrase(statusOnly, "1"))]);
+    await db.pool.query(`update apis set state = 'registering' where id = $1`, [apiId]);
+    await registerStep(deps(masumi), apiId);
+    expect(masumi.registerAgent).toHaveBeenCalledTimes(1);
+
+    const second = await seedPublished();
+    const op2 = await seedOperation(db.pool, second, { opId: "getQuote" });
+    await db.pool.query(`insert into rules (id, operation_id, version, definition, hash) values ($1, $2, 1, $3::jsonb, 'sha256:x')`, [`rule_${op2}_1`, op2, JSON.stringify(statusOnly)]);
+    await db.pool.query(`insert into rules (id, operation_id, version, definition, hash) values ($1, $2, 2, $3::jsonb, 'sha256:y')`, [`rule_${op2}_2`, op2, JSON.stringify(withRequiredPhrase(statusOnly, "price"))]);
+    await registerStep(deps(masumi), second);
+    expect(masumi.registerAgent).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves a registration attempt that failed alone, even with a status-only promise: it may have minted", async () => {
+    const apiId = await seedPublished();
+    const opId = await seedOperation(db.pool, apiId, { opId: "getQuote" });
+    const statusOnly = inferRuleFromResponses([{ status: 200, contentType: "text/plain", body: "1.5", latencyMs: 1 }]);
+    await db.pool.query(`insert into rules (id, operation_id, version, definition, hash) values ($1, $2, 1, $3::jsonb, 'sha256:x')`, [`rule_${opId}_1`, opId, JSON.stringify(statusOnly)]);
+    await db.pool.query(`insert into onboard_steps (api_id, step, status, attempts) values ($1, 'register', 'failed', 1)`, [apiId]);
+    const masumi = fakeMasumi();
+    await registerStep(deps(masumi), apiId);
+    expect(masumi.registerAgent).not.toHaveBeenCalled();
+    expect((await db.pool.query(`select state from apis where id = $1`, [apiId])).rows[0].state).toBe("registering");
+    expect((await getStep(db.pool, apiId, "register"))?.status).toBe("failed");
   });
 
   it("builds a listing the registry accepts from real QA output (long text, no tags, JSON example)", async () => {

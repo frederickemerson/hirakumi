@@ -6,7 +6,7 @@ import type { SokosumiClient, SokosumiEvent } from "../src/sokosumi/client.js";
 import { createInbox } from "../src/sokosumi/inbox.js";
 import { PRICE_SPEC } from "./fixtures.js";
 import { createTestDb, seedOperation, type TestDb } from "./helpers/db.js";
-import { UpstreamTimeoutError } from "@hirakumi/core";
+import { inferRuleFromResponses, UpstreamTimeoutError, withRequiredPhrase } from "@hirakumi/core";
 import { PermanentError } from "../src/errors.js";
 import { SpecNotServedError } from "../src/openapi/fetchSpec.js";
 
@@ -323,6 +323,19 @@ describe("replies on a task", () => {
     expect((await db.pool.query(`select state from apis where id = $1`, [apiId])).rows[0].state).toBe("priced");
     expect((await messagesForTask(t.id)).at(-1)?.body).toBe(
       `Step 7 of 7, Register on Masumi: Publishing needs your wallet signature, so I can't do it from a comment. Approve it here (one signature): ${WEB}/apis/${apiId}/review`);
+  });
+
+  it("`price` on a status-only text promise reminds the seller to set the phrase before publishing", async () => {
+    const { t, apiId, get, reply } = await setup("rule_built");
+    await db.pool.query(`update operations set enabled = (id = $1) where api_id = $2`, [get, apiId]);
+    const statusOnly = inferRuleFromResponses([{ status: 200, contentType: "text/plain", body: "1.5", latencyMs: 1 }]);
+    await db.pool.query(`insert into rules (id, operation_id, version, definition, hash) values ($1, $2, 1, $3::jsonb, 'sha256:x')`, [`rule_${rand()}`, get, JSON.stringify(statusOnly)]);
+    await reply("price 2");
+    expect((await messagesForTask(t.id)).at(-1)?.body).toMatch(/approve it here \(one signature\): \S+\/review Before publishing, set the phrase every good answer must contain on the same page\.$/);
+    const phrased = withRequiredPhrase(statusOnly, "price");
+    await db.pool.query(`insert into rules (id, operation_id, version, definition, hash) values ($1, $2, 2, $3::jsonb, 'sha256:y')`, [`rule_${rand()}`, get, JSON.stringify(phrased)]);
+    await reply("price 3");
+    expect((await messagesForTask(t.id)).at(-1)?.body).toMatch(/approve it here \(one signature\): \S+\/review$/);
   });
 
   it("`price` before the test calls are done is refused", async () => {
