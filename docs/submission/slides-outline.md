@@ -21,7 +21,7 @@
 3b. **What makes it different:** buyers pay only for answers that keep the promise.
    - **Credits only on pass:** a promise inferred from real test calls (text answers need a phrase the seller confirms); a failing answer is a 422 and costs nothing.
    - **Truthful health:** we re-run the tests; `/availability` answers 503 when the API breaks, so the Masumi registry shows Offline.
-   - **Proven ownership:** an `X-Hirakumi-Verify` response header (platform detected, snippet or "Let your AI do it" prompt) and one wallet signature, re-checked every 6 hours.
+   - **Proven ownership:** one DNS TXT record at `_hirakumi.<host>` (the DNS provider detected, with its steps) and one wallet signature, re-checked every 6 hours.
    - **Escrow when it matters** (next slide), **keys that fail safely** (slide 5), and about 0.014 ADA overhead per call instead of 1.4 ADA.
 >>>>>>> origin/feat/upstream-auth-v3
 4. **Settlement, chosen per purchase:** direct (one tx to the seller, cheapest) or escrow in an Aiken contract (large pack, low uptime, new seller, or the buyer asks). In escrow the buyer signs an IOU per good answer; Close, Raise, Settle; the seller is paid only for signed calls; the buyer can always exit.

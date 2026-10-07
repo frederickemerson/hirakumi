@@ -52,7 +52,7 @@ The Sokosumi CLI lets an AI assistant browse the marketplace, create tasks and h
 | Payment cost | One on-chain payment per job, about 1.4 ADA overhead | One x402 pack for 100 calls, about 0.014 ADA per call |
 | Buyer protection | Masumi refund per job | Also the pack escrow: the seller is paid only for calls the buyer signed for, and the buyer can always exit |
 | Health status | Whatever the seller's `/availability` returns | Hirakumi re-runs the test inputs; `/availability` answers 503 when the promise breaks |
-| Ownership | Not checked | Response header, a wallet signature, and a re-check every 6 hours |
+| Ownership | Not checked | A DNS TXT record, a wallet signature, and a re-check every 6 hours |
 | What the seller runs | A new service | Nothing new; the existing API is unchanged |
 
 The two fit together: an assistant using the Sokosumi CLI can create the task that the Hirakumi coworker picks up.
