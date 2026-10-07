@@ -1,6 +1,6 @@
 /**
  * Structured parsing of the seller's text on a Sokosumi task: the OpenAPI link and the replies the coworker asked
- * for (`sell 1 2`, `price 2.5 for 100 calls`, `publish`). Nothing here guesses intent; anything else is "no command".
+ * for (`sell 1 2`, `price 2.5 for 100 calls`, `publish`, `link wallet`). Nothing here guesses intent; anything else is "no command".
  */
 import { FILE_HOSTS } from "../openapi/fileHosts.js";
 
@@ -50,7 +50,9 @@ export function findLinks(text: string): string[] {
 export type Command =
   | { kind: "sell"; refs: string[]; readOnlyConfirmed: boolean }
   | { kind: "price"; priceText: string; calls: number | null }
-  | { kind: "publish" };
+  | { kind: "publish" }
+  /** Move this Sokosumi account to another wallet (the setup page's link mode). */
+  | { kind: "linkWallet" };
 
 const READ_ONLY = new Set(["readonly", "read-only", "read_only"]);
 
@@ -62,6 +64,7 @@ export function parseCommand(text: string): Command | null {
   const first = text.split(/\r?\n/).find((l) => l.trim() !== "") ?? "";
   const s = first.replace(/`/g, " ").trim().replace(/\.$/, "").trim();
   if (/^publish$/i.test(s)) return { kind: "publish" };
+  if (/^(?:link|switch|change)\s+wallet$/i.test(s)) return { kind: "linkWallet" };
   const sell = /^sell\s+(.+)$/i.exec(s);
   if (sell) {
     const words = sell[1].split(/[\s,]+/).filter((w) => w && !/^(and|&)$/i.test(w));
@@ -79,6 +82,7 @@ export function parseCommand(text: string): Command | null {
 export function formatCommand(c: Command): string {
   switch (c.kind) {
     case "publish": return "publish";
+    case "linkWallet": return "link wallet";
     case "sell": return `sell ${c.refs.join(" ")}${c.readOnlyConfirmed ? " readonly" : ""}`;
     case "price": return `price ${c.priceText}${c.calls ? ` for ${c.calls} calls` : ""}`;
   }

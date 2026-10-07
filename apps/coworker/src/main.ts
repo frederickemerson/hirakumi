@@ -63,7 +63,7 @@ if (soko && mode.kind === "sokosumi") {
     multiPartKeys: process.env.UPSTREAM_AUTH_V3 === "1",
   });
   startLoop("sokosumi-inbox", 5_000, () => inbox.poll());
-  startLoop("sokosumi-outbox", 2_000, () => deliverMessages(pool, soko));
+  startLoop("sokosumi-outbox", 2_000, () => deliverMessages(pool, soko, config.webBaseUrl));
   startLoop("sokosumi-usage", 30_000, () => reportOnboardingUsage(pool, soko, config.onboardingCredits));
   console.info(`[coworker] Sokosumi mode as ${me?.name} (${me?.id})`);
 } else {

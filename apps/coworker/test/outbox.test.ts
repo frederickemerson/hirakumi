@@ -51,6 +51,58 @@ describe("deliverMessages", () => {
   });
 });
 
+describe("the wallet line on comments that link to an API's pages", () => {
+  const WEB = "https://hirakumi.vercel.app";
+  const ok = () => soko(async () => ({ id: "evt" }));
+  async function linkedApi(taskId: string, state = "described") {
+    const apiId = await seedApi(db.pool, { sokosumiTaskId: taskId, state });
+    await db.pool.query(`update sellers set sokosumi_user_id = $2 from apis where apis.id = $1 and sellers.id = apis.seller_id`, [apiId, `user_${taskId}`]);
+    const { rows: [s] } = await db.pool.query<{ cardano_addr: string }>(`select s.cardano_addr from apis a join sellers s on s.id = a.seller_id where a.id = $1`, [apiId]);
+    return { apiId, tail: s.cardano_addr.slice(-6) };
+  }
+
+  it.each(["ownership", "review", "overview", "endpoints", ""])("adds the owner's wallet once to a /apis/<id>/%s link", async (page) => {
+    const taskId = `tsk_w_${page || "root"}`;
+    const { apiId, tail } = await linkedApi(taskId);
+    const link = `${WEB}/apis/${apiId}${page ? `/${page}` : ""}`;
+    await enqueueMessage(db.pool, { apiId, body: `Approve it here: ${link} Then see ${WEB}/apis/${apiId}/review.`, dedupeKey: `w:${apiId}` });
+    const client = ok();
+    await deliverMessages(db.pool, client, WEB);
+    const comment = client.createTaskEvent.mock.calls.find((c) => c[0] === taskId)![1].comment as string;
+    expect(comment).toBe(`Approve it here: ${link} Then see ${WEB}/apis/${apiId}/review.\n\nOpen it signed in with the wallet ending \`…${tail}\`. (Different wallet? Reply \`link wallet\`.)`);
+    expect(comment.match(/link wallet/g)).toHaveLength(1);
+    expect(comment).not.toMatch(/[–—]/);
+    const { rows: [m] } = await db.pool.query(`select body from messages where api_id = $1`, [apiId]);
+    expect(m.body).not.toContain("wallet ending");
+  });
+
+  it("names the wallet only when the comment already offers `link wallet` (help text)", async () => {
+    const { apiId, tail } = await linkedApi("tsk_w_help");
+    await enqueueMessage(db.pool, { apiId, body: `Publish: ${WEB}/apis/${apiId}/review\nUsing a different wallet? Reply \`link wallet\`.`, dedupeKey: `h:${apiId}` });
+    const client = ok();
+    await deliverMessages(db.pool, client, WEB);
+    const comment = client.createTaskEvent.mock.calls.find((c) => c[0] === "tsk_w_help")![1].comment as string;
+    expect(comment.endsWith(`Open it signed in with the wallet ending \`…${tail}\`.`)).toBe(true);
+    expect(comment.match(/link wallet/g)).toHaveLength(1);
+  });
+
+  it("leaves other comments alone: no API page link, public pages, other hosts, unlinked sellers", async () => {
+    const { apiId } = await linkedApi("tsk_w_none");
+    const unlinked = await seedApi(db.pool, { sokosumiTaskId: "tsk_w_unl" });
+    const bodies = [
+      "Reading your file now.",
+      `Public page: ${WEB}/p/${apiId}`,
+      `Setup: ${WEB}/setup?t=abc`,
+      `Elsewhere: https://other.example/apis/${apiId}/review`,
+    ];
+    for (const [i, body] of bodies.entries()) await enqueueMessage(db.pool, { apiId, body, dedupeKey: `n${i}:${apiId}` });
+    await enqueueMessage(db.pool, { apiId: unlinked, body: `Review: ${WEB}/apis/${unlinked}/review`, dedupeKey: `u:${unlinked}` });
+    const client = ok();
+    await deliverMessages(db.pool, client, WEB);
+    expect(client.createTaskEvent.mock.calls.filter((c) => c[0].startsWith("tsk_w_")).map((c) => c[1].comment)).toEqual([...bodies, `Review: ${WEB}/apis/${unlinked}/review`]);
+  });
+});
+
 describe("reportOnboardingUsage", () => {
   it("bills once per task after its API is Live, with a stable idempotency key", async () => {
     const apiId = await seedApi(db.pool, { state: "live", sokosumiTaskId: "tsk_bill" });

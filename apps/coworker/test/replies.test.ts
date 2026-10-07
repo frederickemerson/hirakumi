@@ -51,9 +51,14 @@ describe("parseCommand", () => {
     expect(parseCommand("price 2")).toEqual({ kind: "price", priceText: "2", calls: null });
     expect(parseCommand("price 3.5 tUSDM for 200 calls")).toEqual({ kind: "price", priceText: "3.5", calls: 200 });
     expect(parseCommand("PUBLISH")).toEqual({ kind: "publish" });
+    for (const s of ["link wallet", "`Switch Wallet`", "change  wallet.", "LINK WALLET\nI used my other one"]) {
+      expect(parseCommand(s)).toEqual({ kind: "linkWallet" });
+    }
+    expect(formatCommand({ kind: "linkWallet" })).toBe("link wallet");
   });
   it("anything else is not a command", () => {
-    for (const s of ["sell", "sell readonly", "price", "price two", "price -1", "price 1.1234567", "please publish it", "yes", "sell 1; drop table"]) {
+    for (const s of ["sell", "sell readonly", "price", "price two", "price -1", "price 1.1234567", "please publish it", "yes", "sell 1; drop table",
+      "wallet", "link my wallet please", "link wallet addr_test1xyz"]) {
       expect(parseCommand(s)).toBeNull();
     }
   });
@@ -107,6 +112,13 @@ describe("mapReplyToChoice (the one LLM step for replies)", () => {
     expect(await mapReplyToChoice(vi.fn().mockRejectedValue(new Error("refused")) as unknown as StructuredCall, "x", sell)).toBeNull();
     expect(await mapReplyToChoice(llmReturning({ choice: "price", endpoints: [], price_tusdm: "2.5", calls: 200 }), "2.5 for 200", { kind: "price" }))
       .toEqual({ kind: "price", priceText: "2.5", calls: 200 });
+  });
+  it("always offers link_wallet next to the step's choice", async () => {
+    const llm = llmReturning({ choice: "link_wallet", endpoints: [], price_tusdm: null, calls: null });
+    expect(await mapReplyToChoice(llm, "use my other wallet", { kind: "price" })).toEqual({ kind: "linkWallet" });
+    const req = (llm as ReturnType<typeof vi.fn>).mock.calls[0][0] as { user: string };
+    expect(req.user).toContain("link_wallet");
+    expect(req.user).toContain("price 2 for 100 calls");
   });
 });
 

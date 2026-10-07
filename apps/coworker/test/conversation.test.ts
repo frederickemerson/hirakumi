@@ -3,6 +3,7 @@ import type { StructuredCall } from "../src/llm/claude.js";
 import { describeStep } from "../src/onboarding/describeStep.js";
 import { parseStep } from "../src/onboarding/parseStep.js";
 import type { SokosumiClient, SokosumiEvent } from "../src/sokosumi/client.js";
+import { handleReply } from "../src/sokosumi/conversation.js";
 import { createInbox } from "../src/sokosumi/inbox.js";
 import { PRICE_SPEC } from "./fixtures.js";
 import { createTestDb, seedOperation, type TestDb } from "./helpers/db.js";
@@ -367,7 +368,58 @@ describe("replies on a task", () => {
   it("without a command (and no LLM) it says what it needs at this step", async () => {
     const { t, apiId, reply } = await setup("ownership_verified");
     await reply("how is it going?");
-    expect((await messagesForTask(t.id)).at(-1)).toMatchObject({ body: "Test calls are running. I'll post the promise and a suggested price here when they're done.", api_id: apiId });
+    expect((await messagesForTask(t.id)).at(-1)).toMatchObject({
+      body: "Test calls are running. I'll post the promise and a suggested price here when they're done.\nUsing a different wallet? Reply `link wallet`.",
+      api_id: apiId,
+    });
+  });
+
+  it("`link wallet` (and `switch wallet`, `Change Wallet`) answers with the task's link-mode setup link and the current wallet", async () => {
+    const { t, apiId, reply } = await setup("described");
+    const { rows: [ct] } = await db.pool.query<{ setup_token: string }>(`select setup_token from coworker_tasks where task_id = $1`, [t.id]);
+    const { rows: [s] } = await db.pool.query<{ cardano_addr: string }>(`select cardano_addr from sellers where sokosumi_user_id = $1`, [t.user]);
+    for (const text of ["link wallet", "`switch wallet`", "Change Wallet."]) {
+      await reply(text);
+      expect((await messagesForTask(t.id)).at(-1)).toMatchObject({
+        api_id: apiId,
+        body: "Open this link signed in with the wallet you want to use, then confirm. Your Sokosumi account and its listings that are not live yet move to that wallet. " +
+          `It's currently linked to \`…${s.cardano_addr.slice(-6)}\`.\n${WEB}/setup?t=${encodeURIComponent(ct.setup_token)}&link=1`,
+      });
+    }
+    const body = (await messagesForTask(t.id)).at(-1)!.body;
+    expect(body).not.toMatch(/[–—]/);
+    expect(body.split("\n")).toHaveLength(2);
+  });
+
+  it("`link wallet` works before there is an API, and says when the account is not linked yet", async () => {
+    const t = await newTask();
+    const { soko, setEvents } = fakeSoko({ [t.id]: t.task });
+    setEvents([{ id: `evt_${rand()}`, taskId: t.id, createdAt: past, status: "READY", actor: { type: "user", id: t.user } }]);
+    const inbox = createInbox({ pool: db.pool, soko, webBaseUrl: WEB, fetchSpec: vi.fn(), llm: null });
+    await inbox.poll();
+    setEvents([comment(t.id, t.user, "link wallet")]);
+    await inbox.poll();
+    const last = (await messagesForTask(t.id)).at(-1)!;
+    expect(last.api_id).toBeNull();
+    expect(last.body).toContain("It isn't linked to a wallet yet.");
+    expect(last.body).toMatch(new RegExp(`\\n${WEB}/setup\\?t=[^&\\s]+&link=1$`));
+  });
+
+  it("`link wallet` on a task without a setup token says so and posts no link", async () => {
+    const taskId = `tsk_${rand()}`;
+    await handleReply({ pool: db.pool, webBaseUrl: WEB, fetchSpec: vi.fn(), llm: null, allowInsecure: false },
+      { taskId, sokosumiUserId: `user_${rand()}`, setupToken: "" }, `evt_${rand()}`, "link wallet");
+    const [m] = await messagesForTask(taskId);
+    expect(m.body).toBe("This task has no setup link, so I can't move your Sokosumi account to another wallet from here.");
+  });
+
+  it("a free-text reply the LLM maps to link_wallet gets the link-wallet answer", async () => {
+    const llm = vi.fn().mockResolvedValue({ choice: "link_wallet", endpoints: [], price_tusdm: null, calls: null }) as unknown as StructuredCall;
+    const { t, reply } = await setup("described", { llm });
+    await reply("I signed in with my other wallet, can I use that one instead?");
+    const body = (await messagesForTask(t.id)).at(-1)!.body;
+    expect(body).toMatch(/^I read your reply as `link wallet`\. Open this link signed in with the wallet you want to use/);
+    expect(body).toContain("&link=1");
   });
 
   it("at the ownership step it says to add a DNS TXT record, never to host a file or change the API", async () => {

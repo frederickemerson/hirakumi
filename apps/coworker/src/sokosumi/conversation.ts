@@ -3,7 +3,7 @@ import { apiBaseUrl, normalizeSamplesBase, verifyRecordFor, parseSampleLinesWith
 import type pg from "pg";
 import type { Db } from "../db.js";
 import { PermanentError } from "../errors.js";
-import { apiLink, overviewLink, ownershipLink, reviewLink, setupLink } from "../links.js";
+import { apiLink, linkWalletLink, overviewLink, ownershipLink, reviewLink, setupLink } from "../links.js";
 import type { StructuredCall } from "../llm/claude.js";
 import { mapReplyToChoice, type Offered } from "../llm/replyChoice.js";
 import { enqueueMessage, type TaskStatus } from "../messages.js";
@@ -16,7 +16,8 @@ import {
   parseCommand, SUGGESTED_PACK, validateOpenApiUrl, type Command, type SamplesIntake,
 } from "./replies.js";
 import {
-  apiAuthHint, apiForTask, confirmSell, createTaskApi, ensureVerifyCode, linkedSeller, listOps, opLine, opsNeedingPhrase, savePrice, type ListedOp, type TaskApi,
+  apiAuthHint, apiForTask, confirmSell, createTaskApi, ensureVerifyCode, linkedSeller, linkedWallet, listOps, opLine, opsNeedingPhrase, savePrice, walletTail,
+  type ListedOp, type TaskApi,
 } from "./sellerActions.js";
 
 /**
@@ -147,6 +148,10 @@ export async function handleReply(deps: ConversationDeps, task: TaskRef, eventId
     }
   }
 
+  if (cmd?.kind === "linkWallet") {
+    await say(deps.pool, task, key, `${understood}${await linkWalletMessage(deps, task)}`, { apiId: api?.id ?? null });
+    return;
+  }
   if (!api) {
     await say(deps.pool, task, key,
       `There's no API on this task yet. Reply with the https link to your OpenAPI file. If you already sent it, sign in with your wallet and paste it on the setup page: ${setupLink(deps.webBaseUrl, task.setupToken)} ${NO_OPENAPI_HINT}.`,
@@ -198,7 +203,19 @@ export async function handleReply(deps: ConversationDeps, task: TaskRef, eventId
   }
   const hint = api.state === "endpoints_confirmed" ? await apiAuthHint(deps.pool, api.id) : null;
   const code = api.state === "endpoints_confirmed" ? await ensureVerifyCode(deps.pool, api.id) : null;
-  await say(deps.pool, task, key, helpFor(api, deps.webBaseUrl, hint, code), { apiId: api.id });
+  await say(deps.pool, task, key, `${helpFor(api, deps.webBaseUrl, hint, code)}\nUsing a different wallet? Reply \`link wallet\`.`, { apiId: api.id });
+}
+
+/**
+ * `link wallet`: the setup page in link mode moves this Sokosumi account (and its listings that are not live yet) to
+ * the wallet signed in there. The setup token is posted only here and in the setup messages, never elsewhere.
+ */
+async function linkWalletMessage(deps: ConversationDeps, task: TaskRef): Promise<string> {
+  if (!task.setupToken) return "This task has no setup link, so I can't move your Sokosumi account to another wallet from here.";
+  const addr = await linkedWallet(deps.pool, task.sokosumiUserId);
+  return "Open this link signed in with the wallet you want to use, then confirm. " +
+    "Your Sokosumi account and its listings that are not live yet move to that wallet. " +
+    `${addr ? `It's currently linked to ${walletTail(addr)}.` : "It isn't linked to a wallet yet."}\n${linkWalletLink(deps.webBaseUrl, task.setupToken)}`;
 }
 
 /** What a reply may choose at this point (for the LLM mapping), or null when the coworker asked for nothing. */
