@@ -64,7 +64,7 @@ describe("seller Try it live: who may use it", () => {
 
   it("the owner's session sent cross-site: 403 on every state-changing route", async () => {
     for (const [name, h, method, body] of ROUTES.filter((r) => r[2] !== "GET")) {
-      for (const headers of [{ "sec-fetch-site": "cross-site" }, { origin: "https://evil.example" }]) {
+      for (const headers of [{ "sec-fetch-site": "cross-site" }, { origin: "https://evil.example" }] as Record<string, string>[]) {
         expect((await h(req(method, body, headers, cookieFor(seller)), ctx(api.id))).status, name).toBe(403);
       }
     }
