@@ -3,7 +3,7 @@ import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { jsonResponse } from "@/test/http";
-import { AUTO_CHECK_MS, curlCheck, headerSnippets, OwnershipPanel } from "./ownership-panel";
+import { agentPrompt, AUTO_CHECK_MS, claudeUrl, curlCheck, headerSnippets, OwnershipPanel } from "./ownership-panel";
 
 const nav = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => nav }));
@@ -71,19 +71,35 @@ describe("OwnershipPanel: what, where, why", () => {
     const user = userEvent.setup();
     render(panel());
     const tabs = screen.getAllByRole("tab").map((t) => t.textContent);
-    expect(tabs).toEqual(["Express", "nginx", "vercel.json", "Netlify _headers", "Cloudflare", "FastAPI", "Flask"]);
+    expect(tabs).toEqual(["Express", "nginx", "vercel.json", "Netlify _headers", "Cloudflare", "Next.js", "FastAPI", "Flask", "Go", "Anything else"]);
     expect(screen.getByRole("tab", { name: "Express" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tabpanel")).toHaveTextContent(`res.set("X-Hirakumi-Verify", "${CODE}");`);
     await user.click(screen.getByRole("tab", { name: "nginx" }));
     expect(screen.getByRole("tab", { name: "nginx" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tabpanel")).toHaveTextContent(`add_header X-Hirakumi-Verify "${CODE}" always;`);
+    expect(within(screen.getByRole("tabpanel")).getByText(/sudo nginx -t && sudo systemctl reload nginx/)).toBeInTheDocument();
+  });
+
+  it("gives every recipe numbered steps that say where to paste it and what to do after", () => {
+    for (const x of headerSnippets(CODE, BASE_URL)) {
+      expect(x.steps.length, x.id).toBeGreaterThanOrEqual(2);
+      expect(x.steps.join(" "), x.id).not.toMatch(/[–—]/);
+    }
+    const by = Object.fromEntries(headerSnippets(CODE, BASE_URL).map((x) => [x.id, x]));
+    expect(by.express.steps[1]).toContain("const app = express()");
+    expect(by.fastapi.text).toContain("from fastapi import FastAPI, Request");
+    expect(by.flask.text).toContain("from flask import Flask");
+    expect(by.go.text).toContain("hirakumiVerify(mux)");
+    expect(by.other.steps[1]).toContain(BASE_URL);
+    expect(by.other.text).toBe(`X-Hirakumi-Verify: ${CODE}`);
   });
 
   it("shows the optional key section between adding the code and signing", () => {
     installWallet();
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(MISSING)));
-    render(<OwnershipPanel apiId="api_1" baseUrl={BASE_URL} code={CODE} initiallyPassed={false} beforeSigning={<p>Key section</p>} />);
-    const items = screen.getAllByRole("listitem");
+    const { container } = render(<OwnershipPanel apiId="api_1" baseUrl={BASE_URL} code={CODE} initiallyPassed={false} beforeSigning={<p>Key section</p>} />);
+    // The panel's own steps: the outer list's items, not the numbered steps inside each recipe.
+    const items = Array.from(container.querySelectorAll<HTMLElement>(":scope > ol > li"));
     expect(items.map((li) => li.textContent?.includes("Key section"))).toEqual([false, true, false]);
     expect(within(items[2]).getByRole("heading", { name: "Sign with your wallet" })).toBeInTheDocument();
   });
@@ -97,8 +113,38 @@ describe("OwnershipPanel: what, where, why", () => {
     expect(headerSnippets(CODE, "https://price.example.dev/").find((x) => x.id === "cloudflare")?.text).toContain("All incoming requests");
     expect(by.fastapi).toContain(`response.headers["X-Hirakumi-Verify"] = "${CODE}"`);
     expect(by.flask).toContain("@app.after_request");
+    expect(by.nextjs).toContain(`headers: [{ key: "X-Hirakumi-Verify", value: "${CODE}" }]`);
+    expect(by.go).toContain(`w.Header().Set("X-Hirakumi-Verify", "${CODE}")`);
     expect(curlCheck(BASE_URL)).toBe(`curl -s -o /dev/null -D - '${BASE_URL}' | grep -i x-hirakumi-verify`);
     for (const x of headerSnippets(CODE, BASE_URL)) expect(x.text).not.toMatch(/[–—]/);
+  });
+
+  it("builds a coding-agent prompt with the code, the base URL, the rules and the curl check", () => {
+    const p = agentPrompt(CODE, BASE_URL);
+    expect(p).toContain(`X-Hirakumi-Verify with the value ${CODE}`);
+    expect(p).toContain(`every response at ${BASE_URL} and every path below it, errors and 404 pages included`);
+    expect(p).toContain("without redirecting somewhere else");
+    expect(p).toContain("Change nothing else.");
+    expect(p.endsWith(curlCheck(BASE_URL))).toBe(true);
+    expect(p).not.toMatch(/[–—]/);
+    expect(claudeUrl(p)).toBe(`https://claude.ai/new?q=${encodeURIComponent(p)}`);
+  });
+
+  it("offers the prompt to copy or open in Claude, before the do-it-yourself snippets", async () => {
+    installWallet();
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(MISSING)));
+    const user = userEvent.setup();
+    const writeText = vi.spyOn(navigator.clipboard, "writeText");
+    render(panel());
+    const card = screen.getByRole("region", { name: "Ask your coding agent" });
+    expect(card).toHaveTextContent(`X-Hirakumi-Verify with the value ${CODE}`);
+    const open = within(card).getByRole("link", { name: "Open in Claude" });
+    expect(open).toHaveAttribute("href", claudeUrl(agentPrompt(CODE, BASE_URL)));
+    expect(open).toHaveAttribute("target", "_blank");
+    expect(open).toHaveAttribute("rel", "noopener noreferrer");
+    await user.click(within(card).getByRole("button", { name: "Copy prompt" }));
+    expect(writeText).toHaveBeenCalledWith(agentPrompt(CODE, BASE_URL));
+    expect(card.compareDocumentPosition(screen.getByRole("tablist")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("quotes the URL in the curl check, so shell characters in the path stay part of it", () => {

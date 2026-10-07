@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Elapsed, useElapsed } from "@/components/elapsed";
 import { InlineError, InlineStatus } from "@/components/states";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PhoneWalletConnect } from "@/components/phone-wallet-connect";
 import { GetAWallet, useWallets, WalletIcon } from "@/components/wallet-picker";
@@ -18,39 +18,95 @@ import { cn } from "@/lib/utils";
 export const AUTO_CHECK_MS = 10_000;
 export const HEADER = "X-Hirakumi-Verify";
 
-export type HeaderSnippet = { id: string; label: string; text: string };
+/**
+ * One way to send the header, for a common server or host: where to paste it, the code to paste (complete, with the
+ * lines around it), and what to do after. Every recipe sends the header on every response, 404s included.
+ */
+export type HeaderSnippet = { id: string; label: string; steps: string[]; text: string };
 
-/** Ways to send the header, one per common server or host. Each sends it on every response, 404s included. */
+/** Ways to send the header, one per common server or host. */
 export function headerSnippets(code: string, baseUrl: string): HeaderSnippet[] {
   const path = new URL(baseUrl).pathname;
+  const redeploy = "Deploy the change. We check again every 10 s.";
   return [
     {
       id: "express", label: "Express",
-      text: `// Before your routes, so every response gets it, 404s too.\napp.use((req, res, next) => {\n  res.set("${HEADER}", "${code}");\n  next();\n});`,
+      steps: ["Open the file where you create your app (often app.js, server.js or index.js).", "Paste the middleware right after const app = express(), before any routes.", redeploy],
+      text: `const app = express();\n\n// Hirakumi ownership check. Before your routes, so every response gets it, 404s too.\napp.use((req, res, next) => {\n  res.set("${HEADER}", "${code}");\n  next();\n});\n\n// ...your routes below`,
     },
     {
       id: "nginx", label: "nginx",
-      text: `# In the server or location block that serves your API.\nadd_header ${HEADER} "${code}" always;`,
+      steps: [
+        "Open the server block that serves your API (often in /etc/nginx/sites-available/).",
+        "Add the add_header line inside it. If a location block has its own add_header lines, add it there too, because nginx then ignores the server ones.",
+        "Run: sudo nginx -t && sudo systemctl reload nginx",
+      ],
+      text: `server {\n    # ...your existing config\n\n    # Hirakumi ownership check. "always" sends it on 404s and errors too.\n    add_header ${HEADER} "${code}" always;\n}`,
     },
     {
       id: "vercel", label: "vercel.json",
+      steps: ["Open vercel.json at the root of your project, or create it.", "Add this headers entry. If the file already has a headers list, add the object inside it.", "Push or run vercel --prod to redeploy. We check again every 10 s."],
       text: `{\n  "headers": [\n    {\n      "source": "/(.*)",\n      "headers": [{ "key": "${HEADER}", "value": "${code}" }]\n    }\n  ]\n}`,
     },
-    { id: "netlify", label: "Netlify _headers", text: `/*\n  ${HEADER}: ${code}` },
+    {
+      id: "netlify", label: "Netlify _headers",
+      steps: ["Create a file named _headers (no extension) in your publish folder, for example public/.", "Paste these two lines. If the file exists, add them at the end.", redeploy],
+      text: `/*\n  ${HEADER}: ${code}`,
+    },
     {
       id: "cloudflare", label: "Cloudflare",
-      text: `Rules, Transform Rules, Modify Response Header, Create rule\nIf: ${path === "/" ? "All incoming requests" : `URI Path starts with ${path}`}\nThen: Set static, header name ${HEADER}, value ${code}`,
+      steps: ["In the Cloudflare dashboard, open your domain.", "Go to Rules, then Transform Rules, then Modify Response Header, and create a rule with these settings.", "Save. It takes effect in a few seconds, no deploy needed."],
+      text: `Rule name: Hirakumi verify\nIf: ${path === "/" ? "All incoming requests" : `URI Path starts with ${path}`}\nThen: Set static\n  Header name: ${HEADER}\n  Value: ${code}`,
+    },
+    {
+      id: "nextjs", label: "Next.js",
+      steps: ["Open next.config.js (or .mjs or .ts) at the root of your project.", "Add the headers() function inside the config you already export.", redeploy],
+      text: `// next.config.js\nmodule.exports = {\n  // ...your existing config\n\n  // Hirakumi ownership check: every response gets it, 404s too.\n  async headers() {\n    return [{ source: "/:path*", headers: [{ key: "${HEADER}", value: "${code}" }] }];\n  },\n};`,
     },
     {
       id: "fastapi", label: "FastAPI",
-      text: `@app.middleware("http")\nasync def hirakumi_verify(request, call_next):\n    response = await call_next(request)\n    response.headers["${HEADER}"] = "${code}"\n    return response`,
+      steps: ["Open the file where you create app = FastAPI() (often main.py).", "Paste the middleware just below that line.", redeploy],
+      text: `from fastapi import FastAPI, Request\n\napp = FastAPI()\n\n# Hirakumi ownership check: every response gets it, 404s too.\n@app.middleware("http")\nasync def hirakumi_verify(request: Request, call_next):\n    response = await call_next(request)\n    response.headers["${HEADER}"] = "${code}"\n    return response`,
     },
     {
       id: "flask", label: "Flask",
-      text: `@app.after_request\ndef hirakumi_verify(response):\n    response.headers["${HEADER}"] = "${code}"\n    return response`,
+      steps: ["Open the file where you create app = Flask(__name__) (often app.py).", "Paste the function just below that line.", redeploy],
+      text: `from flask import Flask\n\napp = Flask(__name__)\n\n# Hirakumi ownership check: every response gets it, 404s too.\n@app.after_request\ndef hirakumi_verify(response):\n    response.headers["${HEADER}"] = "${code}"\n    return response`,
+    },
+    {
+      id: "go", label: "Go",
+      steps: ["Open the file that starts your server (often main.go).", "Add the hirakumiVerify function and wrap the handler you pass to ListenAndServe with it.", redeploy],
+      text: `// Hirakumi ownership check: every response gets it, 404s too.\nfunc hirakumiVerify(next http.Handler) http.Handler {\n\treturn http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {\n\t\tw.Header().Set("${HEADER}", "${code}")\n\t\tnext.ServeHTTP(w, r)\n\t})\n}\n\nfunc main() {\n\tmux := http.NewServeMux()\n\t// ...your routes on mux\n\thttp.ListenAndServe(":8080", hirakumiVerify(mux))\n}`,
+    },
+    {
+      id: "other", label: "Anything else",
+      steps: [
+        "Find where your server or host lets you add a response header to every response: a middleware, an after-request hook, or a headers setting.",
+        `Set the header below on every response at ${baseUrl} and below it, errors and 404 pages included.`,
+        redeploy,
+      ],
+      text: `${HEADER}: ${code}`,
     },
   ];
 }
+
+/** A prompt the seller pastes into a coding agent (Claude Code, Cursor, …) opened in their API's project. */
+export function agentPrompt(code: string, baseUrl: string): string {
+  return [
+    `Make this API send the response header ${HEADER} with the value ${code}. Hirakumi uses it to check that I own the API.`,
+    "",
+    "Requirements:",
+    `1. Send it on every response at ${baseUrl} and every path below it, errors and 404 pages included. Use middleware or the server or hosting config, not a single route.`,
+    `2. ${baseUrl} must answer itself, without redirecting somewhere else. A redirect that only adds a slash at the end is fine if it carries the header too.`,
+    "3. Change nothing else.",
+    "",
+    "Find where this project sets up its HTTP server or hosting, make the smallest change, then tell me what you changed and how to deploy it. Once it is deployed, this command should print the header:",
+    curlCheck(baseUrl),
+  ].join("\n");
+}
+
+/** Opens a new Claude chat with the prompt filled in. */
+export const claudeUrl = (prompt: string) => `https://claude.ai/new?q=${encodeURIComponent(prompt)}`;
 
 /** A shell word: single quotes, any ' inside closed and escaped, so &, |, $ and the like stay part of the URL. */
 const shellQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
@@ -122,6 +178,37 @@ function Snippet({ label, text }: { label: string; text: string }) {
   );
 }
 
+/** The fast way: hand the change to a coding agent, with everything it needs in one prompt. */
+function AgentPrompt({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+    }
+  }
+  return (
+    <section aria-labelledby="agent-prompt" className="space-y-3 rounded-[2px] border-2 border-ink bg-ice p-4">
+      <div className="space-y-1">
+        <h3 id="agent-prompt" className="text-body font-semibold">Ask your coding agent</h3>
+        <p className="text-caption text-graphite">
+          Paste this into Claude Code, Cursor or any coding agent open in your API&apos;s project. It has your code and base URL in it.
+        </p>
+      </div>
+      <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-[2px] bg-ink p-3 text-caption text-cream"><code>{text}</code></pre>
+      <div className="flex flex-wrap gap-3">
+        <Button size="sm" onClick={copy} aria-live="polite">{copied ? "Copied" : "Copy prompt"}</Button>
+        <a href={claudeUrl(text)} target="_blank" rel="noopener noreferrer" className={buttonVariants({ variant: "outline", size: "sm" })}>
+          Open in Claude
+        </a>
+      </div>
+    </section>
+  );
+}
+
 const isVisible = () => typeof document === "undefined" || document.visibilityState !== "hidden";
 
 /** The snippets as tabs: one server or host at a time. */
@@ -140,7 +227,10 @@ function SnippetTabs({ snippets }: { snippets: HeaderSnippet[] }) {
           </button>
         ))}
       </div>
-      <div role="tabpanel" id="snippet-panel" aria-labelledby={`snippet-tab-${current.id}`}>
+      <div role="tabpanel" id="snippet-panel" aria-labelledby={`snippet-tab-${current.id}`} className="space-y-3">
+        <ol className="list-decimal space-y-1 pl-5 text-body">
+          {current.steps.map((step) => <li key={step}>{step}</li>)}
+        </ol>
         <Snippet label={current.label} text={current.text} />
       </div>
     </div>
@@ -238,7 +328,8 @@ export function OwnershipPanel({ apiId, baseUrl, code, initiallyPassed, beforeSi
           <p className="text-body">So nobody can sell an API they don&apos;t own.</p>
           <p className="text-body">Make your API send this header on its responses:</p>
           <Snippet label="Header" text={`${HEADER}: ${code}`} />
-          <p className="text-body">For example:</p>
+          <AgentPrompt text={agentPrompt(code, baseUrl)} />
+          <p className="text-body">Or add it yourself:</p>
           <SnippetTabs snippets={snippets} />
           <p className="text-body">It must be on responses at your API&apos;s base URL:</p>
           <code className="block break-all rounded-[2px] bg-ink p-3 text-body text-cream">{baseUrl}</code>
