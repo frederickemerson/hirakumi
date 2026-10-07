@@ -7,7 +7,7 @@ Turn any read-only API into a paid supplier for AI agents on Cardano. Buyers pay
 - Live dashboard: https://hirakumi.vercel.app
 - Try a live API (real preprod credits): https://hirakumi.vercel.app/p/api_eejiaioyqt/try
 - Gateway (x402 + MIP-003): https://52-70-235-103.sslip.io
-- Demo seller API: https://price.52-70-235-103.sslip.io/openapi.json
+- Demo seller APIs: https://price.52-70-235-103.sslip.io/openapi.json (crypto prices) and https://mika.52-70-235-103.sslip.io/openapi.json (Mika's FX Rates, `sellers/fx-api`, for onboarding a fresh listing in the demo)
 - Video, slides, write-up: see `docs/submission/`
 
 ## What APIs it takes
@@ -51,7 +51,7 @@ The pass/fail check runs on our gateway in every mode, against a rule whose hash
 - Chainlink CRE uptime scoring was a stretch goal and is not in this repo.
 
 ## Repository layout
-`apps/gateway` · `apps/web` · `apps/coworker` · `packages/core` · `packages/db` · `packages/masumi` · `sellers/price-api` · `agents/buyer` · `contracts/pack-escrow` · `packages/escrow` · `db/migrations` · `docs/`
+`apps/gateway` · `apps/web` · `apps/coworker` · `packages/core` · `packages/db` · `packages/masumi` · `sellers/price-api` · `sellers/fx-api` · `agents/buyer` · `contracts/pack-escrow` · `packages/escrow` · `db/migrations` · `docs/`
 
 ## Run it
 Requirements: Node 22+, pnpm, Docker. A funded preprod wallet (tADA from https://docs.cardano.org/cardano-testnets/tools/faucet, tUSDM from https://tusdm.moneta.global) and a Blockfrost preprod key.
@@ -62,7 +62,7 @@ cp .env.example .env            # fill in the values; see comments
 pnpm --filter @hirakumi/gateway upstream-auth-keys   # UPSTREAM_AUTH_PUBLIC_KEY for the web app, UPSTREAM_AUTH_PRIVATE_KEY for the gateway only
 pnpm test                       # all workspace tests
 docker compose up -d            # postgres, payment-service, gateway, coworker, caddy
-pnpm --filter @hirakumi/price-api dev                                   # demo seller on :4100
+pnpm --filter @hirakumi/price-api dev                                   # demo seller on :4100 (fx-api: PORT=4101 pnpm --filter @hirakumi/fx-api dev)
 pnpm --filter @hirakumi/buyer run pack -- --api <apiId> --calls 10      # buy a pack, call with credits ("run": plain `pack` is pnpm's own command)
 pnpm --filter @hirakumi/buyer run escrow -- --api <apiId>                # one escrow job
 ```

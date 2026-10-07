@@ -100,6 +100,24 @@ services:
     expose:
       - "4100"
 
+  mika-api:
+    # A second demo seller (sellers/fx-api, "Mika's FX Rates") at its own address, mika.$PUBLIC_DOMAIN, for onboarding a
+    # fresh listing on camera while price.$PUBLIC_DOMAIN stays listed. Not part of Hirakumi itself.
+    build:
+      context: .
+      dockerfile: deploy/app.Dockerfile
+      args:
+        APP_DIR: sellers/fx-api
+    restart: unless-stopped
+    environment:
+      PORT: "4100"
+      PUBLIC_URL: https://mika.${PUBLIC_DOMAIN:?set PUBLIC_DOMAIN in .env}
+      API_TITLE: Mika's FX Rates
+      ADMIN_TOKEN: ${PRICE_ADMIN_TOKEN:?set PRICE_ADMIN_TOKEN in .env}
+      HIRAKUMI_CHALLENGE: ${MIKA_HIRAKUMI_CHALLENGE:-{}}
+    expose:
+      - "4100"
+
   caddy:
     image: caddy:2.11-alpine
     restart: unless-stopped
