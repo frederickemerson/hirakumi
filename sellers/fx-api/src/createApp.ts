@@ -1,7 +1,7 @@
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { isSupportedCurrency, RateUnavailableError, roundRate, SUPPORTED_CURRENCIES, type Currency, type RateSource } from "./rateSource.js";
-import { isBreakMode, BREAK_MODES, type BreakMode, type ModeStore } from "./modeStore.js";
+import { isBreakMode, BREAK_MODES, type BreakMode, type ModeStore, ReadOnlyModeError } from "./modeStore.js";
 import { buildOpenApi, DEFAULT_TITLE } from "./openapi.js";
 import { latestCode } from "./challenge.js";
 
@@ -131,7 +131,12 @@ export function createApp(deps: AppDeps): Express {
       res.status(400).json({ error: "invalid_mode", message: `mode must be one of ${BREAK_MODES.join(", ")}` });
       return;
     }
-    await deps.modes.set(mode);
+    try {
+      await deps.modes.set(mode);
+    } catch (e) {
+      if (e instanceof ReadOnlyModeError) { res.status(409).json({ error: "mode_read_only", message: e.message }); return; }
+      throw e;
+    }
     deps.log(`break mode set to ${mode}`);
     res.json({ mode });
   });
