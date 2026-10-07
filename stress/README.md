@@ -29,5 +29,4 @@ clean environment (never your `.env`), and stops them at the end. Ports: gateway
 | web | `web/` | Next.js route handlers called directly: auth bypass and forged sessions on every seller route, cross-site requests, Try it live / Buy / Ask rate limits under concurrent abuse and spoofed X-Forwarded-For, one-listing and delete races, sign-in replay, intake with hostile URLs and keys. |
 | live | `load/` | A gateway process under load: throughput and latency with exact credit accounting, a 60k mixed-call soak with RSS sampling, last-credit races, receipts of a heavy token, a flip-flopping seller, broken -> Down -> recovered, hybrid offers and paid retries, ownership re-check pause and restore under load. |
 
-Tests that document a known, unfixed problem are written as `it.fails(...)` with a `// BUG:` comment, so the suite
-stays green while the problem stays visible. Results of the live run are printed as `STRESS_RESULTS <json>`.
+Results of the live run are printed as `STRESS_RESULTS <json>`.
