@@ -6,7 +6,7 @@
 
 **You set a promise. AI agents pay only when you keep it.**
 
-Paste an API link. Hirakumi proves it is yours, sets a public promise from real test calls, and registers it as an agent on Masumi. Agents pay once with x402 on Cardano for a pack of 100 answers, and only good answers use credits. Large or risky packs wait in an Aiken smart contract that pays the seller only for answers the agent signed for.
+Hirakumi makes an existing API payable by AI agents from one link, with no change to the seller's code. Sign in with Google or email (UTXOS) or start from a Sokosumi task, prove ownership with one DNS record, and Hirakumi registers the API as an agent on Masumi. Agents pay once with x402 on Cardano for a pack of 100 answers; the gateway checks every answer against a public promise, so only good answers are paid for. Large packs wait in an Aiken smart contract that pays the seller only for answers the agent signed as good.
 
 Built for TOKEN2049 Origins, Cardano "Agentic Commerce" track. Live on Cardano preprod.
 
@@ -26,11 +26,11 @@ Submission material: [write-up](docs/submission/writeup.md) and [submission evid
 
 ## The problem
 
-Enterprises and institutions already run a lot of good APIs: prices, rates, weather, company and research data. AI agents want to buy exactly that, one answer at a time, but none of those APIs can sell to an agent.
-Selling on Masumi today means wrapping each API in an LLM agent, running a payment node, handling refunds and keeping status honest. Inside a large organization that is a real project: the code sits in siloed codebases owned by different teams, and every change to a production API needs review. So the data never gets sold.
-Even when someone builds the agent, there is no trust layer: the seller's own code decides whether an answer was good. And paying on chain for every answer costs about 40 cents for an answer worth a fraction of a cent.
+Enterprises and institutions sit on lots of good APIs. Making one payable by AI agents means new code inside big, siloed codebases: billing, wallets, refunds and an agent wrapper, each change waiting on security review and the next release. The average enterprise runs 897 applications with only 29% connected, and IT spends 39% of its time on custom integrations (MuleSoft, 2025). So most of these APIs never earn a cent from agents.
 
-Hirakumi doesn't touch their code. Ownership is proven with one DNS record, the API stays exactly as it is, and the trust layer, the payments and the Masumi listing are added around it.
+Even on Masumi, Cardano's marketplace for AI agents, buyers have no trust layer: they pay even for empty or stale answers, because the seller grades its own work. An AI can write you an agent, but it can't be its own trust layer.
+
+Hirakumi needs no change to the seller's code: one DNS record proves ownership, the API stays as it is, and the payments, the trust layer and the Masumi listing are added around it. It isn't only for enterprises: any developer with an API can make it ready to earn from agents within minutes.
 
 ## How it works
 
@@ -115,7 +115,7 @@ An AI can write you an agent, but it can't be its own trust layer.
 
 - **About 100x cheaper than paying for every call.** An on-chain payment per answer costs about 1.4 ADA (about 40 cents at 1 ADA = $0.28) and waits for a block. A pack spreads one payment over 100 answers: about 0.014 ADA (about 0.4 cents) per answer, and no wait per call.
 - **Web speed.** Paid calls through the gateway returned in about 0.3 s on preprod. Direct packs settled on chain in 16.5 s and 9.4 s.
-- **Revenue: a 3% fee** (`HIRAKUMI_FEE_BPS`, default 300), an output of the escrow contract, paid only on good answers.
+- **Revenue: a 3% fee** (`HIRAKUMI_FEE_BPS`, default 300), an output of the escrow contract, paid only on good answers, plus a small listing fee per API (planned).
 
 ## On-chain evidence (Cardano preprod)
 
