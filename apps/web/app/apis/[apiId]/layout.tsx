@@ -32,11 +32,11 @@ async function loadSteps(apiId: string): Promise<string | null> {
 
 export default async function ApiLayout({ children, params }: { children: ReactNode; params: Promise<{ apiId: string }> }) {
   const { apiId } = await params;
-  const stepHref = await loadSteps(apiId);
+  const [stepHref, own] = await Promise.all([loadSteps(apiId), loadOwnApi(apiId)]);
   return (
     // min-w-0 keeps wide code blocks scrolling inside the page instead of widening it.
     <div className="min-w-0 space-y-6">
-      <ApiNav apiId={apiId} stepHref={stepHref} />
+      <ApiNav apiId={apiId} stepHref={stepHref} live={own?.state === "live"} />
       {/* Moving to the next step crossfades the step card (globals.css, .step-card). */}
       <ViewTransition name="api-step" default="step-card">
         <div>{children}</div>

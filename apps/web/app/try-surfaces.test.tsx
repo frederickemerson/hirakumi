@@ -43,8 +43,8 @@ async function liveApi(health: Health, id?: string) {
   return apiId;
 }
 
-const expectTryLink = (apiId: string) =>
-  expect(screen.getAllByRole("link", { name: "Try it live" }).map((a) => a.getAttribute("href"))).toContain(`/p/${apiId}/try`);
+const expectTryLink = (apiId: string, href = `/p/${apiId}/try`) =>
+  expect(screen.getAllByRole("link", { name: "Try it live" }).map((a) => a.getAttribute("href"))).toContain(href);
 const expectDisabledTry = () => {
   expect(screen.queryByRole("link", { name: "Try it live" })).toBeNull();
   const button = screen.getAllByRole("button", { name: "Try it live" })[0];
@@ -76,11 +76,11 @@ describe("Try it live on every live-API surface", () => {
     expectTryLink(DEMO_API_ID);
   });
 
-  it("seller overview", async () => {
+  it("seller overview: the seller's own Try it live", async () => {
     const { default: Page } = await import("./apis/[apiId]/overview/page");
     const apiId = await liveApi("healthy");
     render(await Page({ params: Promise.resolve({ apiId }) }));
-    expectTryLink(apiId);
+    expectTryLink(apiId, `/apis/${apiId}/try`);
   });
 
   it("seller overview while Down", async () => {
@@ -95,7 +95,7 @@ describe("Try it live on every live-API surface", () => {
     const apiId = await liveApi("healthy");
     await seedApi(session.sellerId, "intake", { name: "Draft API" });
     render(await Page());
-    expect(screen.getAllByRole("link", { name: "Try it live" }).map((a) => a.getAttribute("href"))).toEqual([`/p/${apiId}/try`]);
+    expect(screen.getAllByRole("link", { name: "Try it live" }).map((a) => a.getAttribute("href"))).toEqual([`/apis/${apiId}/try`]);
   });
 
   it("landing hero and footer point at the demo API's try page", async () => {
@@ -126,11 +126,12 @@ describe("a status-only promise is labelled for buyers", () => {
     render(await PublicPage({ params: Promise.resolve({ apiId }) }));
     expect(screen.getByTestId("status-only")).toHaveTextContent(STATUS_ONLY_LABEL);
     cleanup();
-    render(await TryPage({ params: Promise.resolve({ apiId }) }));
-    expect(screen.getByTestId("status-only")).toHaveTextContent(STATUS_ONLY_LABEL);
-    cleanup();
     await resetDb();
     await liveTextApi(DEMO_API_ID);
+    // The public try page has a console only for the showcase (TRY_LIVE_APIS, default the demo API).
+    render(await TryPage({ params: Promise.resolve({ apiId: DEMO_API_ID }) }));
+    expect(screen.getByTestId("status-only")).toHaveTextContent(STATUS_ONLY_LABEL);
+    cleanup();
     const { default: Demo } = await import("./demo/page");
     render(await Demo());
     expect(screen.getByTestId("status-only")).toHaveTextContent(STATUS_ONLY_LABEL);

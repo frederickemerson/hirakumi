@@ -76,7 +76,7 @@ function prefersReducedMotion(): boolean {
   return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReason = null, liveBuy = false }: {
+export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReason = null, liveBuy = false, paths, noPackNote, buyNote, onPackChange }: {
   apiId: string;
   ops: TryOp[];
   /** A pack with credits left when the page loaded, or null: then the first step is "Buy a pack live". */
@@ -87,7 +87,17 @@ export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReas
   downReason?: string | null;
   /** A featured API (TRY_LIVE_APIS): the demo wallet may buy it a pack. Elsewhere only an existing pack is used. */
   liveBuy?: boolean;
+  /** Where calls and the demo purchase go; default the public routes. The seller's own Try it live has its own. */
+  paths?: { call: string; buy: string };
+  /** Shown instead of the buy button when there is no pack and no demo purchase (the seller's wallet payment). */
+  noPackNote?: React.ReactNode;
+  /** Replaces the note under "Buy a pack live". */
+  buyNote?: React.ReactNode;
+  /** Told when the pack's credits change or it runs out (null). */
+  onPackChange?: (pack: TryPackView | null) => void;
 }) {
+  const callPath = paths?.call ?? `/api/try/${encodeURIComponent(apiId)}`;
+  const buyPath = paths?.buy ?? `/api/try/${encodeURIComponent(apiId)}/buy`;
   const [opIndex, setOpIndex] = useState(0);
   const op = ops[opIndex];
   const [values, setValues] = useState<Record<string, string>>(() => initialValues(op));
@@ -96,7 +106,16 @@ export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReas
   const [now, setNow] = useState(() => Date.now());
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<Outcome[]>([]);
-  const [pack, setPack] = useState<TryPackView | null>(initialPack);
+  const [pack, setPackState] = useState<TryPackView | null>(initialPack);
+  const onPackRef = useRef(onPackChange);
+  onPackRef.current = onPackChange;
+  const setPack = (next: TryPackView | null | ((p: TryPackView | null) => TryPackView | null)) => {
+    setPackState((p) => {
+      const v = typeof next === "function" ? next(p) : next;
+      if (v !== p) queueMicrotask(() => onPackRef.current?.(v));
+      return v;
+    });
+  };
   const [purchase, setPurchase] = useState<Purchase | null>(null);
   const [settlement, setSettlement] = useState<{ mode: "direct" | "escrow"; reasons: string[] } | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -137,7 +156,7 @@ export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReas
     setBusy("call");
     setCallStartedAt(Date.now());
     try {
-      const res = await fetch(`/api/try/${encodeURIComponent(apiId)}`, {
+      const res = await fetch(callPath, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ opId: op.opId, method: op.method, input }),
@@ -170,7 +189,7 @@ export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReas
     let bought: TryPackView | null = null;
     let finished = false;
     try {
-      const res = await fetch(`/api/try/${encodeURIComponent(apiId)}/buy`, { method: "POST", signal: controller.signal });
+      const res = await fetch(buyPath, { method: "POST", signal: controller.signal });
       if (!res.ok || !res.body) {
         const data = (await res.json().catch(() => ({}))) as { error?: string };
         setPurchase(null);
@@ -285,7 +304,7 @@ export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReas
                 </label>
               ))}
               <div className="space-y-3 pt-1">
-                {noLive ? (
+                {noLive && noPackNote ? noPackNote : noLive ? (
                   <p id="try-pack-note" role="note" className="text-body text-graphite">
                     Live purchases are funded by Hirakumi&apos;s demo wallet, so they&apos;re on featured APIs only.
                     Agents buy with their own wallet: see the{" "}
@@ -319,7 +338,7 @@ export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReas
                           </>
                         )}
                       </>
-                    ) : (
+                    ) : buyNote ? buyNote : (
                       <>
                         A real x402 payment{packPrice ? ` of ${formatTusdm(packPrice.priceMicros)} tUSDM for ${packPrice.calls} calls` : ""} on Cardano preprod,
                         from Hirakumi&apos;s demo wallet. Hirakumi settles it direct or in escrow and says why. Settles in 20 to 60 s, then

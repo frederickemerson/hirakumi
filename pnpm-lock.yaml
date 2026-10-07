@@ -176,6 +176,9 @@ importers:
       '@base-ui/react':
         specifier: 1.8.0
         version: 1.8.0(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@evolution-sdk/evolution':
+        specifier: 0.5.17
+        version: 0.5.17
       '@fabianbormann/cardano-peer-connect':
         specifier: 1.2.21
         version: 1.2.21
@@ -191,6 +194,12 @@ importers:
       '@meshsdk/core-cst':
         specifier: 1.9.1
         version: 1.9.1(@harmoniclabs/bytestring@1.0.0)(@harmoniclabs/crypto@0.2.5)(rxjs@7.8.2)
+      '@x402/cardano':
+        specifier: 2.26.0
+        version: 2.26.0
+      '@x402/core':
+        specifier: 2.26.0
+        version: 2.26.0
       class-variance-authority:
         specifier: 0.7.1
         version: 0.7.1

@@ -19,6 +19,8 @@ export type TryDeps = {
   budget: (apiId: string, token: string) => Promise<string | null>;
   /** IOU state for escrow packs. Without it an escrow pack is refused (nothing could be signed for it). */
   escrow?: TryEscrowStore;
+  /** Where the receipt links to; default the public pack's receipts. */
+  receiptsUrl?: (apiId: string) => string;
   fetchImpl?: typeof fetch;
   now?: () => number;
 };
@@ -96,7 +98,7 @@ export function createTryHandler(d: TryDeps) {
       creditsLeft: creditsRemaining,
       // The gateway logs sha256(token id + ";" + body) for the answer it sent; this is the same hash over what we got.
       outputHash: res.status === 200 ? outputHash(pack.creditTokenId, text) : null,
-      receiptsUrl: receiptsPath(apiId),
+      receiptsUrl: (d.receiptsUrl ?? receiptsPath)(apiId),
       ...(escrow ? { escrow } : {}),
     };
     return json({ status: res.status, latencyMs, creditsRemaining, result, receipt, body, contentType: contentType || null, request: { method, url: call.url } });

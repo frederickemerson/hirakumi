@@ -9,7 +9,7 @@ import { LiveProgress } from "@/components/live-progress";
 import { RetireButton } from "@/components/retire-button";
 import { PackSalesTable } from "@/components/sales-tables";
 import { EmptyState, WaitingState } from "@/components/states";
-import { TryLiveLink } from "@/components/try-live-link";
+import { sellerTryHref, TryLiveLink } from "@/components/try-live-link";
 import { UpstreamAuthForm } from "@/components/upstream-auth-form";
 import { OverviewStatGrid } from "@/components/stat";
 import { formatTime } from "@/lib/copy";
@@ -65,7 +65,7 @@ export default async function OverviewPage({ params }: { params: Promise<{ apiId
           <h1 className="text-h font-medium uppercase">{api.name}</h1>
           <HealthBadge state={api.state} health={api.health} checkedAt={api.healthCheckedAt} />
         </div>
-        <TryLiveLink apiId={apiId} state={api.state} health={api.health} />
+        <TryLiveLink apiId={apiId} state={api.state} health={api.health} href={sellerTryHref(apiId)} />
       </div>
 
       {api.state === "live" && (

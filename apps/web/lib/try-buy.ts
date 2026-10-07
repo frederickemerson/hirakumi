@@ -12,15 +12,18 @@ export function createBuyHandler(d: {
   gatewayInternalUrl: string;
   internalToken: string;
   allow: (key: string) => boolean;
+  /** The gateway route; default the public showcase's. A seller's free test uses /internal/demo/self-test. */
+  gatewayPath?: (apiId: string) => string;
   fetchImpl?: typeof fetch;
 }) {
+  const path = d.gatewayPath ?? ((apiId: string) => `/internal/demo/buy-pack/${encodeURIComponent(apiId)}`);
   const doFetch = d.fetchImpl ?? fetch;
   return async (req: Request, apiId: string): Promise<Response> => {
     if (!sameOrigin(req)) return errorJson(403, "Cross-site request refused.");
     if (!d.allow(visitorKey(req))) return errorJson(429, "One purchase at a time, please. Wait a moment and try again.");
     let res: Response;
     try {
-      res = await doFetch(`${d.gatewayInternalUrl.replace(/\/+$/, "")}/internal/demo/buy-pack/${encodeURIComponent(apiId)}`, {
+      res = await doFetch(`${d.gatewayInternalUrl.replace(/\/+$/, "")}${path(apiId)}`, {
         method: "POST",
         headers: { authorization: `Bearer ${d.internalToken}`, accept: "application/x-ndjson" },
         signal: AbortSignal.timeout(TIMEOUT_MS),

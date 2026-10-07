@@ -19,7 +19,7 @@ describe("LiveMoment", () => {
     const url = "https://preprod.cardanoscan.io/token/abc";
     const { unmount } = render(<LiveMoment apiId="api_1" liveSince={liveSince} registryUrl={url} />);
     expect(await screen.findByRole("heading", { name: "Your API is live" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Try it live" })).toHaveAttribute("href", "/p/api_1/try");
+    expect(screen.getByRole("link", { name: "Try it live" })).toHaveAttribute("href", "/apis/api_1/try");
     expect(screen.getByRole("link", { name: "See the registry token on Cardanoscan" })).toHaveAttribute("href", url);
     unmount();
     render(<LiveMoment apiId="api_1" liveSince={liveSince} registryUrl={url} />);

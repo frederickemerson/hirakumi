@@ -4,8 +4,9 @@ import { notFound } from "next/navigation";
 import { HealthBadge } from "@/components/health-badge";
 import { RegistryCard } from "@/components/registry-card";
 import { TryConsole, type TryOp } from "@/components/try-console";
-import { TRY_DOWN_REASON } from "@/components/try-live-link";
+import { sellerTryHref, TRY_DOWN_REASON } from "@/components/try-live-link";
 import { getSql } from "@/lib/db";
+import { readPageSession } from "@/lib/page-auth";
 import { loadLiveApi } from "@/lib/public-api";
 import { env } from "@/lib/env";
 import { getPack } from "@/lib/repo/packs";
@@ -26,6 +27,12 @@ export default async function TryApiPage({ params }: { params: Promise<{ apiId: 
   const sql = getSql();
   const api = await loadLiveApi(apiId);
   if (!api) notFound();
+  // Public Try it live is the showcase only (TRY_LIVE_APIS): Hirakumi's demo wallet pays, so no wallet is needed.
+  // Any other API: buyers buy with their own wallet, and its seller tests it from the dashboard.
+  if (!isLiveBuyApi(apiId)) {
+    const session = await readPageSession();
+    return <BuyYourOwn apiId={apiId} name={api.name} owner={session?.sellerId === api.sellerId} />;
+  }
   const [rows, rules, pack, offer] = await Promise.all([
     listTryOperations(sql, apiId), listLatestRules(sql, apiId), findTryPack(sql, apiId, envTryToken(apiId)), getPack(sql, apiId),
   ]);
@@ -62,6 +69,31 @@ export default async function TryApiPage({ params }: { params: Promise<{ apiId: 
         liveBuy={isLiveBuyApi(apiId)}
       />
       <RegistryCard agentIdentifier={api.agentIdentifier} agentBaseUrl={`${env.publicBaseUrl()}/a/${apiId}`} />
+    </section>
+  );
+}
+
+/** A live API that isn't a showcase: how a buyer pays, and for its seller, where to test it. */
+function BuyYourOwn({ apiId, name, owner }: { apiId: string; name: string; owner: boolean }) {
+  return (
+    <section className="space-y-8">
+      <div className="space-y-3">
+        <p className="text-caption font-medium uppercase tracking-[0.06em] text-graphite">
+          <Link href={`/p/${apiId}`} className="underline-offset-4 hover:underline">{name}</Link> / Try it live
+        </p>
+        <h1 className="text-h font-normal uppercase sm:text-h-lg">Try {name} live</h1>
+      </div>
+      <div className="max-w-2xl space-y-4 rounded-[2px] border-2 border-ink bg-frost p-5 sm:p-6" data-testid="buy-your-own">
+        <p className="text-body-lg">
+          To call this API, your agent buys a credit pack with its own wallet over x402. A credit is used only when the answer keeps the promise.
+        </p>
+        <Link href={`/p/${apiId}#buyer-snippet`} className="inline-block text-body underline underline-offset-4">See the buyer code</Link>
+        {owner && (
+          <p className="border-t border-ink pt-4 text-body">
+            This is your API. <Link href={sellerTryHref(apiId)} className="underline underline-offset-4">Test it from your dashboard</Link>.
+          </p>
+        )}
+      </div>
     </section>
   );
 }

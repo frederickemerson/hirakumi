@@ -3,7 +3,7 @@ import Link from "next/link";
 import { RefreshingDeleteApiButton } from "@/components/delete-api-button";
 import { HealthBadge } from "@/components/health-badge";
 import { EmptyState } from "@/components/states";
-import { TryLiveLink } from "@/components/try-live-link";
+import { sellerTryHref, TryLiveLink } from "@/components/try-live-link";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { shortAddress, STATE_LABEL } from "@/lib/copy";
@@ -44,7 +44,7 @@ export default async function ApisPage() {
                 ) : (
                   <ApiStatusBadge state={a.state} health={a.health} stopped={stopped.has(a.id)} />
                 )}
-                <TryLiveLink apiId={a.id} state={a.state} health={a.health} variant="outline" size="sm" />
+                <TryLiveLink apiId={a.id} state={a.state} health={a.health} variant="outline" size="sm" href={sellerTryHref(a.id)} />
                 <RefreshingDeleteApiButton api={{ id: a.id, name: a.name, state: a.state, recordsKept: recordsKept.get(a.id) ?? null }} />
               </div>
             </li>

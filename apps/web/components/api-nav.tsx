@@ -10,8 +10,9 @@ const STEP_PAGE = /\/(endpoints|ownership|review)$/;
  * Tab strip for one API's pages. The current tab is filled ink, like the product frame's tabs.
  * "Listing steps" links straight to the current step's page: the one being viewed, or the one the
  * layout worked out from the API's state. stepHref is null once the API is live or retired: no tab then.
+ * "Try it live" (the seller testing their own API) shows while the API is live.
  */
-export function ApiNav({ apiId, stepHref }: { apiId: string; stepHref: string | null }) {
+export function ApiNav({ apiId, stepHref, live = false }: { apiId: string; stepHref: string | null; live?: boolean }) {
   const pathname = usePathname();
   const onStep = STEP_PAGE.test(pathname);
   const links = [
@@ -20,6 +21,8 @@ export function ApiNav({ apiId, stepHref }: { apiId: string; stepHref: string | 
       : [{ href: onStep ? pathname : stepHref, label: "Listing steps", active: onStep || pathname === `/apis/${apiId}` }]),
     { href: `/apis/${apiId}/overview`, label: "Overview", active: pathname.endsWith("/overview") },
     { href: `/apis/${apiId}/sales`, label: "Sales", active: pathname.endsWith("/sales") },
+    // The seller's own Try it live, for a live API only.
+    ...(live ? [{ href: `/apis/${apiId}/try`, label: "Try it live", active: pathname.endsWith("/try") }] : []),
   ];
   return (
     <nav aria-label="This API" className="flex flex-wrap items-center gap-x-6 gap-y-3 text-caption font-semibold uppercase tracking-[0.04em]">

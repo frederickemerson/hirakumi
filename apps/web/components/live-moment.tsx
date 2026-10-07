@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Mascot } from "@/components/brand/mascot";
-import { TryLiveLink } from "@/components/try-live-link";
+import { sellerTryHref, TryLiveLink } from "@/components/try-live-link";
 import { buttonVariants } from "@/components/ui/button";
 import type { Health } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -74,7 +74,7 @@ export function LiveMoment({ apiId, liveSince, registryUrl, health = "healthy" }
             It is registered on Masumi, and agents can buy call packs now. Each pack locks in escrow and pays you per answer that kept the promise.
           </p>
           <div className="flex flex-col gap-4 animate-rise [animation-delay:200ms] sm:flex-row sm:items-center">
-            <TryLiveLink apiId={apiId} state="live" health={health} />
+            <TryLiveLink apiId={apiId} state="live" health={health} href={sellerTryHref(apiId)} />
             {registryUrl && (
               <a href={registryUrl} target="_blank" rel="noreferrer" className={cn(buttonVariants({ variant: "link" }), "text-body")}>
                 See the registry token on Cardanoscan
