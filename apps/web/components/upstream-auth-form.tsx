@@ -15,6 +15,7 @@ export type UpstreamAuthSetting = { in: Placement; name: string; hint: string };
 export type UpstreamAuthHint = { in: Placement; name: string; prefix?: string };
 
 const PLACE_LABEL: Record<Placement, string> = { header: "header", query: "query parameter" };
+export const QUERY_KEY_WARNING = "A key in the address can leak in logs and error messages. Use a header if your API accepts one.";
 
 /** "X-API-Key in header, ending in WXYZ". Short keys have no hint. */
 export function describeSetting(s: UpstreamAuthSetting): string {
@@ -34,13 +35,15 @@ type Status = { kind: "idle" } | { kind: "saving" } | { kind: "removing" } | { k
  * The optional key the gateway sends to the seller's API. The key goes to Hirakumi once, is sealed for the
  * gateway, and is never shown again: only where it goes and its last 4 characters come back.
  */
-export function UpstreamAuthForm({ apiId, initial, hint, title = "Does your API need a key?", retriesTests = false }: {
+export function UpstreamAuthForm({ apiId, initial, hint, title = "Does your API need a key?", retriesTests = false, notice }: {
   apiId: string;
   initial: UpstreamAuthSetting | null;
   hint: UpstreamAuthHint | null;
   title?: string;
   /** After failed test calls: a saved or removed key runs them again, so the page refreshes to show them. */
   retriesTests?: boolean;
+  /** A problem with the stored key the gateway reported (the API's address changed since it was saved, say). */
+  notice?: string;
 }) {
   const router = useRouter();
   const [current, setCurrent] = useState(initial);
@@ -106,6 +109,7 @@ export function UpstreamAuthForm({ apiId, initial, hint, title = "Does your API 
         sent only to this API&apos;s own address, and it is never shown again.
       </p>
       {retriesTests && <p className="text-body">When you save or remove the key, the test calls run again.</p>}
+      {notice && status.kind !== "saved" && <InlineError>{notice}</InlineError>}
       {hint && !current && (
         <p className="text-caption text-graphite">Your API description asks for a key in the {PLACE_LABEL[hint.in]} {hint.name}.</p>
       )}
@@ -129,6 +133,7 @@ export function UpstreamAuthForm({ apiId, initial, hint, title = "Does your API 
             {tab("header")}
             {tab("query")}
           </div>
+          {place === "query" && <p className="text-body" role="note" data-testid="query-key-warning">{QUERY_KEY_WARNING}</p>}
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <label htmlFor={`upstream-auth-name-${apiId}`} className="block text-body font-medium">

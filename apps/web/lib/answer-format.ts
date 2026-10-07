@@ -1,18 +1,11 @@
 /*
  * Answers are JSON or text (CSV, XML, plain text...). A promise's definition names the media type every good
- * answer has (@hirakumi/core rules.ts). These mirror its helpers without importing @hirakumi/core, which pulls in
- * node:crypto and must stay out of client components.
+ * answer has (@hirakumi/core rules.ts). The media type helpers come from "@hirakumi/core/media-types", which has no
+ * Node imports, so client components can use them.
  */
+import { isJsonMediaType, mediaTypeOf } from "@hirakumi/core/media-types";
 
-/** The media type of a Content-Type header, lowercased without parameters. */
-export function mediaTypeOf(contentType: string | null | undefined): string {
-  return (contentType ?? "").split(";")[0].trim().toLowerCase();
-}
-
-/** application/json and any +json type. */
-export function isJsonMediaType(ct: string): boolean {
-  return ct === "application/json" || /^application\/[a-z0-9.!#$&^_-]+\+json$/.test(ct);
-}
+export { isJsonMediaType, isMarkupMediaType, isTextMediaType, mediaTypeOf } from "@hirakumi/core/media-types";
 
 /** The media type a promise checks (rules.definition.contentType). Rules from before text answers are JSON. */
 export function promiseMediaType(definition: unknown): string {
@@ -38,4 +31,17 @@ export function answerFormatLabel(ct: string): string {
 export function promiseFormatNote(definition: unknown): string | null {
   const ct = promiseMediaType(definition);
   return isJsonMediaType(ct) ? null : `Answers are ${answerFormatLabel(ct)} (${ct}), checked as text.`;
+}
+
+/**
+ * Why a text promise needs a phrase every good answer contains (or a pinned header) before publishing: a promise
+ * that only checks the status would let an error page sent with status 200 count as a good answer.
+ */
+export const WHY_PHRASE = "Without a phrase, an error page sent with status 200 could count as a good answer.";
+
+/** The 409 publishing returns while any text promise only checks the status, naming those endpoints. Null if none. */
+export function statusOnlyRefusal(promises: { method: string; path: string; statusOnly: boolean }[]): string | null {
+  const open = promises.filter((p) => p.statusOnly).map((p) => `${p.method.toUpperCase()} ${p.path}`);
+  if (open.length === 0) return null;
+  return `Add a phrase every good answer contains for ${open.join(", ")} before publishing. ${WHY_PHRASE}`;
 }

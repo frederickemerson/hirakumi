@@ -33,14 +33,14 @@ describe("inferRuleFromResponses", () => {
     expect(def.contentType).toBe("application/vnd.api+json");
     const rule = compileRule(def);
     expect(rule.check(res('{"data":{"id":"2"}}', "application/vnd.api+json")).pass).toBe(true);
-    expect(rule.check(res('{"errors":[]}', "application/vnd.api+json")).reasons).toEqual(["/data is missing"]);
+    expect(rule.check(res('{"errors":[]}', "application/vnd.api+json")).reasons).toEqual(["/ looks like an error response", "/data is missing"]);
   });
 
   it("builds a text promise: media type, 2xx and a non-empty body", () => {
     const def = inferRuleFromResponses([res("ADA 0.35", "text/plain"), res("BTC 62000", "text/plain")], res("unknown symbol", "text/plain", 404));
     expect(def).toEqual({
       version: 1, status: { min: 200, max: 299 }, contentType: "text/plain",
-      schema: { type: "string", minLength: 1, pattern: "\\S", not: { pattern: "^\\s*<(?:![Dd][Oo][Cc][Tt][Yy][Pp][Ee]\\s+[Hh][Tt][Mm][Ll]|[Hh][Tt][Mm][Ll])" } },
+      schema: { type: "string", minLength: 1, pattern: "\\S", not: { anyOf: [{ pattern: expect.any(String) }, { maxLength: 199, pattern: expect.any(String) }, ...Array.from({ length: 6 }, () => ({ pattern: expect.any(String) }))] } },
     });
     const rule = compileRule(def);
     expect(rule.check(res("ETH 3000", "text/plain; charset=utf-8")).pass).toBe(true);
@@ -75,7 +75,6 @@ describe("inferRuleFromResponses", () => {
     expect(html.check(res("<!DOCTYPE html><p>ok</p>", "text/html")).pass).toBe(true);
     const xml = compileRule(inferRuleFromResponses([res("<feed/>", "application/atom+xml")]));
     expect(xml.check(res("<html/>", "application/atom+xml")).pass).toBe(true);
-    // A text error sent with 2xx and no markup ("Rate limit exceeded") still passes: the status code is the signal.
     expect(plain.check(res("Rate limit exceeded", "text/plain", 429)).pass).toBe(false);
   });
 
@@ -84,9 +83,10 @@ describe("inferRuleFromResponses", () => {
     const def = inferRuleFromResponses(same);
     expect(def.schema.pattern).toBe("\\S");
     expect(compileRule(def).check(res("ADA 0.36\nupdated now\n", "text/plain")).pass).toBe(true);
-    // Two different bodies that share the first line do.
-    const two = inferRuleFromResponses([...same, res("ADA 0.35\nupdated later\n", "text/plain")]);
-    expect(two.schema.pattern).toBe("^ADA 0\\.35\\r?\\n");
+    // Two different bodies that share a header-like first line do.
+    const header = (rest: string) => res(`symbol price (usd)\n${rest}\n`, "text/plain");
+    const two = inferRuleFromResponses([header("ADA 0.35"), header("ADA 0.36")]);
+    expect(two.schema.pattern).toBe("^symbol price \\(usd\\)\\r?\\n");
   });
 
   it("JSON sent as text/json is parsed and checked as JSON", () => {

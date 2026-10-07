@@ -2,7 +2,7 @@ const API_ID = /^api_[A-Za-z0-9]+$/;
 
 /**
  * Hirakumi ownership codes for this demo seller, from HIRAKUMI_CHALLENGE = {"api_xxx":"hkv_..."}.
- * The code is served as `x-hirakumi-verify` at the root of /openapi.json. One spec carries one code,
+ * The code is sent as the X-Hirakumi-Verify header on every answer. One header carries one code,
  * so the latest one set wins: the last entry here, or the last one PUT to /admin/challenge/:apiId.
  */
 export function parseChallenges(raw: string | undefined, log: (msg: string) => void): Record<string, string> {

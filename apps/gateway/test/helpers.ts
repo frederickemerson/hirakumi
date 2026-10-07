@@ -13,13 +13,18 @@ export type StubMode = "ok" | "empty" | "stale" | "error500" | "slow" | "html" |
 export type StubUpstream = {
   origin: string;
   setMode(m: StubMode): void;
-  /** Serve `body` at `path` (any path but /price), e.g. the seller's OpenAPI file. A Buffer is sent byte for byte. */
-  setFile(path: string, body: string | Buffer, opts?: { status?: number; contentType?: string; headers?: Record<string, string> }): void;
+  /**
+   * Serve `body` at `path` (any path but /price; "/" is the root), e.g. the seller's OpenAPI file. A Buffer is sent
+   * byte for byte. A header given as a list is sent once per value.
+   */
+  setFile(path: string, body: string | Buffer, opts?: { status?: number; contentType?: string; headers?: Record<string, string | string[]> }): void;
   fileHits(path: string): number;
   hits(): number;
   lastHeaders(): http.IncomingHttpHeaders | null;
   /** Path and query of the last request, to any path. */
   lastUrl(): string | null;
+  /** The request headers of the last request a setFile path answered. */
+  lastFileHeaders(): http.IncomingHttpHeaders | null;
   close(): Promise<void>;
 };
 
@@ -29,7 +34,8 @@ export async function startStubUpstream(): Promise<StubUpstream> {
   let hits = 0;
   let last: http.IncomingHttpHeaders | null = null;
   let lastUrl: string | null = null;
-  const files = new Map<string, { body: string | Buffer; status: number; headers: Record<string, string> }>();
+  let lastFile: http.IncomingHttpHeaders | null = null;
+  const files = new Map<string, { body: string | Buffer; status: number; headers: Record<string, string | string[]> }>();
   const fileHits = new Map<string, number>();
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://stub");
@@ -37,6 +43,7 @@ export async function startStubUpstream(): Promise<StubUpstream> {
     const file = files.get(url.pathname);
     if (file) {
       fileHits.set(url.pathname, (fileHits.get(url.pathname) ?? 0) + 1);
+      lastFile = req.headers;
       res.writeHead(file.status, file.headers); res.end(file.body); return;
     }
     if (url.pathname !== "/price") { res.writeHead(404); res.end(); return; }
@@ -70,6 +77,7 @@ export async function startStubUpstream(): Promise<StubUpstream> {
     hits: () => hits,
     lastHeaders: () => last,
     lastUrl: () => lastUrl,
+    lastFileHeaders: () => lastFile,
     close: () => new Promise((r) => { server.closeAllConnections(); server.close(() => r()); }),
   };
 }

@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { generateUpstreamAuthKeys, openUpstreamSecret, type StoredUpstreamAuth } from "@hirakumi/core";
+import { generateUpstreamAuthKeys, openUpstreamSecret, UpstreamAddressChangedError, type StoredUpstreamAuth } from "@hirakumi/core";
 import { getSql } from "@/lib/db";
 import { GatewayError, setGatewayForTests, type Gateway } from "@/lib/gateway";
 import { deleteApi } from "@/lib/repo/delete-api";
 import { getAuthHint, getUpstreamAuth } from "@/lib/repo/upstream-auth";
 import type { Api, Seller } from "@/lib/types";
 import { resetDb } from "@/test/db";
-import { seedApi, seedOnboardStep, seedSeller } from "@/test/factories";
+import { seedApi, seedOnboardStep, seedOperation, seedSeller } from "@/test/factories";
 import { cookieFor, ctx, jsonRequest } from "@/test/requests";
 import { POST as retire } from "../retire/route";
 import { DELETE, POST } from "./route";
@@ -60,21 +60,25 @@ describe("upstream auth", () => {
     vi.unstubAllEnvs();
   });
 
-  it("seals the key so only the gateway's private key opens it, for this API only, and never echoes it", async () => {
+  it("seals the key so only the gateway's private key opens it, for this API, header and address only, and never echoes it", async () => {
     const res = await save({ in: "header", name: "X-API-Key", value: KEY });
     expect(res.status).toBe(200);
     const text = await res.text();
     expect(JSON.parse(text)).toEqual({ in: "header", name: "X-API-Key", hint: "WXYZ" });
     expect(text).not.toContain(KEY);
-    expect(text).not.toContain("hks1");
+    expect(text).not.toContain("hks2");
 
     const row = await storedRow();
     expect(row).toMatchObject({ in: "header", name: "X-API-Key", hint: "WXYZ" });
     expect(typeof row).toBe("object"); // jsonb object, not a JSON string
     expect(JSON.stringify(row)).not.toContain(KEY);
-    expect(openUpstreamSecret(keys.privateKey, api.id, row!.sealed)).toBe(KEY);
-    expect(() => openUpstreamSecret(keys.privateKey, "api_other", row!.sealed)).toThrow();
-    expect(() => openUpstreamSecret(generateUpstreamAuthKeys().privateKey, api.id, row!.sealed)).toThrow();
+    expect(row!.sealed.startsWith("hks2.")).toBe(true);
+    const where = { apiId: api.id, in: "header" as const, name: "X-API-Key", origin: api.origin, pathPrefix: api.pathPrefix };
+    expect(openUpstreamSecret(keys.privateKey, where, row!.sealed)).toBe(KEY);
+    expect(() => openUpstreamSecret(keys.privateKey, { ...where, apiId: "api_other" }, row!.sealed)).toThrow();
+    expect(() => openUpstreamSecret(keys.privateKey, { ...where, name: "X-Other" }, row!.sealed)).toThrow();
+    expect(() => openUpstreamSecret(keys.privateKey, { ...where, pathPrefix: "/elsewhere" }, row!.sealed)).toThrow(UpstreamAddressChangedError);
+    expect(() => openUpstreamSecret(generateUpstreamAuthKeys().privateKey, where, row!.sealed)).toThrow();
     expect(reload).toHaveBeenCalledWith(api.id);
   });
 
@@ -112,6 +116,28 @@ describe("upstream auth", () => {
     expect((await save({ in: "cookie", name: "k", value: KEY })).status).toBe(400);
     expect(await storedRow()).toBeNull();
     expect(reload).not.toHaveBeenCalled();
+  });
+
+  it("refuses a key buyers can already see in the example requests or an endpoint's examples", async () => {
+    const message = "This key appears in your example requests or endpoint examples, where buyers can see it. Remove it there first.";
+    const fromSamples = await seedApi(seller.id, "endpoints_confirmed", {
+      origin: "https://keyed.example.dev", samples: { base: "https://keyed.example.dev", lines: `GET /price?symbol=ADA&k=${encodeURIComponent(KEY)}` },
+    });
+    const res = await save({ in: "query", name: "k", value: KEY }, cookie, fromSamples.id);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: message });
+    expect(await storedRow(fromSamples.id)).toBeNull();
+
+    const op = await seedOperation(api.id);
+    await getSql()`update operations set input_schema = ${getSql().json({ properties: { token: { type: "string", examples: [`Bearer ${KEY}`] } } })} where id = ${op.id}`;
+    const fromExamples = await save({ in: "header", name: "Authorization", value: `Bearer ${KEY}` });
+    expect(fromExamples.status).toBe(400);
+    expect(await fromExamples.json()).toEqual({ error: message });
+    expect(await storedRow()).toBeNull();
+    expect(reload).not.toHaveBeenCalled();
+
+    // A different key is fine.
+    expect((await save({ in: "header", name: "X-API-Key", value: "another-key-1234567890-ABCD" })).status).toBe(200);
   });
 
   it("answers 503 in plain words when sealing isn't configured", async () => {

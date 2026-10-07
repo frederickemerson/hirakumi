@@ -10,6 +10,16 @@ export function parseBearer(header: string | undefined): string | null {
   return m ? m[1] : null;
 }
 
+/**
+ * Headers for any answer that carries a seller's body (paid calls, previews, escrow job output): the browser must not
+ * guess another type than the one sent (an HTML or SVG answer labelled text/plain), and a page opened from it gets
+ * a sandbox with no scripts, forms or loads.
+ */
+export const SELLER_BODY_HEADERS = {
+  "x-content-type-options": "nosniff",
+  "content-security-policy": "sandbox; default-src 'none'",
+} as const;
+
 export function ruleUrl(cfg: Pick<GatewayConfig, "publicBaseUrl">, hash: string): string {
   return `${cfg.publicBaseUrl}/r/${hash}`;
 }

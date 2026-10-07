@@ -3,7 +3,8 @@ import type { StructuredCall } from "../src/llm/claude.js";
 import { mapReplyToChoice, type Offered } from "../src/llm/replyChoice.js";
 import { stepPrefix } from "../src/humanSteps.js";
 import {
-  findLinks, findSampleLines, findSamplesIntake, formatCommand, isOnlySamples, LinkError, looksLikeOpenApiLink, looksLikeSecret, parseCommand, tusdmToMicros, validateOpenApiUrl,
+  callsLinkASpec, findLinks, findSampleLines, findSamplesIntake, formatCommand, isOnlySamples, likelySpecLink, LinkError, linksToProbe, looksLikeOpenApiLink, looksLikeSecret,
+  parseCommand, tusdmToMicros, validateOpenApiUrl,
 } from "../src/sokosumi/replies.js";
 
 describe("validateOpenApiUrl (same rules as the web setup form)", () => {
@@ -116,21 +117,30 @@ describe("samples intake (any API, no OpenAPI file)", () => {
     expect(findSampleLines("see //comment and https://x.dev/a")).toEqual([]);
   });
 
-  it("is a samples intake only with a base URL, at least one line, and no OpenAPI link", () => {
+  it("is a samples intake only with a base URL and at least one line (whether a link is an OpenAPI file is fetched, not guessed)", () => {
     expect(findSamplesIntake("Base: https://api.x.dev/v1\nGET /price?symbol=ADA\nGET /history?days?=7"))
       .toEqual({ base: "https://api.x.dev/v1", lines: "GET /price?symbol=ADA\nGET /history?days?=7" });
     expect(findSamplesIntake("GET /price?symbol=ADA")).toBeNull();
     expect(findSamplesIntake("https://api.x.dev/v1 and nothing else")).toBeNull();
-    expect(findSamplesIntake("https://api.x.dev/openapi.json\nGET /price?symbol=ADA")).toBeNull();
+    expect(findSamplesIntake("https://api.x.dev/openapi.json\nGET /price?symbol=ADA")).toEqual({ base: "https://api.x.dev/openapi.json", lines: "GET /price?symbol=ADA" });
   });
 
   it.each([
-    "My spec: https://raw.githubusercontent.com/acme/api/main/spec\nEndpoints:\n- GET /pets\n- GET /pets/{petId}",
-    "https://gist.githubusercontent.com/u/abc/raw/petstore\n`/pets`",
-    "Spec: https://api.example.com/v1/spec\n/price is the main endpoint",
-    "https://api.example.com/v1/spec\nGET /quote",
-    "Here is our OpenAPI: https://api.example.com/v1/petstore\nGET /pets",
-  ])("leaves a message with a link that may be an OpenAPI file to the link flow: %j", (text) => expect(findSamplesIntake(text)).toBeNull());
+    ["My spec: https://raw.githubusercontent.com/acme/api/main/spec\nEndpoints:\n- GET /pets\n- GET /pets/{petId}", "https://raw.githubusercontent.com/acme/api/main/spec"],
+    ["https://gist.githubusercontent.com/u/abc/raw/petstore\n`/pets`", "https://gist.githubusercontent.com/u/abc/raw/petstore"],
+    ["Spec: https://api.example.com/v1/spec\n/price is the main endpoint", "https://api.example.com/v1/spec"],
+    ["https://api.example.com/v1/spec\nGET /quote", "https://api.example.com/v1/spec"],
+    ["Here is our OpenAPI: https://api.example.com/v1/petstore\nGET /pets", "https://api.example.com/v1/petstore"],
+  ])("a link that may be an OpenAPI file is fetched first, and a fetch error is the answer: %j", (text, link) => {
+    expect(linksToProbe(text)[0]).toBe(link);
+    expect(likelySpecLink(link) || callsLinkASpec(text)).toBe(true);
+  });
+
+  it("orders links to fetch: likely OpenAPI files first, documentation last", () => {
+    expect(linksToProbe("Docs: https://docs.example.com/guide\nAPI: https://api.example.com/v1\nand https://api.example.com/api-json"))
+      .toEqual(["https://api.example.com/api-json", "https://api.example.com/v1", "https://docs.example.com/guide"]);
+    expect(linksToProbe("https://api.example.com/v1\nGET /fetch?url=https://example.org/page")).toEqual(["https://api.example.com/v1"]);
+  });
 
   it("still reads a base URL with plain paths as samples, also when the seller says there is no spec", () => {
     expect(findSamplesIntake("https://api.x.dev/v1\nGET /price")).toEqual({ base: "https://api.x.dev/v1", lines: "GET /price" });
@@ -163,9 +173,13 @@ describe("samples intake (any API, no OpenAPI file)", () => {
     expect(isOnlySamples("")).toBe(false);
   });
 
-  it.each(["https://x.dev/openapi.json", "https://x.dev/spec.yaml", "https://x.dev/v3/api-docs", "https://x.dev/swagger"])("treats %s as an OpenAPI link", (l) => {
+  it.each([
+    "https://x.dev/openapi.json", "https://x.dev/spec.yaml", "https://x.dev/v3/api-docs", "https://x.dev/swagger", "https://x.dev/api-json",
+    "https://x.dev/docs/json", "https://x.dev/api/v1/oas", "https://x.dev/swagger/v1/swagger.json", "https://x.dev/openapi",
+  ])("guesses %s is an OpenAPI link (fetched first)", (l) => {
     expect(looksLikeOpenApiLink(l)).toBe(true);
   });
+  it("guesses a last segment such as /spec is an OpenAPI link", () => expect(likelySpecLink("https://x.dev/v1/spec")).toBe(true));
   it("treats a plain base URL as a base URL", () => expect(looksLikeOpenApiLink("https://api.x.dev/v1")).toBe(false));
 });
 

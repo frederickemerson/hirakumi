@@ -1,4 +1,4 @@
-import { newId, ruleHash, type RuleDefinition } from "@hirakumi/core";
+import { isStatusOnlyRule, newId, ruleHash, type RuleDefinition } from "@hirakumi/core";
 import type pg from "pg";
 import { withTx } from "../db.js";
 import { PermanentError } from "../errors.js";
@@ -10,7 +10,7 @@ import { writeRuleText } from "../llm/ruleText.js";
 import { enqueueMessage } from "../messages.js";
 import type { InputSchema } from "../openapi/parse.js";
 import { buildBadInput, buildGoodInputs } from "../qa/inputs.js";
-import { MIN_CALLS, NeedsKeyError, qaOperation } from "../qa/runQa.js";
+import { MIN_CALLS, NeedsKeyError, qaOperation, type GoodAnswer } from "../qa/runQa.js";
 import { finishStep, getStep, runStep, saveStepOutput, type StepOutcome } from "../steps.js";
 
 export type QaDeps = { pool: pg.Pool; gateway: GatewayClient; llm: StructuredCall; webBaseUrl: string; now?: () => Date };
@@ -27,6 +27,27 @@ async function sellerSamples(pool: pg.Pool, apiId: string): Promise<Record<strin
     if (Array.isArray(list)) clean[opId] = list.filter((x): x is Record<string, unknown> => !!x && typeof x === "object" && !Array.isArray(x));
   }
   return clean;
+}
+
+/** Suggested required phrases by op id: onboard_steps(step='qa').output.suggestedPhrases (the review page prefills them). */
+export type SuggestedPhrases = Record<string, string>;
+
+function savedSuggestions(output: Record<string, unknown> | null | undefined): SuggestedPhrases {
+  const saved = output?.suggestedPhrases;
+  if (!saved || typeof saved !== "object" || Array.isArray(saved)) return {};
+  return Object.fromEntries(Object.entries(saved).filter((e): e is [string, string] => typeof e[1] === "string"));
+}
+
+/**
+ * Good text answers by op id: onboard_steps(step='qa').output.goodAnswers. The review page checks a phrase the
+ * seller types against them (apps/web lib/repo/rules.ts addRequiredPhrase).
+ */
+export type GoodAnswers = Record<string, GoodAnswer[]>;
+
+function savedGoodAnswers(output: Record<string, unknown> | null | undefined): GoodAnswers {
+  const saved = output?.goodAnswers;
+  if (!saved || typeof saved !== "object" || Array.isArray(saved)) return {};
+  return Object.fromEntries(Object.entries(saved).filter((e): e is [string, GoodAnswer[]] => Array.isArray(e[1])));
 }
 
 /** Live sub-progress for the seller's timeline: onboard_steps(step='qa').output.progress. */
@@ -93,6 +114,10 @@ export async function qaStep(deps: QaDeps, apiId: string): Promise<StepOutcome> 
     );
     const hasRule = new Set(ruled.map((r) => r.operation_id));
     const total = ops.filter((o) => !hasRule.has(o.id)).reduce((n, o) => n + plannedCalls(o, samples[o.op_id] ?? []), 0);
+    // Read before the progress writes start; they only merge into the output, so saved suggestions survive a crash.
+    const previous = await getStep(deps.pool, apiId, "qa");
+    const suggestedPhrases = savedSuggestions(previous?.output);
+    const goodAnswers = savedGoodAnswers(previous?.output);
     const counted = withProgress(deps, apiId, total);
     const summaries: OpQaSummary[] = [];
     const forText: { opId: string; description: string | null; rule: RuleDefinition }[] = [];
@@ -119,6 +144,11 @@ export async function qaStep(deps: QaDeps, apiId: string): Promise<StepOutcome> 
         for (const input of r.testInputs) {
           await c.query(`insert into test_inputs (id, operation_id, input) values ($1, $2, $3::jsonb)`, [newId("ti"), op.id, JSON.stringify(input)]);
         }
+        if (r.suggestedPhrase) suggestedPhrases[op.op_id] = r.suggestedPhrase;
+        else delete suggestedPhrases[op.op_id];
+        if (r.goodAnswers.length) goodAnswers[op.op_id] = r.goodAnswers;
+        else delete goodAnswers[op.op_id];
+        await saveStepOutput(c, apiId, "qa", { suggestedPhrases, goodAnswers });
       });
       exampleOutput ??= r.exampleOutput;
       forText.push({ opId: op.op_id, description: op.description, rule: r.rule });
@@ -127,7 +157,7 @@ export async function qaStep(deps: QaDeps, apiId: string): Promise<StepOutcome> 
 
     await counted.flush();
     const text = await writeRuleText(deps.llm, { apiName: api.name, ops: forText });
-    const previous = await getStep(deps.pool, apiId, "qa");
+    const phrases = phraseLines(forText, suggestedPhrases);
     await withTx(deps.pool, async (c) => {
       for (const op of ops) {
         await c.query(`update rules set plain_english = $2 where operation_id = $1 and version = 1 and plain_english is null`, [op.id, text.texts.get(op.op_id)]);
@@ -139,10 +169,12 @@ export async function qaStep(deps: QaDeps, apiId: string): Promise<StepOutcome> 
         listing: text.listing,
         exampleOutput: exampleOutput ?? (previous?.output?.exampleOutput as string | undefined) ?? null,
         usedFallbackText: text.usedFallback,
+        suggestedPhrases,
+        goodAnswers,
       });
       await enqueueMessage(c, {
         apiId,
-        body: `${qaSummaryLine(summaries)} Your promise to buyers: ${[...text.texts.values()].join(" ")}` +
+        body: `${qaSummaryLine(summaries)} Your promise to buyers: ${[...text.texts.values()].join(" ")}${phrases.map((l) => ` ${l}`).join("")}` +
           (api.sokosumi_task_id
             ? ` Suggested price: ${formatTusdm(SUGGESTED_PACK.priceMicros)} tUSDM for ${SUGGESTED_PACK.calls} calls. Reply \`price ${formatTusdm(SUGGESTED_PACK.priceMicros)}\` to accept it, or another amount (like \`price 3.5 for 200 calls\`). ` +
               `Then approve publishing with your wallet (one signature): ${reviewLink(deps.webBaseUrl, apiId)}`
@@ -165,4 +197,20 @@ export function qaSummaryLine(summaries: OpQaSummary[]): string {
       ? " and a wrong request was correctly rejected"
       : `, and a wrong request was correctly rejected on ${rejected} of ${summaries.length} endpoints`;
   return `Test calls done: ${totalCalls} calls across ${summaries.length} endpoint(s) all passed${bad}.`;
+}
+
+/**
+ * What the seller must do about status-only text promises (core isStatusOnlyRule) before publishing, one line per
+ * such operation: confirm or change the suggested phrase, or type one when QA found none. Publishing is refused
+ * until each has a phrase.
+ */
+export function phraseLines(ops: { opId: string; rule: RuleDefinition }[], suggested: SuggestedPhrases): string[] {
+  const statusOnly = ops.filter((o) => isStatusOnlyRule(o.rule));
+  const one = ops.length === 1;
+  return statusOnly.map(({ opId }) => {
+    const phrase = suggested[opId];
+    if (phrase) return `${one ? "Every" : `For ${opId}, every`} good answer will have to contain ${JSON.stringify(phrase)}. Change it on the review page.`;
+    return `${one ? "This promise" : `The promise for ${opId}`} only checks the status, so it needs a phrase before you can publish. ` +
+      "Add one on the review page: a word or label every good answer contains, like Price or Symbol. Capital letters don't matter.";
+  });
 }

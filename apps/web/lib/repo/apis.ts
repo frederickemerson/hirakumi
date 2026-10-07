@@ -6,17 +6,31 @@ import type { Sql } from "../db";
 import { recordsKeptReason } from "../api-delete";
 import type { Api, ApiState, OnboardStep } from "../types";
 import { API_DELETE_ORDER, registerStartedSql, soldSql } from "./delete-api";
+import { hasAnyApiSchema } from "./schema";
 
 export const API_COLUMNS = [
-  "id", "seller_id", "name", "origin", "openapi_url", "intake_kind", "state", "health",
+  "id", "seller_id", "name", "origin", "path_prefix", "openapi_url", "intake_kind", "state", "health",
   "health_checked_at", "escrow_op_id", "agent_identifier", "created_at",
 ];
+/** Before migration 0014 there is no intake_kind: every API then came from an OpenAPI link (lib/repo/schema.ts). */
+const LEGACY_API_COLUMNS = API_COLUMNS.filter((c) => c !== "intake_kind");
 
 /**
- * What the seller gave: an OpenAPI link, or (any API) a base URL and example requests. For the latter,
- * openapiUrl is the ownership proof file in the base folder (@hirakumi/core samples.ts).
+ * The select list for an Api row, on either side of migration 0014 (anyApi: hasAnyApiSchema). Synchronous on
+ * purpose: a fragment is a thenable, so returning it from an async function would run it as a query.
  */
-export type ApiInput = { sellerId: string; name: string; origin: string; openapiUrl: string; samples?: { base: string; lines: string } };
+export function apiColumns(sql: Sql | postgres.TransactionSql, anyApi: boolean) {
+  return anyApi ? sql`${sql(API_COLUMNS)}` : sql`${sql(LEGACY_API_COLUMNS)}, 'openapi'::text as intake_kind`;
+}
+
+/**
+ * What the seller gave: an OpenAPI link (hosted anywhere; openapiUrl set, origin is the link's and only a
+ * placeholder until the parse step sets it from servers[0]), or (any API) a base URL and example requests
+ * (openapiUrl null, origin from the base, which is final).
+ */
+export type ApiInput =
+  | { sellerId: string; name: string; origin: string; openapiUrl: string; samples?: undefined }
+  | { sellerId: string; name: string; origin: string; openapiUrl: null; samples: { base: string; lines: string } };
 
 /** The samples as a jsonb parameter (an object, not a JSON string), or null for an OpenAPI link. */
 const samplesOf = (tx: postgres.TransactionSql, input: ApiInput) => (input.samples ? tx.json(input.samples as postgres.JSONValue) : null);
@@ -26,38 +40,54 @@ export async function createApi(
   input: ApiInput,
 ): Promise<{ api: Api; created: boolean } | { takenByOther: true }> {
   return sql.begin(async (tx) => {
-    // Serialise double submits of the same link by the same seller.
-    await tx`select pg_advisory_xact_lock(hashtext(${`${input.sellerId}|${input.openapiUrl}`}))`;
+    // Serialise double submits of the same link (or the same samples base) by the same seller.
+    await tx`select pg_advisory_xact_lock(hashtext(${`${input.sellerId}|${intakeKey(input)}`}))`;
+    const anyApi = await hasAnyApiSchema(tx);
+    const cols = apiColumns(tx, anyApi);
     // Audit I1: an API whose onboarding failed for good is not "the same API" any more: pasting the link
     // again (after fixing the API) must start over, or the seller is stuck on the failure forever.
     const [existing] = await tx<Api[]>`
-      select ${tx(API_COLUMNS)} from apis
-      where seller_id = ${input.sellerId} and openapi_url = ${input.openapiUrl} and state <> 'retired'
-        and samples is not distinct from ${samplesOf(tx, input)}::jsonb
+      select ${cols} from apis
+      where seller_id = ${input.sellerId} and state <> 'retired' and ${sameIntake(tx, input, anyApi)}
         and not exists (select 1 from onboard_steps s where s.api_id = apis.id and s.status = 'failed')
       order by created_at desc limit 1`;
     if (existing) return { api: existing, created: false };
     if (await isTakenEarly(tx, input)) return { takenByOther: true as const };
-    if (input.samples) await eraseEarlierSamples(tx, input);
-    const [api] = await tx<Api[]>`
-      insert into apis (id, seller_id, name, origin, openapi_url, intake_kind, samples)
-      values (${newId("api")}, ${input.sellerId}, ${input.name}, ${input.origin}, ${input.openapiUrl},
-              ${input.samples ? "samples" : "openapi"}, ${samplesOf(tx, input)})
-      returning ${tx(API_COLUMNS)}`;
+    if (input.samples) await eraseEarlierSamples(tx, input.sellerId, input.samples.base);
+    const [api] = anyApi
+      ? await tx<Api[]>`
+        insert into apis (id, seller_id, name, origin, openapi_url, intake_kind, samples)
+        values (${newId("api")}, ${input.sellerId}, ${input.name}, ${input.origin}, ${input.openapiUrl},
+                ${input.samples ? "samples" : "openapi"}, ${samplesOf(tx, input)})
+        returning ${cols}`
+      : await tx<Api[]>`
+        insert into apis (id, seller_id, name, origin, openapi_url)
+        values (${newId("api")}, ${input.sellerId}, ${input.name}, ${input.origin}, ${input.openapiUrl})
+        returning ${cols}`;
     return { api, created: true };
   });
 }
 
+/** What makes two submits "the same API": the OpenAPI link, or the samples base (samples APIs have no link). */
+const intakeKey = (input: ApiInput) => (input.samples ? `samples|${input.samples.base}` : `openapi|${input.openapiUrl}`);
+
+/** Before migration 0014 (anyApi false) every API came from a link; callers refuse samples then (lib/repo/schema.ts). */
+const sameIntake = (tx: postgres.TransactionSql, input: ApiInput, anyApi: boolean) => (!anyApi
+  ? tx`openapi_url = ${input.openapiUrl}`
+  : input.samples
+    ? tx`intake_kind = 'samples' and samples = ${samplesOf(tx, input)}::jsonb`
+    : tx`intake_kind = 'openapi' and openapi_url = ${input.openapiUrl} and samples is null`);
+
 /**
  * Corrected example requests for the same base URL replace the earlier ones: the earlier API is erased while
  * nothing about it was chosen yet (before the endpoints are confirmed), so the seller doesn't end up with two APIs
- * sharing one proof file, of which only one can be proven. Same rule as with an OpenAPI link, where resubmitting
- * returns the one API. An API on a Sokosumi task is left alone: the task tracks it.
+ * on one base, of which only one can be listed. Same rule as with an OpenAPI link, where resubmitting returns the
+ * one API. An API on a Sokosumi task is left alone: the task tracks it.
  */
-async function eraseEarlierSamples(tx: postgres.TransactionSql, input: ApiInput): Promise<void> {
+async function eraseEarlierSamples(tx: postgres.TransactionSql, sellerId: string, base: string): Promise<void> {
   const earlier = await tx<{ id: string }[]>`
     select id from apis
-    where seller_id = ${input.sellerId} and openapi_url = ${input.openapiUrl} and intake_kind = 'samples'
+    where seller_id = ${sellerId} and intake_kind = 'samples' and samples->>'base' = ${base}
       and state in ('intake', 'parsed', 'described') and sokosumi_task_id is null and deleted_at is null
     for update`;
   for (const { id } of earlier) {
@@ -71,11 +101,14 @@ export const queryOn = (sql: Sql | postgres.TransactionSql): QueryFn =>
   (text, params) => sql.unsafe(text, params as postgres.ParameterOrJSON<never>[]);
 
 /**
- * Early, advisory: another account already lists a base this link can only lead to (one API, one listing).
- * The check at proof of ownership (finalizeOwnership) is the authority.
+ * Early, advisory: another account already lists this base (one API, one listing). Only for example requests,
+ * whose base the seller just gave. An OpenAPI link says nothing about the base any more (the file may be hosted
+ * anywhere; servers[0] decides), so the parse step and the check at proof of ownership (finalizeOwnership) decide.
  */
-async function isTakenEarly(sql: Sql | postgres.TransactionSql, input: { sellerId: string; origin: string; openapiUrl: string }): Promise<boolean> {
-  return takenEarly(input, await listActiveOnOrigin(queryOn(sql), input.origin));
+async function isTakenEarly(sql: Sql | postgres.TransactionSql, input: ApiInput): Promise<boolean> {
+  if (!input.samples) return false;
+  const pathPrefix = new URL(input.samples.base).pathname;
+  return takenEarly({ sellerId: input.sellerId, origin: input.origin, pathPrefix }, await listActiveOnOrigin(queryOn(sql), input.origin));
 }
 
 /**
@@ -115,28 +148,35 @@ export async function createApiForTask(
     const [other] = await tx`select 1 from apis where sokosumi_task_id = ${task.taskId} and seller_id <> ${input.sellerId} limit 1`;
     if (other) return { claimedByOther: true as const };
     await tx`update sellers set sokosumi_user_id = ${task.sokosumiUserId} where id = ${input.sellerId} and sokosumi_user_id is null`;
+    const anyApi = await hasAnyApiSchema(tx);
+    const cols = apiColumns(tx, anyApi);
     const [linked] = await tx<Api[]>`
-      select ${tx(API_COLUMNS)} from apis where sokosumi_task_id = ${task.taskId} and seller_id = ${input.sellerId} and state <> 'retired'
+      select ${cols} from apis where sokosumi_task_id = ${task.taskId} and seller_id = ${input.sellerId} and state <> 'retired'
         and not exists (select 1 from onboard_steps s where s.api_id = apis.id and s.status = 'failed')
       order by created_at desc limit 1`;
     if (linked) return { api: linked, created: false };
     if (await isTakenEarly(tx, input)) return { takenByOther: true as const };
-    const [api] = await tx<Api[]>`
-      insert into apis (id, seller_id, name, origin, openapi_url, intake_kind, samples, sokosumi_task_id)
-      values (${newId("api")}, ${input.sellerId}, ${input.name}, ${input.origin}, ${input.openapiUrl},
-              ${input.samples ? "samples" : "openapi"}, ${samplesOf(tx, input)}, ${task.taskId})
-      returning ${tx(API_COLUMNS)}`;
+    const [api] = anyApi
+      ? await tx<Api[]>`
+        insert into apis (id, seller_id, name, origin, openapi_url, intake_kind, samples, sokosumi_task_id)
+        values (${newId("api")}, ${input.sellerId}, ${input.name}, ${input.origin}, ${input.openapiUrl},
+                ${input.samples ? "samples" : "openapi"}, ${samplesOf(tx, input)}, ${task.taskId})
+        returning ${cols}`
+      : await tx<Api[]>`
+        insert into apis (id, seller_id, name, origin, openapi_url, sokosumi_task_id)
+        values (${newId("api")}, ${input.sellerId}, ${input.name}, ${input.origin}, ${input.openapiUrl}, ${task.taskId})
+        returning ${cols}`;
     return { api, created: true };
   });
 }
 
 export async function getApiForSeller(sql: Sql, apiId: string, sellerId: string): Promise<Api | null> {
-  const [row] = await sql<Api[]>`select ${sql(API_COLUMNS)} from apis where id = ${apiId} and seller_id = ${sellerId} and deleted_at is null`;
+  const [row] = await sql<Api[]>`select ${apiColumns(sql, await hasAnyApiSchema(sql))} from apis where id = ${apiId} and seller_id = ${sellerId} and deleted_at is null`;
   return row ?? null;
 }
 
 export async function getLiveApi(sql: Sql, apiId: string): Promise<Api | null> {
-  const [row] = await sql<Api[]>`select ${sql(API_COLUMNS)} from apis where id = ${apiId} and state = 'live'`;
+  const [row] = await sql<Api[]>`select ${apiColumns(sql, await hasAnyApiSchema(sql))} from apis where id = ${apiId} and state = 'live'`;
   return row ?? null;
 }
 
@@ -158,7 +198,7 @@ export async function listRecordsKept(sql: Sql, sellerId: string): Promise<Map<s
 }
 
 export async function listApisForSeller(sql: Sql, sellerId: string): Promise<Api[]> {
-  return sql<Api[]>`select ${sql(API_COLUMNS)} from apis where seller_id = ${sellerId} and deleted_at is null order by created_at desc`;
+  return sql<Api[]>`select ${apiColumns(sql, await hasAnyApiSchema(sql))} from apis where seller_id = ${sellerId} and deleted_at is null order by created_at desc`;
 }
 
 /** Conditional transition: succeeds only from one of `from`, so double clicks and races can't skip a step. */

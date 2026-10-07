@@ -94,6 +94,7 @@ describe("inferRule", () => {
         symbol: { type: "string" },
         updatedAt: { type: "string", maxAgeSeconds: 900 },
       },
+      not: { anyOf: [{ required: ["error"] }, { required: ["errors"] }, { required: ["exception"] }, { required: ["fault"] }] },
     });
   });
   it("inferred freshness tolerates a lagging price feed (6 min) but fails stale data (1 h) — contract v1.1 B2", () => {
@@ -120,6 +121,7 @@ describe("inferRule", () => {
   it("types mixed values as a type list and needs at least one sample", () => {
     expect(inferRule([{ v: 1 }, { v: "1" }]).schema).toEqual({
       type: "object", required: ["v"], properties: { v: { type: ["number", "string"] } },
+      not: { anyOf: [{ required: ["error"] }, { required: ["errors"] }, { required: ["exception"] }, { required: ["fault"] }] },
     });
     expect(() => inferRule([])).toThrow(/at least one/);
   });

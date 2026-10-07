@@ -1,11 +1,13 @@
 import { env } from "./env";
 import type { PackSettlement } from "./settlement";
 
-/** Why the OpenAPI check passed or failed (apps/gateway/src/internal.ts OwnershipReason). */
+/** Why the header check passed or failed (apps/gateway/src/internal.ts OwnershipReason). */
 export type ChallengeReason =
-  | "verified" | "no_code" | "bad_url" | "origin_mismatch" | "outside_directory" | "redirect" | "blocked"
-  | "timeout" | "too_large" | "unreachable" | "http_status" | "unreadable" | "missing" | "mismatch";
-/** The OpenAPI check: triedUrl is the API's openapi_url; status is the HTTP status when the fetch got one. */
+  | "verified" | "no_code" | "bad_url" | "blocked" | "timeout" | "unreachable" | "too_large" | "missing" | "mismatch";
+/**
+ * The ownership check: one GET to the API's base URL, looking for the X-Hirakumi-Verify header. triedUrl is that
+ * base URL; status is the HTTP status when the request got one (any status may carry the header).
+ */
 export type ChallengeCheck = { ok: boolean; reason: ChallengeReason; triedUrl: string; detail: string; status?: number };
 export type GatewayHealth = { health: "healthy" | "down"; checkedAt: string | null; lastReasons: string[] };
 export type Gateway = {

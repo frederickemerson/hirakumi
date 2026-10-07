@@ -78,3 +78,12 @@ export function formatTime(d: Date | string): string {
 export function plural(n: number, noun: string, many = `${noun}s`): string {
   return `${n} ${n === 1 ? noun : many}`;
 }
+
+/**
+ * The API's base URL, origin + path_prefix, exactly as the gateway's ownership check requests it ("" and "/" give
+ * origin + "/"). Only meaningful once the parse step has set both (state "parsed" on). Same as apiBaseUrl in
+ * @hirakumi/core, kept here because client components import this file and core is server only.
+ */
+export function apiBaseUrl(api: { origin: string; pathPrefix: string }): string {
+  return `${api.origin.replace(/\/+$/, "")}${api.pathPrefix === "" ? "/" : api.pathPrefix}`;
+}

@@ -14,7 +14,8 @@ type Mode = "openapi" | "samples";
 
 const SAMPLES_PLACEHOLDER = "GET /price?symbol=ADA\nGET /coins/{id=cardano}?vs=usd&days?=7\nPOST /search {\"q\": \"ada\"}";
 
-export function SetupForm({ initialUrl, setupToken }: { initialUrl: string; setupToken?: string }) {
+/** samples: offer the "I don't" option (example requests); off until SAMPLES_INTAKE is on (lib/repo/schema.ts). */
+export function SetupForm({ initialUrl, setupToken, samples: samplesOn = false }: { initialUrl: string; setupToken?: string; samples?: boolean }) {
   const router = useRouter();
   const [mode, setMode] = useState<Mode>("openapi");
   const [url, setUrl] = useState(initialUrl);
@@ -57,16 +58,20 @@ export function SetupForm({ initialUrl, setupToken }: { initialUrl: string; setu
 
   return (
     <form onSubmit={submit} aria-busy={busy || undefined} className="space-y-5 rounded-[2px] border-2 border-ink bg-frost p-6 sm:p-8">
-      <div role="radiogroup" aria-label="How to describe your API" className="flex flex-wrap gap-2">
-        {tab("openapi", "I have an OpenAPI file")}
-        {tab("samples", "I don't")}
-      </div>
-      {mode === "openapi" ? (
+      {samplesOn && (
+        <div role="radiogroup" aria-label="How to describe your API" className="flex flex-wrap gap-2">
+          {tab("openapi", "I have an OpenAPI file")}
+          {tab("samples", "I don't")}
+        </div>
+      )}
+      {mode === "openapi" || !samplesOn ? (
         <div className="space-y-2">
           <label htmlFor="openapi-url" className="block text-body font-medium">OpenAPI link</label>
           <Input id="openapi-url" type="text" inputMode="url" placeholder="https://example.com/openapi.json"
             value={url} onChange={(e) => setUrl(e.target.value)} disabled={busy} />
-          <p className="text-caption text-graphite">An https link to an OpenAPI 3 file, JSON or YAML.</p>
+          <p className="text-caption text-graphite">
+            An https link to an OpenAPI 3 file, JSON or YAML. It can be hosted anywhere, GitHub too. If it isn&apos;t on your API&apos;s host, its first servers entry must be your API&apos;s full URL.
+          </p>
         </div>
       ) : (
         <>

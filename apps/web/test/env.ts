@@ -10,4 +10,5 @@ export const TEST_ENV: Record<string, string> = {
   WEB_BASE_URL: "https://web.hirakumi.test",
   ALLOW_INSECURE_UPSTREAM: "0",
   CHAT_FALLBACK: "1",
+  SAMPLES_INTAKE: "1", // listing from example requests is on; tests that need it off stub it
 };

@@ -1,31 +1,61 @@
 import { describe, expect, it } from "vitest";
 import {
-  answerLeaksSecret, generateUpstreamAuthKeys, openUpstreamSecret, redactUpstreamSecret, sealUpstreamSecret, textLeaksSecret, UpstreamAuthError,
-  upstreamSecretHint, upstreamSecretParts, validateUpstreamAuth,
+  answerLeaksSecret, generateUpstreamAuthKeys, keyAppearsIn, openUpstreamSecret, redactUpstreamSecret, sealUpstreamSecret, textLeaksSecret,
+  UpstreamAddressChangedError, UpstreamAuthError, upstreamSecretContext, upstreamSecretHint, upstreamSecretParts, validateUpstreamAuth,
+  WITHHELD_TEXT, type UpstreamSecretContext,
 } from "../src/upstreamAuth";
 
 const keys = generateUpstreamAuthKeys();
 const SECRET = "sk_live_0123456789abcdef";
 
+const CTX: UpstreamSecretContext = { apiId: "api_1", in: "header", name: "X-API-Key", origin: "https://api.example.com", pathPrefix: "/v1" };
+
 describe("sealed upstream keys", () => {
-  it("round-trips for the same API, and every seal is different", () => {
-    const a = sealUpstreamSecret(keys.publicKey, "api_1", SECRET);
-    const b = sealUpstreamSecret(keys.publicKey, "api_1", SECRET);
+  it("round-trips for the same context, and every seal is different", () => {
+    const a = sealUpstreamSecret(keys.publicKey, CTX, SECRET);
+    const b = sealUpstreamSecret(keys.publicKey, CTX, SECRET);
     expect(a).not.toBe(b);
     expect(a).not.toContain(SECRET);
-    expect(openUpstreamSecret(keys.privateKey, "api_1", a)).toBe(SECRET);
+    expect(a.startsWith("hks2.")).toBe(true);
+    expect(openUpstreamSecret(keys.privateKey, CTX, a)).toBe(SECRET);
+    // The same place written another way: header names in any case, a trailing slash, a default port.
+    expect(openUpstreamSecret(keys.privateKey, { ...CTX, name: "x-api-key", origin: "https://API.example.com:443/", pathPrefix: "/v1/" }, a)).toBe(SECRET);
   });
 
-  it("does not open for another API, another private key, or after tampering", () => {
-    const sealed = sealUpstreamSecret(keys.publicKey, "api_1", SECRET);
-    expect(() => openUpstreamSecret(keys.privateKey, "api_2", sealed)).toThrow(UpstreamAuthError);
-    expect(() => openUpstreamSecret(generateUpstreamAuthKeys().privateKey, "api_1", sealed)).toThrow(UpstreamAuthError);
+  it("does not open for another API, placement, name, private key, or after tampering", () => {
+    const sealed = sealUpstreamSecret(keys.publicKey, CTX, SECRET);
+    for (const other of [{ apiId: "api_2" }, { in: "query" as const }, { name: "X-Other-Key" }]) {
+      expect(() => openUpstreamSecret(keys.privateKey, { ...CTX, ...other }, sealed), JSON.stringify(other)).toThrow(UpstreamAuthError);
+      expect(() => openUpstreamSecret(keys.privateKey, { ...CTX, ...other }, sealed)).not.toThrow(UpstreamAddressChangedError);
+    }
+    expect(() => openUpstreamSecret(generateUpstreamAuthKeys().privateKey, CTX, sealed)).toThrow(UpstreamAuthError);
     const parts = sealed.split(".");
-    const ct = Buffer.from(parts[3], "base64url");
+    const ct = Buffer.from(parts[4], "base64url");
     ct[0] ^= 1;
-    parts[3] = ct.toString("base64url");
-    expect(() => openUpstreamSecret(keys.privateKey, "api_1", parts.join("."))).toThrow(UpstreamAuthError);
-    expect(() => openUpstreamSecret(keys.privateKey, "api_1", "nope")).toThrow(UpstreamAuthError);
+    parts[4] = ct.toString("base64url");
+    expect(() => openUpstreamSecret(keys.privateKey, CTX, parts.join("."))).toThrow(UpstreamAuthError);
+    expect(() => openUpstreamSecret(keys.privateKey, CTX, "nope")).toThrow(UpstreamAuthError);
+    // A key sealed in the old format (no address) is not read.
+    expect(() => openUpstreamSecret(keys.privateKey, CTX, ["hks1", ...parts.slice(2)].join("."))).toThrow(UpstreamAuthError);
+  });
+
+  it("says when the API's origin or path prefix changed since sealing", () => {
+    const sealed = sealUpstreamSecret(keys.publicKey, CTX, SECRET);
+    for (const moved of [{ origin: "https://evil.example.com" }, { pathPrefix: "/v2" }, { pathPrefix: "" }, { origin: "http://api.example.com" }]) {
+      expect(() => openUpstreamSecret(keys.privateKey, { ...CTX, ...moved }, sealed), JSON.stringify(moved)).toThrow(UpstreamAddressChangedError);
+    }
+    // Swapping in the address tag of the new address does not help: the address is in the associated data too.
+    const moved = { ...CTX, pathPrefix: "/v2" };
+    const tag = sealUpstreamSecret(keys.publicKey, moved, "x".repeat(8)).split(".")[1];
+    const forged = sealed.split(".");
+    forged[1] = tag;
+    expect(() => openUpstreamSecret(keys.privateKey, moved, forged.join("."))).toThrow(UpstreamAuthError);
+    expect(() => openUpstreamSecret(keys.privateKey, moved, forged.join("."))).not.toThrow(UpstreamAddressChangedError);
+  });
+
+  it("binds a canonical, versioned context", () => {
+    expect(upstreamSecretContext(CTX)).toBe('["hks2","api_1","header","x-api-key","https://api.example.com","/v1"]');
+    expect(upstreamSecretContext({ ...CTX, in: "query", name: "Api_Key", pathPrefix: "/" })).toBe('["hks2","api_1","query","Api_Key","https://api.example.com",""]');
   });
 });
 
@@ -119,5 +149,69 @@ describe("answerLeaksSecret and hint", () => {
   it("shows the last 4 characters only for long keys", () => {
     expect(upstreamSecretHint(SECRET)).toBe("cdef");
     expect(upstreamSecretHint("12345678")).toBe("");
+  });
+});
+
+describe("leaks in other encodings (normalised text and base64 tokens)", () => {
+  const value = "abc/def+ghi=jkl";
+  const c = { in: "query" as const, name: "k", value };
+
+  it("finds ASP.NET style \\u00XX escapes of every character, in any case", () => {
+    const aspnet = [...value].map((ch) => (/[a-z0-9]/i.test(ch) ? ch : `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0").toUpperCase()}`)).join("");
+    expect(aspnet).toBe("abc\\u002Fdef\\u002Bghi\\u003Djkl");
+    expect(answerLeaksSecret(`{"echo":"${aspnet}"}`, c)).toBe(true);
+    const all = [...value].map((ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`).join("");
+    expect(answerLeaksSecret(`{"echo":"${all}"}`, c)).toBe(true);
+  });
+
+  it("finds decimal and hex HTML entities for every character", () => {
+    const dec = [...value].map((ch) => `&#${ch.charCodeAt(0)};`).join("");
+    const hex = [...value].map((ch) => `&#x${ch.charCodeAt(0).toString(16).toUpperCase()};`).join("");
+    for (const f of [dec, hex, "abc&#47;def&#43;ghi&#61;jkl", "abc&#x2F;def&#x2B;ghi&#x3D;jkl", "abc&sol;def&plus;ghi&equals;jkl"]) {
+      expect(answerLeaksSecret(`<p>${f}</p>`, c), f).toBe(true);
+    }
+  });
+
+  it("finds mixed percent-encoding in any case, and double encoding", () => {
+    for (const f of ["abc%2Fdef+ghi%3djkl", "%61bc/def%2bghi=jkl", "abc%252Fdef%252Bghi%253Djkl", "%61%62%63%2f%64%65%66%2b%67%68%69%3d%6a%6b%6c"]) {
+      expect(answerLeaksSecret(`https://x/?k=${f}`, c), f).toBe(true);
+    }
+  });
+
+  it("finds a key inside a base64 or base64url token of the answer", () => {
+    const blob = Buffer.from(JSON.stringify({ request: { url: `https://x/?k=${value}` } })).toString("base64");
+    expect(answerLeaksSecret(`{"debug":"${blob}"}`, c)).toBe(true);
+    expect(answerLeaksSecret(`{"debug":"${Buffer.from(`k=${value}&x=1`).toString("base64url")}"}`, c)).toBe(true);
+    expect(answerLeaksSecret(`{"debug":"${Buffer.from("nothing to see here at all").toString("base64")}"}`, c)).toBe(false);
+  });
+
+  it("finds the user or password of a Basic key, and user:pass base64 encoded", () => {
+    const basic = `Basic ${Buffer.from("alice:s3cr3tpass").toString("base64")}`;
+    expect(upstreamSecretParts(basic)).toEqual([basic, Buffer.from("alice:s3cr3tpass").toString("base64"), "alice:s3cr3tpass", "alice", "s3cr3tpass"]);
+    const b = { in: "header" as const, name: "Authorization", value: basic };
+    expect(answerLeaksSecret('{"error":"wrong password s3cr3tpass"}', b)).toBe(true);
+    expect(answerLeaksSecret('{"user":"ALICE"}', b)).toBe(true);
+    expect(answerLeaksSecret('{"price":1}', b)).toBe(false);
+    // Short users and passwords are not looked for alone.
+    expect(upstreamSecretParts(`Basic ${Buffer.from("bob:pw").toString("base64")}`)).not.toContain("bob");
+  });
+
+  it("redacts what it can locate, and withholds the whole text when the key is only found after decoding", () => {
+    expect(redactUpstreamSecret("bad key abc%2Fdef%2Bghi%3Djkl here", value)).toBe("bad key [key] here");
+    expect(redactUpstreamSecret("bad key abc%2Fdef+ghi%3djkl here", value)).toBe(WITHHELD_TEXT);
+    expect(redactUpstreamSecret("status 500 is outside 200-299", value)).toBe("status 500 is outside 200-299");
+  });
+
+  it("keyAppearsIn checks several texts the same way", () => {
+    expect(keyAppearsIn(value, ["GET /price?symbol=ADA", null, "GET /x?k=abc%2Fdef+ghi%3djkl"])).toBe(true);
+    expect(keyAppearsIn(value, ["GET /price?symbol=ADA", '{"q":"ada"}'])).toBe(false);
+    expect(keyAppearsIn(value, [])).toBe(false);
+  });
+
+  it("does not flag ordinary answers", () => {
+    const s = { in: "header" as const, name: "X-Key", value: SECRET };
+    for (const body of ['{"price":0.35,"symbol":"ADA"}', "symbol,price\nADA,0.35\n", "<p>&amp; &#47; %2F \\u002F</p>", Buffer.from("x".repeat(40)).toString("base64")]) {
+      expect(answerLeaksSecret(body, s), body).toBe(false);
+    }
   });
 });

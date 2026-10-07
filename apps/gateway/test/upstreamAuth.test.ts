@@ -3,27 +3,34 @@ import request from "supertest";
 import { generateUpstreamAuthKeys, sealUpstreamSecret, type StoredUpstreamAuth } from "@hirakumi/core";
 import { JobRunner } from "../src/jobs";
 import { Monitor } from "../src/monitor";
-import { openCredential } from "../src/registry";
+import { ADDRESS_CHANGED, openCredential } from "../src/registry";
 import { insertActiveToken, makeHarness, type Harness } from "./helpers";
 
 const keys = generateUpstreamAuthKeys();
 const KEY = "sk_test/0123456789+abcdef";
-const stored = (apiId: string, o: Partial<StoredUpstreamAuth> = {}, publicKey = keys.publicKey): StoredUpstreamAuth =>
-  ({ in: "header", name: "X-API-Key", sealed: sealUpstreamSecret(publicKey, apiId, KEY), hint: "cdef", ...o });
+const ORIGIN = "https://api.example.com";
+type Address = { origin: string; pathPrefix: string };
+/** A stored key sealed for apiId at an address, with the placement and name in o (header X-API-Key by default). */
+const stored = (apiId: string, o: Partial<StoredUpstreamAuth> = {}, at: Address = { origin: ORIGIN, pathPrefix: "/" }): StoredUpstreamAuth => {
+  const where = { in: o.in ?? "header", name: o.name ?? "X-API-Key" };
+  return { ...where, sealed: sealUpstreamSecret(keys.publicKey, { apiId, ...where, ...at }, KEY), hint: "cdef", ...o };
+};
+const row = (id: string, upstream_auth: StoredUpstreamAuth | null, at: Address = { origin: ORIGIN, pathPrefix: "/" }) =>
+  ({ id, upstream_auth, origin: at.origin, path_prefix: at.pathPrefix });
 
 describe("openCredential", () => {
   it("an API without a stored key needs none", () => {
-    expect(openCredential({ id: "api_a", upstream_auth: null }, keys.privateKey)).toEqual({ credential: null, credentialError: null });
-    expect(openCredential({ id: "api_a", upstream_auth: null }, null)).toEqual({ credential: null, credentialError: null });
+    expect(openCredential(row("api_a", null), keys.privateKey)).toEqual({ credential: null, credentialError: null });
+    expect(openCredential(row("api_a", null), null)).toEqual({ credential: null, credentialError: null });
   });
   it("opens a key sealed for this API", () => {
-    expect(openCredential({ id: "api_a", upstream_auth: stored("api_a") }, keys.privateKey))
+    expect(openCredential(row("api_a", stored("api_a")), keys.privateKey))
       .toEqual({ credential: { in: "header", name: "X-API-Key", value: KEY }, credentialError: null });
-    expect(openCredential({ id: "api_a", upstream_auth: stored("api_a", { in: "query", name: "api_key" }) }, keys.privateKey).credential)
+    expect(openCredential(row("api_a", stored("api_a", { in: "query", name: "api_key" })), keys.privateKey).credential)
       .toEqual({ in: "query", name: "api_key", value: KEY });
   });
   it("without the gateway's private key the API is blocked, and the reason names no setting", () => {
-    const r = openCredential({ id: "api_a", upstream_auth: stored("api_a") }, null);
+    const r = openCredential(row("api_a", stored("api_a")), null);
     expect(r.credential).toBeNull();
     expect(r.credentialError).toMatch(/needs a key/);
     expect(r.credentialError).not.toMatch(/UPSTREAM_AUTH/);
@@ -34,17 +41,27 @@ describe("openCredential", () => {
       expect(r.credential).toBeNull();
       expect(r.credentialError).toMatch(/could not be read/);
     };
-    refused({ id: "api_b", upstream_auth: stored("api_a") });
+    refused(row("api_b", stored("api_a")));
     const s = stored("api_a");
     const parts = s.sealed.split(".");
-    parts[3] = (parts[3][0] === "A" ? "B" : "A") + parts[3].slice(1);
-    refused({ id: "api_a", upstream_auth: { ...s, sealed: parts.join(".") } });
-    refused({ id: "api_a", upstream_auth: { ...s, sealed: "garbage" } });
-    refused({ id: "api_a", upstream_auth: s }, generateUpstreamAuthKeys().privateKey);
+    parts[4] = (parts[4][0] === "A" ? "B" : "A") + parts[4].slice(1);
+    refused(row("api_a", { ...s, sealed: parts.join(".") }));
+    refused(row("api_a", { ...s, sealed: "garbage" }));
+    refused(row("api_a", s), generateUpstreamAuthKeys().privateKey);
     // The name and placement are stored in the clear, so a reserved header or a bad name is refused here too.
-    refused({ id: "api_a", upstream_auth: { ...s, name: "Host" } });
-    refused({ id: "api_a", upstream_auth: { ...s, name: "X-Key\r\nX-Evil" } });
-    refused({ id: "api_a", upstream_auth: { ...s, in: "cookie" as never } });
+    refused(row("api_a", { ...s, name: "Host" }));
+    refused(row("api_a", { ...s, name: "X-Key\r\nX-Evil" }));
+    refused(row("api_a", { ...s, in: "cookie" as never }));
+    // Sealed for a header, stored as a query parameter of the same name: refused.
+    refused(row("api_a", { ...stored("api_a", { name: "api_key" }), in: "query" }));
+  });
+  it("a key sealed before the API's origin or path prefix changed is blocked with a plain reason", () => {
+    const s = stored("api_a", {}, { origin: ORIGIN, pathPrefix: "/v1" });
+    expect(openCredential(row("api_a", s, { origin: ORIGIN, pathPrefix: "/v1/" }), keys.privateKey).credential?.value).toBe(KEY);
+    for (const at of [{ origin: ORIGIN, pathPrefix: "/" }, { origin: "https://other.example.com", pathPrefix: "/v1" }]) {
+      expect(openCredential(row("api_a", s, at), keys.privateKey)).toEqual({ credential: null, credentialError: ADDRESS_CHANGED });
+    }
+    expect(ADDRESS_CHANGED).toBe("The API's address changed since the key was saved. Save the key again.");
   });
 });
 
@@ -60,7 +77,7 @@ describe("an API that needs a key, through the gateway", () => {
 
   it("preview and paid calls send the key; the answer and receipts never show it", async () => {
     h = await makeHarness({ config: { upstreamAuthPrivateKey: keys.privateKey } });
-    await setAuth(stored(h.seeded.apiId));
+    await setAuth(stored(h.seeded.apiId, {}, { origin: h.stub.origin, pathPrefix: "/" }));
     const p = await preview();
     expect(p.status).toBe(200);
     expect(p.body.verdict).toEqual({ pass: true, reasons: [] });
@@ -78,7 +95,7 @@ describe("an API that needs a key, through the gateway", () => {
 
   it("a query key: an answer that repeats it is withheld, no credit is used, and nothing stored or logged quotes it", async () => {
     h = await makeHarness({ config: { upstreamAuthPrivateKey: keys.privateKey } });
-    await setAuth(stored(h.seeded.apiId, { in: "query", name: "api_key" }));
+    await setAuth(stored(h.seeded.apiId, { in: "query", name: "api_key" }, { origin: h.stub.origin, pathPrefix: "/" }));
     h.stub.setMode("echo");
     const { token, id } = await insertActiveToken(h.sql, h.seeded, 5);
     const paid = await request(h.app).get(`/a/${h.seeded.apiId}/x/getPrice?symbol=ADA&api_key=x`).set("authorization", `Bearer ${token}`);
@@ -129,7 +146,7 @@ describe("an API that needs a key, through the gateway", () => {
 
   it("without the private key, or after the key stops opening, every call is blocked and never reaches the API", async () => {
     h = await makeHarness();
-    await setAuth(stored(h.seeded.apiId));
+    await setAuth(stored(h.seeded.apiId, {}, { origin: h.stub.origin, pathPrefix: "/" }));
     const p = await preview();
     expect(p.status).toBe(400);
     expect(p.body).toEqual({ error: "blocked", detail: "blocked: this API needs a key, and the gateway can't read keys right now" });
@@ -142,11 +159,23 @@ describe("an API that needs a key, through the gateway", () => {
 
   it("a key sealed for another API is blocked; removing it sends calls without a key again", async () => {
     h = await makeHarness({ config: { upstreamAuthPrivateKey: keys.privateKey } });
-    await setAuth(stored("api_someone_else"));
+    await setAuth(stored("api_someone_else", {}, { origin: h.stub.origin, pathPrefix: "/" }));
     expect((await preview()).body.detail).toMatch(/could not be read/);
     expect(h.stub.hits()).toBe(0);
     await setAuth(null);
     expect((await preview()).status).toBe(200);
     expect(h.stub.lastHeaders()?.["x-api-key"]).toBeUndefined();
+  });
+
+  it("after the API's address changes, calls are blocked until the key is saved again", async () => {
+    h = await makeHarness({ config: { upstreamAuthPrivateKey: keys.privateKey } });
+    await setAuth(stored(h.seeded.apiId, {}, { origin: h.stub.origin, pathPrefix: "/" }));
+    expect((await preview()).status).toBe(200);
+    await h.sql`update apis set origin = ${h.stub.origin.replace("127.0.0.1", "localhost")} where id = ${h.seeded.apiId}`;
+    await request(h.app).post(`/internal/apis/${h.seeded.apiId}/reload`).set(internal).expect(200);
+    const hits = h.stub.hits();
+    const p = await preview();
+    expect(p.body).toEqual({ error: "blocked", detail: `blocked: ${ADDRESS_CHANGED}` });
+    expect(h.stub.hits()).toBe(hits);
   });
 });

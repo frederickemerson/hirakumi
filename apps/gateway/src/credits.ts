@@ -7,7 +7,7 @@ import {
 import { channelView } from "./channels";
 import { IOU_HEADER, SIGN_NEXT_HEADER, checkIou } from "./ious";
 import type { AppDeps } from "./deps";
-import { creditsRequiredBody, downBody, parseBearer } from "./http";
+import { creditsRequiredBody, downBody, parseBearer, SELLER_BODY_HEADERS } from "./http";
 import { runOperation, type OperationOutcome } from "./upstream";
 
 export function creditsRouter(d: AppDeps): Router {
@@ -119,6 +119,7 @@ export function creditsRouter(d: AppDeps): Router {
         }
         if (served !== null) res.set(SIGN_NEXT_HEADER, String(served));
         res.status(200)
+          .set(SELLER_BODY_HEADERS)
           .set("x-credits-remaining", String(reservation.remainingAfter))
           .type(outcome.result.contentType ?? "application/json")
           .send(outcome.result.body);

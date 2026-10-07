@@ -17,6 +17,7 @@ import { listIncidents } from "@/lib/repo/stats";
 import { getPublicStatus } from "@/lib/repo/status";
 import { buildBuyerSnippet } from "@/lib/snippet";
 import { isTextPromise, promiseFormatNote } from "@/lib/answer-format";
+import { StatusOnlyNote } from "@/components/status-only-note";
 
 export async function generateMetadata({ params }: { params: Promise<{ apiId: string }> }): Promise<Metadata> {
   const api = await loadLiveApi((await params).apiId);
@@ -73,6 +74,7 @@ export default async function PublicApiPage({ params }: { params: Promise<{ apiI
               <p className="flex items-center gap-2 text-body-lg"><Badge variant="sky">{p.method.toUpperCase()}</Badge><code>{p.path}</code></p>
               <p className="text-body-lg">{p.plainEnglish ?? "See the exact check below."}</p>
               {promiseFormatNote(p.definition) && <p className="text-body text-graphite">{promiseFormatNote(p.definition)}</p>}
+              {p.statusOnly && <StatusOnlyNote />}
               <a href={`${publicBase}/r/${p.hash}`} className="inline-block text-body underline underline-offset-4">The exact check (JSON)</a>
             </li>
           ))}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isKeyParamName, looksLikeSecret } from "../src/secrets";
+import { isKeyParamName, isUnambiguousKeyParamName, looksLikeSecret, paramHoldsSecret, valueLooksLikeKey } from "../src/secrets";
 
 // Made up, and split so secret scanners do not read it as a real HubSpot key.
 const FAKE_HUBSPOT_KEY = ["pat", "na1", "11111111-2222-3333-4444-555555555555"].join("-");
@@ -67,4 +67,43 @@ describe("isKeyParamName", () => {
     "key_type", "public_key", "pubkey", "stake_key", "sort_key", "idempotency_key", "token_id", "token_address", "tokenAddress",
     "from_token", "base_token", "tokens", "author", "oauth_provider",
   ])("%s is not", (n) => expect(isKeyParamName(n)).toBe(false));
+});
+
+describe("paramHoldsSecret", () => {
+  it.each([
+    ["k", "7f3a9c1e0b2d4f6a8c9e1b3d5f7a9c2e"], ["x", "live_8aK2pQ7rT9vW1yZ3"], ["q", "sk-abcdefghijklmnop1234"], ["p", "pk_9aK2pQ7rT9vW1yZ"],
+    ["api_key", "abcdefgh"], ["x_cg_demo_api_key", "CG-q1W2e3R4t5Y6u7I8o9P0aSdF"], ["client_secret", "plainwords"], ["password", "hunter22"],
+    ["key", "a1b2c3d4e5f6"], ["appid", "123456789"], ["key", "abcdefghijklmnopqrstu"], ["token", "ghp_abcdefghijklmnopqrstuvwxyz0123"],
+  ])("%s=%s is a key", (n, v) => expect(paramHoldsSecret(n, v)).toBe(true));
+
+  it.each([
+    ["key", "BTC"], ["appid", "12"], ["use_auth", "true"], ["key", "bitcoin-cash"], ["appid", "12345678"], ["api_key", "demo"],
+    ["api_key", "YOUR_KEY_HERE"], ["symbol", "BTCUSDT2024"], ["id", "550e8400-e29b-41d4-a716-446655440000"],
+    ["hash", "7f3a9c1e0b2d4f6a8c9e1b3d5f7a9c2e7f3a9c1e0b2d4f6a8c9e1b3d5f7a9c2e"], ["q", "0x5e1a3b9c0d7f2e4a6b8c1d3e5f7a9b0c2d4e6f8a"],
+    ["token", "1d7f33bd23d85e1a25d87d86fac4f199c3197a2f7afeb662a0f34e1e.776f726c"], ["token", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"],
+    ["sig", "0x5e1a3b9c0d7f2e4a6b8c1d3e5f7a9b0c2d4e6f8a1b3c5d7e9f0a2b4c6d8e0f1a2b"], ["address", "addr1qx2fxv2umyhttkxyxp8x0dlpdt3k6cwng5pxj3"],
+    ["date", "2026-10-07T12:00:00Z"], ["public_key", "ed25519_pk1abcdefgh12345678"],
+  ])("%s=%s is not", (n, v) => expect(paramHoldsSecret(n, v)).toBe(false));
+
+  it("tells unambiguous credential names from generic ones", () => {
+    for (const n of ["api_key", "apikey", "access_token", "client_secret", "password", "x_cg_demo_api_key", "x-api-token", "auth_key", "id_token"]) {
+      expect(isUnambiguousKeyParamName(n), n).toBe(true);
+    }
+    for (const n of ["key", "appid", "auth", "use_auth", "basic_auth", "x-auth", "openweather_appid", "symbol", "token"]) {
+      expect(isUnambiguousKeyParamName(n), n).toBe(false);
+    }
+  });
+
+  it("valueLooksLikeKey needs mixed random text or a known prefix", () => {
+    expect(valueLooksLikeKey("7f3a9c1e0b2d4f6a8c9e1b3d5f7a9c2e")).toBe(true);
+    expect(valueLooksLikeKey("live_8aK2pQ7rT9vW1yZ3")).toBe(true);
+    expect(valueLooksLikeKey("live_prices_only")).toBe(false);
+    expect(valueLooksLikeKey("cardano-2024-q1")).toBe(false);
+  });
+
+  it("looksLikeSecret uses the same rule for name=value", () => {
+    expect(looksLikeSecret("GET /price?k=7f3a9c1e0b2d4f6a8c9e1b3d5f7a9c2e")).toBe(true);
+    expect(looksLikeSecret("GET /price?x=live_8aK2pQ7rT9vW1yZ3")).toBe(true);
+    expect(looksLikeSecret("GET /price?key=bitcoin-cash&appid=12345678")).toBe(false);
+  });
 });

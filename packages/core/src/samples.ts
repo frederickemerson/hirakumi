@@ -1,5 +1,5 @@
-import { unsafePathReason } from "./ownership";
-import { isKeyParamName, looksLikeSecret } from "./secrets";
+import { AMBIGUOUS_PATH, unsafePathReason } from "./ownership";
+import { isUnambiguousKeyParamName, looksLikeSecret, paramHoldsSecret } from "./secrets";
 
 /**
  * Any API, no OpenAPI file: the seller gives a base URL and one example request per line. Hirakumi builds an
@@ -14,14 +14,12 @@ import { isKeyParamName, looksLikeSecret } from "./secrets";
  * on several lines to give more examples.
  *
  * The API's key never goes in a line: every value becomes a public input example for buyers, and the lines are
- * stored as they are. A line with a key parameter (api_key, apikey, key…) or a key-shaped value is refused, and
+ * stored as they are. A line with a credential parameter (api_key=…, access_token=…), a key-shaped value under any
+ * name (?k=7f3a9c1e…) or a key elsewhere in it is refused, and
  * the seller adds the key on the ownership page instead, sealed so only the gateway can read it.
  *
- * Ownership is proven with a small file in the base folder (SAMPLES_PROOF_FILE) holding
- * `{"x-hirakumi-verify": "<code>"}`. It is valid JSON with the field at the root, so the gateway reads it
- * exactly like an OpenAPI file, with the same origin and folder rules (checkSpecBinding).
+ * Ownership is proven like any other API: the X-Hirakumi-Verify response header at the base URL (ownership.ts).
  */
-export const SAMPLES_PROOF_FILE = "hirakumi-verify.json";
 export const MAX_SAMPLE_LINES = 20;
 
 export type SampleMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -41,11 +39,9 @@ const KEY_ADVICE = "Remove it from the example requests. After you prove ownersh
 
 const METHODS = new Set<SampleMethod>(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 const NAME = /^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/;
-// Same characters the gateway's ownership check refuses in a proven path (ownership.ts AMBIGUOUS_PATH).
-const AMBIGUOUS_PATH = /%2f|%5c|%2e|;/i;
 
 /** The base URL as a folder: https only (http on localhost when allowed), no credentials, query or fragment. */
-export function normalizeSamplesBase(raw: unknown, allowInsecure = false): { base: string; origin: string; hostname: string; proofUrl: string } {
+export function normalizeSamplesBase(raw: unknown, allowInsecure = false): { base: string; origin: string; hostname: string } {
   if (typeof raw !== "string" || raw.trim() === "") throw new SampleError("Paste your API's base URL, for example https://api.example.com/v1");
   const s = raw.trim();
   if (s.length > 2048) throw new SampleError("That base URL is too long.");
@@ -60,14 +56,14 @@ export function normalizeSamplesBase(raw: unknown, allowInsecure = false): { bas
   if (u.username || u.password) throw new SampleError("Remove the username and password from the base URL.");
   if (u.search !== "" || /\?/.test(s)) throw new SampleError("Remove the ?query from the base URL. Put query parameters in the example requests.");
   if (u.hash !== "" || /#/.test(s)) throw new SampleError("Remove the #fragment from the base URL.");
-  // The proof is fetched from this exact host, and a trailing dot would make it a second name for the same API.
+  // The ownership check calls this exact host, and a trailing dot would make it a second name for the same API.
   if (u.hostname.endsWith(".")) throw new SampleError("Remove the dot at the end of the host name in the base URL.");
   if (AMBIGUOUS_PATH.test(u.pathname) || u.pathname.includes("\\")) throw new SampleError("The base URL has an encoded slash, dot or a ';' in its path. Use a plain path.");
-  // An empty segment would put the proof file at a path the folder check never matches.
+  // An empty segment is a path some servers read as another folder, so the base would not name one folder.
   if (u.pathname.includes("//")) throw new SampleError("The base URL has two slashes in a row in its path. Use a plain path.");
   const dir = u.pathname.endsWith("/") ? u.pathname : `${u.pathname}/`;
   const base = `${u.origin}${dir === "/" ? "" : dir.slice(0, -1)}`;
-  return { base, origin: u.origin, hostname: u.hostname, proofUrl: `${u.origin}${dir}${SAMPLES_PROOF_FILE}` };
+  return { base, origin: u.origin, hostname: u.hostname };
 }
 
 function parseLine(line: string, n: number): Sample {
@@ -81,8 +77,12 @@ function parseLine(line: string, n: number): Sample {
       return fail(`${what} has a broken % escape. Write the character itself, or a full escape such as %20.`);
     }
   };
-  const keyParam = (name: string) => {
-    if (isKeyParamName(name)) fail(`"${name}" looks like your API's key. ${KEY_ADVICE}`);
+  // A credential name with any value of 8 characters or more (a placeholder too: the parameter itself is the key's),
+  // or a value that holds a key under its name. key=BTC, appid=12 and use_auth=true are ordinary inputs.
+  const keyParam = (name: string, value: string) => {
+    if ((isUnambiguousKeyParamName(name) && value.length >= 8) || paramHoldsSecret(name, value)) {
+      fail(`"${name}" looks like your API's key. ${KEY_ADVICE}`);
+    }
   };
   let rest = line.trim();
   let method: SampleMethod = "GET";
@@ -108,8 +108,8 @@ function parseLine(line: string, n: number): Sample {
     if (!NAME.test(name)) fail(`"{${name}}" is not a valid parameter name.`);
     if (value === undefined || value === "") fail(`give an example value for {${name}}, like {${name}=example}.`);
     if (pathParams.some((p) => p.name === name)) fail(`{${name}} appears twice in the path.`);
-    keyParam(name);
     const decoded = decode(value!, `the value of {${name}}`);
+    keyParam(name, decoded);
     // The gateway refuses such a path value at call time, so the test calls would fail with no reason given.
     if (/[/\\]/.test(decoded) || decoded === "." || decoded === "..") {
       fail(`the value of {${name}} can't contain / or \\ or be . or .. because a path value is one part of the path. Put it in the query instead, like ?${name}=value.`);
@@ -136,7 +136,7 @@ function parseLine(line: string, n: number): Sample {
       }
       if (!NAME.test(name)) fail(`"${name}" is not a valid query parameter name.`);
       if (name === "body") fail(`a parameter named "body" is reserved for the request body. Rename it.`);
-      keyParam(name);
+      keyParam(name, value);
       if (value === "") fail(`give an example value for "${name}", like ${name}=example.`);
       if (query.some((p) => p.name === name) || pathParams.some((p) => p.name === name)) fail(`"${name}" appears twice.`);
       query.push({ name, value, required });

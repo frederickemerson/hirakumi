@@ -6,7 +6,7 @@
    - Buyers pay even when a response is broken or stale.
    - Per-call on-chain payment on Cardano costs about 1.2–1.5 ADA min-UTxO plus about 0.17 ADA fee, with a 20–60s confirmation.
 3. **Solution:** A Sokosumi coworker that turns any read-only API (an OpenAPI link, or a base URL plus example requests; JSON or text answers; keys sealed for the gateway only) into a Masumi-registered agent:
-   - confirm endpoints, prove ownership (a code in the OpenAPI file or a small proof file + one wallet signature), approve a price and a plain-English promise, Publish;
+   - confirm endpoints, prove ownership (a code in an X-Hirakumi-Verify response header + one wallet signature), approve a price and a plain-English promise, Publish;
    - **call packs** over x402: one tUSDM payment straight to the seller for 100 calls;
    - **credits used only on pass**: a failing answer returns 422 and costs nothing;
    - **truthful health**: `/availability` returns 503 when the API is down, so the registry shows Offline.

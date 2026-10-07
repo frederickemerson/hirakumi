@@ -19,7 +19,7 @@
 
 ## Takes
 - [ ] Record each segment separately (OBS scene per segment), then edit to ≤ 3:00 total.
-- [ ] Time-cuts, each shown with a small caption ("≈20 s later"): pack tx confirmation (20–60s); Vercel redeploy for the x-hirakumi-verify code; QA test calls; registry registration (about 1 min); registry Offline lag; escrow lock and refund wait.
+- [ ] Time-cuts, each shown with a small caption ("≈20 s later"): pack tx confirmation (20–60s); Vercel redeploy for the X-Hirakumi-Verify header code; QA test calls; registry registration (about 1 min); registry Offline lag; escrow lock and refund wait.
 - [ ] Show the Cardanoscan pack tx for ≥ 2s with the tUSDM amount and the seller address visible.
 - [ ] After recording: set mode `ok`, `DEMO_MODE` stays 1 until judging ends.
 

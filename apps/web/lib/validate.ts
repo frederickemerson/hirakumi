@@ -19,11 +19,11 @@ export function validateOpenApiUrl(raw: unknown, allowInsecure: boolean): { url:
   }
   // "api.example.com." names the same host but is a different origin and listing base: one spelling only.
   if (u.hostname.endsWith(".")) throw new ValidationError("Remove the dot at the end of the host name in the link.");
-  // The proof is scoped to the folder the file is served from, so the link must be a plain file path:
-  // a query (a proxy such as /fetch?u=...) or a route that serves any content would prove the whole host.
-  if (u.search !== "") throw new ValidationError("Remove the ?query from the link. Use the plain path to your OpenAPI file.");
-  if (u.hash !== "") throw new ValidationError("Remove the #fragment from the link. Use the plain path to your OpenAPI file.");
-  u.search = "";
+  // The file only describes the API (ownership is the X-Hirakumi-Verify header), so it may be hosted anywhere.
+  // A query is still refused: the link is stored and shown on the seller's pages and Sokosumi task, a query often
+  // carries an access token (the file must be public), and one plain link per file keeps resubmits the same API.
+  if (u.search !== "" || s.split("#")[0].includes("?")) throw new ValidationError("Remove the ?query from the link. Use the plain public link to your OpenAPI file.");
+  // A #fragment is never sent to the server, so it is dropped rather than refused.
   u.hash = "";
   return { url: u.toString(), origin: u.origin, hostname: u.hostname };
 }

@@ -13,7 +13,7 @@ import { POST as verify } from "./verify/route";
 import { POST as walletChallenge } from "./wallet-challenge/route";
 
 const TAKEN = "This API is already listed by another account. If it's yours, retire that listing first.";
-const PASS: ChallengeCheck = { ok: true, reason: "verified", triedUrl: "https://price.example.dev/openapi.json", detail: "ok" };
+const PASS: ChallengeCheck = { ok: true, reason: "verified", triedUrl: "https://price.example.dev/", detail: "ok" };
 
 type Owner = { wallet: TestWallet; seller: Seller; cookie: string };
 
@@ -67,7 +67,7 @@ describe("one API, one listing, one account (at proof of ownership)", () => {
     expect(await stateOf(mine.id)).toBe("endpoints_confirmed");
     expect(await stateOf(theirs.id)).toBe("live");
     // The proof is not used up: once the other listing is gone, the seller can sign again.
-    const open = await getSql()`select 1 from challenges where api_id = ${mine.id} and kind = 'openapi' and consumed_at is null`;
+    const open = await getSql()`select 1 from challenges where api_id = ${mine.id} and kind = 'header' and consumed_at is null`;
     expect(open.length).toBe(1);
   });
 

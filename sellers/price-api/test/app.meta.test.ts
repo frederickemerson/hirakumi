@@ -32,26 +32,41 @@ describe("openapi.json", () => {
   });
 });
 
-describe("ownership: x-hirakumi-verify in /openapi.json", () => {
+describe("ownership: the X-Hirakumi-Verify header on every answer", () => {
   const auth = { authorization: `Bearer ${ADMIN}` };
+  const failing = { async get(): Promise<never> { throw new Error("boom"); } };
 
-  it("has no field until a code is set, and no /.well-known file at all", async () => {
+  it("sends no header until a code is set, has no /.well-known file, and the spec has no field", async () => {
     const app = makeApp({ verifyCodes: {} });
     const res = await request(app).get("/openapi.json");
+    expect(res.headers).not.toHaveProperty("x-hirakumi-verify");
     expect(res.body).not.toHaveProperty("x-hirakumi-verify");
     expect((await request(app).get("/.well-known/hirakumi/api_abc123.txt")).status).toBe(404);
   });
 
-  it("serves the code from HIRAKUMI_CHALLENGE at the root of the spec", async () => {
-    const res = await request(makeApp({ verifyCodes: { api_abc123: "hkv_one" } })).get("/openapi.json");
-    expect(res.body["x-hirakumi-verify"]).toBe("hkv_one");
-    expect(res.headers["cache-control"]).toBe("no-store");
+  it("sends the code from HIRAKUMI_CHALLENGE on the spec, the price, a 404, a 400, a 500 and admin routes", async () => {
+    const app = makeApp({ verifyCodes: { api_abc123: "hkv_one" }, prices: failing });
+    const answers = [
+      await request(app).get("/openapi.json"),
+      await request(makeApp({ verifyCodes: { api_abc123: "hkv_one" } })).get("/price?symbol=ADA"),
+      await request(app).get("/"),
+      await request(app).get("/no/such/path?x=1"),
+      await request(app).get("/price?symbol=NOPE"),
+      await request(app).get("/price?symbol=ADA"),
+      await request(app).get("/admin/break"),
+      await request(app).get("/healthz"),
+    ];
+    expect(answers.map((r) => r.status)).toEqual([200, 200, 404, 404, 400, 500, 401, 200]);
+    for (const r of answers) expect(r.headers["x-hirakumi-verify"]).toBe("hkv_one");
+    expect(answers[0].body).not.toHaveProperty("x-hirakumi-verify");
+    expect(answers[0].headers["cache-control"]).toBe("no-store");
   });
 
-  it("the admin route sets a code; the latest one set is served (one spec carries one code)", async () => {
+  it("the admin route sets a code; the latest one set is sent (one header carries one code)", async () => {
     const app = makeApp({ verifyCodes: { api_old1: "hkv_old" } });
     const put = (id: string, code: string) => request(app).put(`/admin/challenge/${id}`).set(auth).type("text/plain").send(code);
-    const served = async () => (await request(app).get("/openapi.json")).body["x-hirakumi-verify"];
+    const served = async () => (await request(app).get("/")).headers["x-hirakumi-verify"];
+    expect(await served()).toBe("hkv_old");
     expect((await put("api_new1", "hkv_new1")).status).toBe(204);
     expect(await served()).toBe("hkv_new1");
     expect((await put("api_new2", "hkv_new2")).status).toBe(204);
@@ -66,7 +81,7 @@ describe("ownership: x-hirakumi-verify in /openapi.json", () => {
     expect((await request(app).put("/admin/challenge/api_new1").type("text/plain").send("x")).status).toBe(401);
     expect((await request(app).put("/admin/challenge/__proto__").set(auth).type("text/plain").send("x")).status).toBe(400);
     expect((await request(app).put("/admin/challenge/api_new2").set(auth).type("text/plain").send("")).status).toBe(400);
-    expect((await request(app).get("/openapi.json")).body).not.toHaveProperty("x-hirakumi-verify");
+    expect((await request(app).get("/")).headers).not.toHaveProperty("x-hirakumi-verify");
   });
 
   it("parses HIRAKUMI_CHALLENGE JSON, ignores bad entries, and the last entry is the latest", () => {

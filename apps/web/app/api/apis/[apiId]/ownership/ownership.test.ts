@@ -14,7 +14,7 @@ import { POST as walletChallenge } from "./wallet-challenge/route";
 function fakeGateway(check: Gateway["checkChallenge"]): Gateway {
   return { checkChallenge: check, reloadApi: vi.fn(async () => undefined), getHealth: vi.fn(), getSettlement: vi.fn(async () => []) };
 }
-const PASS: ChallengeCheck = { ok: true, reason: "verified", triedUrl: "https://price.example.dev/openapi.json", detail: "Found your code. The OpenAPI file is verified." };
+const PASS: ChallengeCheck = { ok: true, reason: "verified", triedUrl: "https://price.example.dev/", status: 200, detail: "Found your code in the X-Hirakumi-Verify header." };
 
 let wallet: TestWallet;
 let seller: Seller;
@@ -65,17 +65,17 @@ describe("ownership", () => {
   });
 
   it("records a pass only when the gateway found this API's code, then unlocks signing", async () => {
-    setGatewayForTests(fakeGateway(async () => ({ ok: false, reason: "missing", triedUrl: PASS.triedUrl, detail: "no field" })));
+    setGatewayForTests(fakeGateway(async () => ({ ok: false, reason: "missing", triedUrl: PASS.triedUrl, detail: "no header" })));
     const failed = await runCheck();
-    expect(await failed.json()).toEqual({ ok: false, reason: "missing", triedUrl: PASS.triedUrl, detail: "no field" });
+    expect(await failed.json()).toEqual({ ok: false, reason: "missing", triedUrl: PASS.triedUrl, detail: "no header" });
     expect((await getWalletMessage()).res.status).toBe(409);
     await passSpecCheck();
     expect((await findVerifyCode(getSql(), api.id))?.passedAt).toBeTruthy();
     expect((await getWalletMessage()).res.status).toBe(200);
   });
 
-  it("passes the fetch status through", async () => {
-    const r404: ChallengeCheck = { ok: false, reason: "http_status", status: 404, triedUrl: PASS.triedUrl, detail: "Your server answered 404, not 200." };
+  it("passes the status through", async () => {
+    const r404: ChallengeCheck = { ok: false, reason: "missing", status: 404, triedUrl: PASS.triedUrl, detail: "Your API answered 404 without an X-Hirakumi-Verify header." };
     setGatewayForTests(fakeGateway(async () => r404));
     expect(await (await runCheck()).json()).toEqual(r404);
   });
@@ -93,10 +93,10 @@ describe("ownership", () => {
 
   it("a pass older than 30 minutes no longer unlocks signing", async () => {
     await passSpecCheck();
-    await getSql()`update challenges set proof = jsonb_set(proof, '{passedAt}', to_jsonb((now() - interval '31 minutes')::text)) where api_id = ${api.id} and kind = 'openapi'`;
+    await getSql()`update challenges set proof = jsonb_set(proof, '{passedAt}', to_jsonb((now() - interval '31 minutes')::text)) where api_id = ${api.id} and kind = 'header'`;
     const { res, body } = await getWalletMessage();
     expect(res.status).toBe(409);
-    expect(body.error).toBe("Check your OpenAPI file first.");
+    expect(body.error).toBe("Check your X-Hirakumi-Verify header first.");
   });
 
   it("answers 502 in plain English when the gateway is unreachable", async () => {
@@ -111,7 +111,7 @@ describe("ownership", () => {
   it("refuses to issue a wallet message before the OpenAPI check passed", async () => {
     const { res, body } = await getWalletMessage();
     expect(res.status).toBe(409);
-    expect(body.error).toBe("Check your OpenAPI file first.");
+    expect(body.error).toBe("Check your X-Hirakumi-Verify header first.");
   });
 
   it("verifies the owner's signature, moves to ownership_verified and consumes the code", async () => {

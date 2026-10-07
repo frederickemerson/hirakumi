@@ -16,7 +16,13 @@
 
 ## Final checks (T-4h → T-1h)
 - [ ] `pnpm test` green on `main`; the tag `submission` is pushed
-- [ ] Deploy order for any-API (migration 0014): only the gateway applies migrations (at boot), and the web app and the coworker read `apis.intake_kind` / `apis.samples`. Restart the gateway first (or run `pnpm --filter @hirakumi/db migrate` against Neon), check `select 1 from schema_migrations where name = '0014_any_api_samples.sql'` returns a row, then promote the Vercel build and restart the coworker. Set `UPSTREAM_AUTH_PUBLIC_KEY` on Vercel and `UPSTREAM_AUTH_PRIVATE_KEY` on the gateway in the same window.
+- [ ] Deploy order for any-API (migration 0014): only the gateway applies migrations (at boot), and the web app and the coworker read `apis.intake_kind` / `apis.samples`. The web app tolerates 0014 not having run yet (it hides the new features and answers "being updated"), and samples intake stays off until `SAMPLES_INTAKE=1`.
+  1. Gateway: set `UPSTREAM_AUTH_PRIVATE_KEY`, restart it (it applies 0014 at boot; or run `pnpm --filter @hirakumi/db migrate` against Neon), and check `select 1 from schema_migrations where name = '0014_any_api_samples.sql'` returns a row.
+  2. Coworker: restart it on the new build.
+  3. Web: set `UPSTREAM_AUTH_PUBLIC_KEY` on Vercel and promote the build.
+  4. Only then set `SAMPLES_INTAKE=1` on Vercel and redeploy.
+
+  0014 also adds the `header` challenge kind that the new ownership check uses, so the gateway, the web app and the demo seller (which now sends `X-Hirakumi-Verify` on every response) go out together; open `openapi` codes are not carried over, so a seller mid-proof gets a new code.
 - [ ] No secrets in the repo: `git log -p | grep -E 'BUYER_MNEMONIC=|ADMIN_TOKEN=|PAYMENT_SERVICE_TOKEN=' ` returns nothing with a value
 - [ ] `DEMO_MODE=1` stays on and the price API mode is `ok` during judging
 - [ ] Buyer and purchasing wallets keep ≥ 10 tADA so judges can re-run the buyer

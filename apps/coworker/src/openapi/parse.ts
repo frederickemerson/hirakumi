@@ -205,8 +205,22 @@ export function describeAuthHint(h: AuthHint): string {
 }
 
 /**
+ * The text says it is an OpenAPI or Swagger document (an object with an "openapi" or "swagger" version), valid or
+ * not. A web page, plain JSON or an error body is not.
+ */
+export function isOpenApiDocument(text: unknown): boolean {
+  if (typeof text !== "string") return false;
+  try {
+    const raw: unknown = YAML.parse(text);
+    return isRecord(raw) && (typeof raw.openapi === "string" || typeof raw.swagger === "string");
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Parses an OpenAPI 3.x document (JSON or YAML text). Never fetches anything: external $refs are not resolved.
- * servers[0] is read with the same helper the gateway's ownership check uses (@hirakumi/core firstServerUrl).
+ * servers[0] (the API's base) is read with @hirakumi/core firstServerUrl.
  */
 export async function parseOpenApi(text: string): Promise<ParseResult> {
   let raw: unknown;

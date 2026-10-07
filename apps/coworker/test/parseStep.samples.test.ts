@@ -8,9 +8,10 @@ let db: TestDb;
 beforeAll(async () => (db = await createTestDb()));
 afterAll(async () => db.close());
 
-async function seedSamplesApi(base: string, lines: string, proofUrl: string): Promise<string> {
-  const apiId = await seedApi(db.pool, { openapiUrl: proofUrl });
-  await db.pool.query(`update apis set intake_kind = 'samples', samples = $2::jsonb where id = $1`, [apiId, JSON.stringify({ base, lines })]);
+async function seedSamplesApi(base: string, lines: string): Promise<string> {
+  const apiId = await seedApi(db.pool);
+  // One update, so a check tying openapi_url to the intake kind holds on every row version.
+  await db.pool.query(`update apis set intake_kind = 'samples', samples = $2::jsonb, openapi_url = null where id = $1`, [apiId, JSON.stringify({ base, lines })]);
   return apiId;
 }
 
@@ -19,7 +20,6 @@ describe("parseStep for an API without an OpenAPI file (example requests)", () =
     const apiId = await seedSamplesApi(
       "https://price.example.dev/v1",
       "GET /price?symbol=ADA\nGET /price?symbol=BTC\nGET /coins/{id=cardano}/history?days?=7",
-      "https://price.example.dev/v1/hirakumi-verify.json",
     );
     const fetchSpec = vi.fn();
     expect(await parseStep({ pool: db.pool, fetchSpec }, apiId)).toBe("ran");
@@ -38,14 +38,15 @@ describe("parseStep for an API without an OpenAPI file (example requests)", () =
     expect((await messagesFor(db.pool, apiId))[0].body).toMatch(/I read your example requests and found 2 endpoints/);
   });
 
-  it("refuses a proof file outside the base folder (folder binding unchanged)", async () => {
-    const apiId = await seedSamplesApi("https://price.example.dev/v1", "GET /price?symbol=ADA", "https://price.example.dev/v2/hirakumi-verify.json");
-    expect(await parseStep({ pool: db.pool, fetchSpec: vi.fn() }, apiId)).toBe("failed");
-    expect((await messagesFor(db.pool, apiId))[0].body).toMatch(/only prove ownership of APIs under \/v2\//);
+  it("takes the API's origin from the base, not from the placeholder set at intake", async () => {
+    const apiId = await seedSamplesApi("https://data.example.org/api", "GET /price?symbol=ADA");
+    expect(await parseStep({ pool: db.pool, fetchSpec: vi.fn() }, apiId)).toBe("ran");
+    const { rows: [api] } = await db.pool.query(`select origin, path_prefix, openapi_url from apis where id = $1`, [apiId]);
+    expect(api).toEqual({ origin: "https://data.example.org", path_prefix: "/api", openapi_url: null });
   });
 
   it("explains bad example requests and does not retry", async () => {
-    const apiId = await seedSamplesApi("https://price.example.dev", "GET /a/../b", "https://price.example.dev/hirakumi-verify.json");
+    const apiId = await seedSamplesApi("https://price.example.dev", "GET /a/../b");
     expect(await parseStep({ pool: db.pool, fetchSpec: vi.fn() }, apiId)).toBe("failed");
     expect((await messagesFor(db.pool, apiId))[0].body).toMatch(/example requests could not be read\. Line 1: .*dot segment/);
   });

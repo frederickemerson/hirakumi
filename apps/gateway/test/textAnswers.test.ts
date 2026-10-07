@@ -25,7 +25,7 @@ afterEach(async () => { await h.close(); });
 
 describe("an API that answers CSV", () => {
   it("the inferred rule is a text rule for text/csv", () => {
-    expect(rule).toMatchObject({ contentType: "text/csv", schema: { type: "string", minLength: 1, pattern: "^symbol,price\\r?\\n", not: { pattern: expect.any(String) } } });
+    expect(rule).toMatchObject({ contentType: "text/csv", schema: { type: "string", minLength: 1, pattern: "^symbol,price\\r?\\n", not: { anyOf: expect.any(Array) } } });
   });
 
   it("an Excel-style CSV with a BOM is charged and returned without it, hashed as the buyer's res.text() reads it", async () => {
@@ -40,6 +40,28 @@ describe("an API that answers CSV", () => {
     expect(buyerText).toBe(CSV);
     const receipts = await request(h.app).get(`/a/${h.seeded.apiId}/receipts`).set("authorization", `Bearer ${token}`);
     expect(receipts.body.calls[0]).toMatchObject({ verdict: "pass", charged: true, outputHash: outputHash(id, buyerText) });
+  });
+
+  it("a paid answer and a preview carry nosniff and a sandbox CSP, so a seller's body can't run as a page", async () => {
+    const { token } = await insertActiveToken(h.sql, h.seeded, 3);
+    const paid = await request(h.app).get(`/a/${h.seeded.apiId}/x/getPrice?symbol=ADA`).set("authorization", `Bearer ${token}`);
+    const preview = await request(h.app).post(`/internal/preview/${h.seeded.apiId}/getPrice`).set(internal).send({ input: { symbol: "ADA" } });
+    for (const r of [paid, preview]) {
+      expect(r.status).toBe(200);
+      expect(r.headers["x-content-type-options"]).toBe("nosniff");
+      expect(r.headers["content-security-policy"]).toBe("sandbox; default-src 'none'");
+    }
+  });
+
+  it("a short error text sent as CSV with 200 breaks the promise: 422 and no credit used", async () => {
+    for (const body of ["Rate limit exceeded", "404 Not Found\n", "<h1>Service Unavailable</h1>"]) {
+      h.stub.setFile("/prices.csv", body, { contentType: "text/csv" });
+      const { token } = await insertActiveToken(h.sql, h.seeded, 3);
+      const r = await request(h.app).get(`/a/${h.seeded.apiId}/x/getPrice?symbol=ADA`).set("authorization", `Bearer ${token}`);
+      expect(r.status, body).toBe(422);
+      expect(r.body.reasons, body).toContain("/ looks like an error response");
+      expect(r.headers["x-credits-remaining"]).toBe("3");
+    }
   });
 
   it("a Latin-1 CSV is read in its charset and passed on as UTF-8", async () => {
@@ -116,6 +138,8 @@ describe("an API that answers CSV", () => {
     await runner.tick();
     const status = await request(h.app).get(`/a/${h.seeded.apiId}/status`).query({ job_id: started.body.job_id });
     expect(status.body).toMatchObject({ status: "completed", output: CSV, result: CSV, output_hash: outputHash(pid, CSV) });
+    expect(status.headers["x-content-type-options"]).toBe("nosniff");
+    expect(status.headers["content-security-policy"]).toBe("sandbox; default-src 'none'");
     expect(h.masumi.submitted).toEqual([{ blockchainIdentifier: expect.any(String), resultHash: outputHash(pid, CSV) }]);
   });
 });

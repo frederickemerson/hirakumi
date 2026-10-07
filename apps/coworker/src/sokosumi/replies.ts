@@ -28,8 +28,7 @@ export function validateOpenApiUrl(raw: unknown, allowInsecure: boolean): { url:
   }
   // "api.example.com." names the same host but is a different origin and listing base: one spelling only.
   if (u.hostname.endsWith(".")) throw new LinkError("Remove the dot at the end of the host name in the link.");
-  // The proof is scoped to the folder the file is served from, so the link must be a plain file path:
-  // a query (a proxy such as /fetch?u=...) or a route that serves any content would prove the whole host.
+  // The link is stored and read again at each parse, so it must be one plain file path, the same spelling every time.
   if (u.search !== "") throw new LinkError("Remove the ?query from the link. Use the plain path to your OpenAPI file.");
   if (u.hash !== "") throw new LinkError("Remove the #fragment from the link. Use the plain path to your OpenAPI file.");
   u.search = "";
@@ -115,11 +114,15 @@ export function findSampleLines(text: string): string[] {
   return text.split(/\r?\n/).map(cleanLine).filter((l) => SAMPLE_LINE.test(l));
 }
 
-/** A link that names an OpenAPI or Swagger file rather than an API's base URL. */
+/**
+ * A link whose path names an OpenAPI or Swagger file: …/openapi.json, …/v3/api-docs (springdoc), …/api-json and
+ * …/docs/json (NestJS, Fastify), …/oas, …/swagger/v1/swagger.json. Only an ordering hint: the coworker fetches the
+ * link to find out what it is.
+ */
 export function looksLikeOpenApiLink(link: string): boolean {
   try {
     const path = new URL(link).pathname.toLowerCase();
-    return /\.(json|ya?ml)$/.test(path) || /openapi|swagger|api-docs/.test(path);
+    return /\.(json|ya?ml)$/.test(path) || /openapi|swagger|api-docs|api-json|\/oas(?:\/|$)|\/docs\/json(?:\/|$)/.test(path);
   } catch {
     return false;
   }
@@ -127,14 +130,14 @@ export function looksLikeOpenApiLink(link: string): boolean {
 
 // Hosts that serve files, never an API: a link there is an OpenAPI file even without .json or .yaml.
 const FILE_HOSTS = new Set(["raw.githubusercontent.com", "gist.githubusercontent.com", "gist.github.com", "github.com", "gitlab.com", "bitbucket.org", "pastebin.com"]);
-// A last path segment that names a description document (…/v1/spec, …/schema).
-const SPEC_SEGMENT = /\/(?:spec|specs|schema|definition|description)(?:\/)?$/i;
+// A last path segment that names a description document (…/v1/spec, …/schema, …/openapi).
+const SPEC_SEGMENT = /\/(?:spec|specs|schema|definition|description|oas)(?:\/)?$/i;
 // The seller calls the link a spec ("My spec:", "OpenAPI here"), but not "no OpenAPI file" or "without a spec".
 const SPEC_WORD = /\b(?:spec|specification|openapi|swagger)\b/i;
 const NO_SPEC = /\b(?:no|without|don'?t have|do not have|haven'?t got|not have)\b[^.\n]{0,24}\b(?:spec|specification|openapi|swagger)\b/i;
 
-/** A link that can only be an OpenAPI file: by name, by file host, or by a last segment such as /spec. */
-function surelySpecLink(link: string): boolean {
+/** A link that is probably an OpenAPI file: by name, by file host, or by a last segment such as /spec. A hint only. */
+export function likelySpecLink(link: string): boolean {
   if (looksLikeOpenApiLink(link)) return true;
   try {
     const u = new URL(link);
@@ -146,6 +149,14 @@ function surelySpecLink(link: string): boolean {
 
 /** A line that carries example data (?query, {name=value} or a body), which an endpoint list in a spec message has not. */
 const carriesRequestData = (line: string) => /\?|\{[^}]*=|\s[[{"]/.test(line);
+
+/**
+ * The seller calls their link a spec and lists plain endpoint paths ("GET /pets"), not example requests. Only used
+ * when the link could not be fetched: then the fetch error is the answer, not a samples intake.
+ */
+export function callsLinkASpec(text: string): boolean {
+  return !findSampleLines(text).some(carriesRequestData) && SPEC_WORD.test(text) && !NO_SPEC.test(text);
+}
 
 // The words just before a link that name it as the API's address: "Base URL: https://…", "API: https://…", "base https://…".
 const BASE_LABEL = /\b(?:base(?:\s*url)?|api|url|endpoint|server|host)\s*[:=]?\s*$/i;
@@ -165,9 +176,11 @@ function docsHost(link: string): boolean {
   }
 }
 
+type Candidate = { link: string; labelled: boolean; docs: boolean; alone: boolean };
+
 /** Each link outside the example lines, with what its lines say about it. A link inside an example line is example data. */
-function baseCandidates(text: string): { link: string; labelled: boolean; docs: boolean; alone: boolean }[] {
-  const out = new Map<string, { link: string; labelled: boolean; docs: boolean; alone: boolean }>();
+function baseCandidates(text: string): Candidate[] {
+  const out = new Map<string, Candidate>();
   for (const raw of text.split(/\r?\n/)) {
     const line = cleanLine(raw);
     if (SAMPLE_LINE.test(line)) continue;
@@ -181,6 +194,22 @@ function baseCandidates(text: string): { link: string; labelled: boolean; docs: 
     }
   }
   return [...out.values()];
+}
+
+/** At most this many links are fetched for one message. */
+export const MAX_LINK_PROBES = 3;
+
+/**
+ * The links of a message in the order to fetch them, to find out which one is an OpenAPI file: links outside example
+ * lines, those that probably name a file first, documentation last. The order is a guess; the fetch decides. The
+ * caller fetches at most MAX_LINK_PROBES of them.
+ */
+export function linksToProbe(text: string): string[] {
+  const rank = (c: Candidate) => (likelySpecLink(c.link) ? 0 : c.docs ? 2 : 1);
+  return baseCandidates(text)
+    .map((c, i) => ({ c, i }))
+    .sort((a, b) => rank(a.c) - rank(b.c) || a.i - b.i)
+    .map(({ c }) => c.link);
 }
 
 /**
@@ -204,16 +233,12 @@ function chooseBase(text: string): { base: string } | { choices: string[] } | nu
 export type SamplesIntake = { base: string; lines: string } | { choices: string[]; lines: string };
 
 /**
- * A samples intake: example request lines and a base URL, and no link that may be an OpenAPI file. null otherwise,
- * so a message with an OpenAPI link works exactly as before, even with endpoint paths listed next to it.
- * Plain paths ("GET /pets") next to a link the seller calls a spec are read as a spec link too.
+ * Example request lines and a base URL; null without either. Whether a link in the message is an OpenAPI file is
+ * not decided here: the conversation fetches the links first (linksToProbe), and an OpenAPI file wins.
  */
 export function findSamplesIntake(text: string): SamplesIntake | null {
   const lines = findSampleLines(text);
   if (lines.length === 0) return null;
-  const candidates = baseCandidates(text);
-  if (candidates.length === 0 || candidates.some((c) => surelySpecLink(c.link))) return null;
-  if (!lines.some(carriesRequestData) && SPEC_WORD.test(text) && !NO_SPEC.test(text)) return null;
   const base = chooseBase(text);
   if (!base) return null;
   return { ...base, lines: lines.join("\n") };

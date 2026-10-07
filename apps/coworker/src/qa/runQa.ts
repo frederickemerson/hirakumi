@@ -1,4 +1,4 @@
-import { compileRule, inferRuleFromResponses, isJsonMediaType, isTextMediaType, mediaTypeOf, RuleInferenceError, type RuleDefinition } from "@hirakumi/core";
+import { compileRule, inferRuleFromResponses, isJsonMediaType, isTextMediaType, mediaTypeOf, RuleInferenceError, suggestPhrase, type RuleDefinition } from "@hirakumi/core";
 import { PermanentError } from "../errors.js";
 import type { GatewayClient, PreviewResult } from "../gateway.js";
 import type { InputSchema } from "../openapi/parse.js";
@@ -13,7 +13,16 @@ export type OpQaResult = {
   calls: number;
   badInput: "rejected" | "skipped";
   exampleOutput: string;
+  /** For a text rule: a phrase every good answer contains and the wrong request's answer does not (core suggestPhrase), or null. */
+  suggestedPhrase: string | null;
+  /** For a text rule: the different good answers, so a phrase the seller types can be checked against them. Empty for JSON. */
+  goodAnswers: GoodAnswer[];
 };
+
+/** A good test answer as stored with the QA output: the first MAX_GOOD_ANSWER_LENGTH characters, and whether that is all of it. */
+export type GoodAnswer = { body: string; complete: boolean };
+export const MAX_GOOD_ANSWERS = 5;
+export const MAX_GOOD_ANSWER_LENGTH = 32_000;
 
 function parseJson(body: string): { ok: true; value: unknown } | { ok: false } {
   try {
@@ -74,5 +83,19 @@ export async function qaOperation(
     if (!v.pass) throw new PermanentError(`The promise we built for ${op.op_id} rejects one of your own good answers (${v.reasons.join("; ")}).`);
   }
   if (badResult && compiled.check(badResult).pass) throw new PermanentError(CANT_TELL_APART(op.op_id));
-  return { rule, testInputs: inputs, calls: plan.length + (bad ? 1 : 0), badInput: bad ? "rejected" : "skipped", exampleOutput: results[0].body.slice(0, 1000) };
+  // A phrase only from answers to at least two different inputs: the answers to one input all share its own words.
+  const differentInputs = new Set(plan.map((input) => JSON.stringify(input))).size >= 2;
+  const suggestedPhrase = isJsonMediaType(rule.contentType) || !differentInputs ? null : suggestPhrase(results.map((r) => r.body), badResult?.body);
+  return {
+    rule,
+    testInputs: inputs,
+    calls: plan.length + (bad ? 1 : 0),
+    badInput: bad ? "rejected" : "skipped",
+    exampleOutput: results[0].body.slice(0, 1000),
+    suggestedPhrase,
+    goodAnswers: isJsonMediaType(rule.contentType)
+      ? []
+      : [...new Set(results.map((r) => r.body))].slice(0, MAX_GOOD_ANSWERS)
+        .map((body) => ({ body: body.slice(0, MAX_GOOD_ANSWER_LENGTH), complete: body.length <= MAX_GOOD_ANSWER_LENGTH })),
+  };
 }

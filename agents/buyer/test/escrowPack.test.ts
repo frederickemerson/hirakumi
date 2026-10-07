@@ -3,7 +3,7 @@ import { mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { USDM_PREPROD_ASSET } from "@x402/cardano";
-import { decodeBody, inferRuleFromResponses, ruleHash, type RuleDefinition } from "@hirakumi/core";
+import { decodeBody, inferRuleFromResponses, ruleHash, withRequiredPhrase, type RuleDefinition } from "@hirakumi/core";
 import { PACK_ESCROW, encodePackDatum, newReceiptKey, verifyReceipt, type PackDatum } from "@hirakumi/escrow";
 import { EscrowOfferError, IouKeyStore, checkEscrowOffer, escrowCall, signNext, type EscrowChannel, type Requirement } from "../src/escrowPack.js";
 import { runEscrowPack } from "../src/escrowPackFlow.js";
@@ -152,6 +152,47 @@ describe("escrowCall", () => {
     expect(await call(withBom)).toMatchObject({ kind: "pass", body: "ADA 0.36\n" });
     expect((await call(" \n ")).kind).toBe("dispute");
     expect((await call("<!DOCTYPE html><html>502</html>")).kind).toBe("dispute");
+  });
+
+  it("an error body sent with 200 under a text promise is a dispute: nothing is counted or signed", async () => {
+    const textRule = inferRuleFromResponses([{ status: 200, contentType: "text/plain", body: "ADA 0.35", latencyMs: 1 }]);
+    const phraseRule = withRequiredPhrase(textRule, "ADA");
+    const plain = (body: string) => () => new Response(body, { status: 200, headers: { "content-type": "text/plain", "x-hirakumi-sign-next": "1" } });
+    const call = async (rule: RuleDefinition, body: string) => {
+      const store = tmpStore();
+      const c = channel(store, { ruleHash: ruleHash(rule) });
+      const r = await escrowCall({ fetch: gateway([plain(body)]).fetch, rule: async () => rule, save: (x) => store.put(x) }, c, "https://gw.test/x");
+      return { r, saved: store.get("api_demo", "pk_demo") };
+    };
+    for (const body of ["Rate limit exceeded", "Internal Server Error", "404 Not Found", "<h1>Bad Gateway</h1>", "<title>Error</title>"]) {
+      const { r, saved } = await call(textRule, body);
+      expect(r, body).toEqual({ kind: "dispute", reasons: ["/ looks like an error response"] });
+      expect(saved, body).toMatchObject({ disputed: true, verifiedPasses: 0, lastSigned: 0, lastIou: null });
+    }
+    expect((await call(textRule, "ADA 0.36")).r).toMatchObject({ kind: "pass", signed: 1 });
+    // A promise with a required phrase: an answer without it is a dispute too.
+    expect((await call(phraseRule, "ADA 0.36")).r).toMatchObject({ kind: "pass" });
+    expect((await call(phraseRule, "BTC 62000")).r).toEqual({ kind: "dispute", reasons: ['/ does not contain "ADA"'] });
+  });
+
+  it("a long error page, stack trace or JSON error with 200 is a dispute even when it has the required phrase", async () => {
+    const rule = withRequiredPhrase(inferRuleFromResponses([{ status: 200, contentType: "text/plain", body: "ADA price 0.35", latencyMs: 1 }]), "price");
+    const pages = [
+      `Rate limit exceeded for /price. ${"You sent too many requests this minute, slow down and retry. ".repeat(4)}`,
+      'Traceback (most recent call last):\n  File "/app/price.py", line 9, in get_price\nKeyError: \'ADA\'\n',
+      "ADA price\n    at getPrice (/app/src/price.js:12:20)\n    at Layer.handle (/app/node_modules/express/lib/router/layer.js:95:5)\n",
+      '{"status":500,"error":"Internal Server Error","path":"/price"}',
+      `HTTP/1.1 502 Bad Gateway\r\n\r\nprice upstream down ${"retry later ".repeat(20)}`,
+      `<!DOCTYPE html><html><head><title>500 Internal Server Error</title></head><body>${"<p>price</p>".repeat(20)}</body></html>`,
+    ];
+    for (const body of pages) {
+      const store = tmpStore();
+      const c = channel(store, { ruleHash: ruleHash(rule) });
+      const plain = () => new Response(body, { status: 200, headers: { "content-type": "text/plain", "x-hirakumi-sign-next": "1" } });
+      const r = await escrowCall({ fetch: gateway([plain]).fetch, rule: async () => rule, save: (x) => store.put(x) }, c, "https://gw.test/x");
+      expect(r, body).toEqual({ kind: "dispute", reasons: ["/ looks like an error response"] });
+      expect(store.get("api_demo", "pk_demo"), body).toMatchObject({ disputed: true, verifiedPasses: 0, lastSigned: 0, lastIou: null });
+    }
   });
 
   it("402 iou_required: signs an earned IOU and retries once; never an unearned one", async () => {

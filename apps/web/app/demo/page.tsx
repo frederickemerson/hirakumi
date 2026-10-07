@@ -5,6 +5,7 @@ import { HealthBadge } from "@/components/health-badge";
 import { ListApiLink } from "@/components/list-api-link";
 import { RegistryCard } from "@/components/registry-card";
 import { OverviewStatGrid } from "@/components/stat";
+import { StatusOnlyNote } from "@/components/status-only-note";
 import { StatusPanel } from "@/components/status-panel";
 import { TryLiveLink } from "@/components/try-live-link";
 import { Badge } from "@/components/ui/badge";
@@ -72,6 +73,7 @@ export default async function DemoSellerPage() {
             <li key={p.operationId} className="space-y-2 rounded-[2px] border-2 border-ink bg-frost p-5">
               <p className="flex items-center gap-2 text-body-lg"><Badge variant="sky">{p.method.toUpperCase()}</Badge><code>{p.path}</code></p>
               <p className="text-body-lg">{p.plainEnglish ?? "See the exact check below."}</p>
+              {p.statusOnly && <StatusOnlyNote />}
               <a href={`${publicBase}/r/${p.hash}`} className="inline-block text-body underline underline-offset-4">The exact check (JSON)</a>
             </li>
           ))}

@@ -6,6 +6,9 @@ import type { SokosumiClient, SokosumiEvent } from "../src/sokosumi/client.js";
 import { createInbox } from "../src/sokosumi/inbox.js";
 import { PRICE_SPEC } from "./fixtures.js";
 import { createTestDb, seedOperation, type TestDb } from "./helpers/db.js";
+import { inferRuleFromResponses, UpstreamTimeoutError, withRequiredPhrase } from "@hirakumi/core";
+import { PermanentError } from "../src/errors.js";
+import { SpecNotServedError } from "../src/openapi/fetchSpec.js";
 
 let db: TestDb;
 beforeAll(async () => (db = await createTestDb()));
@@ -84,9 +87,10 @@ describe("a new task whose brief holds the OpenAPI link", () => {
     const sellerId = await linkSeller(t.user);
     const { soko, setEvents } = fakeSoko({ [t.id]: t.task });
     setEvents([{ id: `evt_${rand()}`, taskId: t.id, createdAt: past, status: "READY", actor: { type: "user", id: t.user } }]);
-    const fetchSpec = vi.fn();
+    const fetchSpec = vi.fn().mockResolvedValue(PRICE_SPEC);
     await createInbox({ pool: db.pool, soko, webBaseUrl: WEB, fetchSpec }).poll();
-    expect(fetchSpec).not.toHaveBeenCalled();
+    // Fetched once to tell an OpenAPI file from a base URL; the parse step reads it again.
+    expect(fetchSpec).toHaveBeenCalledWith("https://price.example.dev/openapi.json");
     const { rows: [api] } = await db.pool.query(`select id, seller_id, state, origin, openapi_url, name from apis where sokosumi_task_id = $1`, [t.id]);
     expect(api).toMatchObject({ seller_id: sellerId, state: "intake", origin: "https://price.example.dev", openapi_url: "https://price.example.dev/openapi.json", name: "price.example.dev" });
     expect(await messagesForTask(t.id)).toEqual([
@@ -110,6 +114,132 @@ describe("a new task whose brief holds the OpenAPI link", () => {
     setEvents([{ id: `evt_${rand()}`, taskId: t.id, createdAt: past, actor: { type: "user", id: t.user } }]);
     await createInbox({ pool: db.pool, soko, webBaseUrl: WEB, fetchSpec: vi.fn().mockResolvedValue('{"swagger":"2.0"}') }).poll();
     expect((await messagesForTask(t.id))[0].body).toMatch(/I couldn't read .*Swagger 2\.0.*Reply with the corrected link/);
+  });
+});
+
+describe("a link is fetched to tell an OpenAPI file from a base URL", () => {
+  async function brief(description: string, fetchSpec: (url: string) => Promise<string>, o: { linked?: boolean } = {}) {
+    const t = await newTask({ description });
+    if (o.linked) await linkSeller(t.user);
+    const { soko, setEvents } = fakeSoko({ [t.id]: t.task });
+    setEvents([{ id: `evt_${rand()}`, taskId: t.id, createdAt: past, actor: { type: "user", id: t.user } }]);
+    await createInbox({ pool: db.pool, soko, webBaseUrl: WEB, fetchSpec }).poll();
+    const { rows: apis } = await db.pool.query<{ openapi_url: string | null; intake_kind: string }>(
+      `select openapi_url, intake_kind from apis where sokosumi_task_id = $1`, [t.id]);
+    return { t, msgs: await messagesForTask(t.id), apis };
+  }
+
+  it.each([
+    "https://api.example.com/api-json",
+    "https://api.example.com/docs/json",
+    "https://api.example.com/api/v1/oas",
+    "https://api.example.com/v3/api-docs",
+    "https://api.example.com/swagger/v1/swagger.json",
+    "https://api.example.com/openapi",
+    "https://api.example.com/spec",
+  ])("%s served as a real spec is read as the OpenAPI file", async (link) => {
+    const fetchSpec = vi.fn().mockResolvedValue(PRICE_SPEC);
+    const { msgs, apis } = await brief(`Please sell ${link}`, fetchSpec);
+    expect(fetchSpec).toHaveBeenCalledWith(link);
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].body).toMatch(/^Step 1 of 7, Read your file: I read Price API and found 3 endpoints/);
+    expect(msgs[0].body).not.toMatch(/example requests/);
+    expect(apis).toEqual([]);
+  });
+
+  it("a linked seller's /v3/api-docs spec starts an OpenAPI intake", async () => {
+    const { msgs, apis } = await brief("https://api.example.com/v3/api-docs", vi.fn().mockResolvedValue(PRICE_SPEC), { linked: true });
+    expect(apis).toEqual([{ openapi_url: "https://api.example.com/v3/api-docs", intake_kind: "openapi" }]);
+    expect(msgs[0].body).toBe("Step 1 of 7, Read your file: Got your link. Reading https://api.example.com/v3/api-docs now.");
+  });
+
+  it("a Swagger 2.0 file is still told apart, with its own message", async () => {
+    const { msgs } = await brief("https://api.example.com/v2/api-docs", vi.fn().mockResolvedValue('{"swagger":"2.0","paths":{}}'));
+    expect(msgs[0].body).toMatch(/I couldn't read https:\/\/api\.example\.com\/v2\/api-docs: This is a Swagger 2\.0 file/);
+  });
+
+  it.each([
+    ["an HTML page", vi.fn().mockResolvedValue("<!doctype html><html><body>Welcome</body></html>"), "it is a web page"],
+    ["JSON that is not a spec", vi.fn().mockResolvedValue('{"status":"ok","version":"1.2"}'), "it is JSON with no openapi version"],
+    ["a 404", vi.fn().mockRejectedValue(new SpecNotServedError("Fetching your OpenAPI file at x returned HTTP 404. Check the link and try again.", 404)), "it answered with HTTP 404"],
+  ])("a base URL that serves %s gets the samples prompt", async (_, fetchSpec, reason) => {
+    for (const linked of [false, true]) {
+      const { msgs, apis } = await brief("https://api.example.com/v1", fetchSpec, { linked });
+      expect(apis).toEqual([]);
+      expect(msgs).toEqual([{
+        body: `Step 1 of 7, Read your file: I opened https://api.example.com/v1, but it didn't look like an OpenAPI file (${reason}). ` +
+          "If it's your API's base URL, reply with it and a few example requests, one per line, like this:\nhttps://api.example.com/v1\nGET /price?symbol=ADA\n" +
+          "If it should be your OpenAPI file, check the link and send it again.",
+        task_status: "INPUT_REQUIRED", api_id: null,
+      }]);
+      expect(msgs[0].body).not.toMatch(/[–—]/);
+    }
+  });
+
+  it.each([
+    ["a timeout", new UpstreamTimeoutError("upstream did not answer within 15000 ms"), "it didn't answer within 15 seconds."],
+    ["a blocked address", new PermanentError("We can't fetch https://api.example.com/v1: it must be a public HTTPS address with no redirects (blocked address 10.0.0.1)."),
+      "We can't fetch https://api.example.com/v1: it must be a public HTTPS address with no redirects (blocked address 10.0.0.1)."],
+  ])("a fetch error (%s) gets a clear reply and starts nothing", async (_, err, problem) => {
+    for (const linked of [false, true]) {
+      const { msgs, apis } = await brief("https://api.example.com/v1", vi.fn().mockRejectedValue(err), { linked });
+      expect(apis).toEqual([]);
+      expect(msgs).toHaveLength(1);
+      expect(msgs[0]).toMatchObject({ task_status: "INPUT_REQUIRED" });
+      expect(msgs[0].body).toBe(
+        `Step 1 of 7, Read your file: I couldn't read https://api.example.com/v1: ${problem} Reply with the corrected link to try again. ` +
+        "No OpenAPI file? Reply with your API's base URL and a few example requests, one per line, like GET /price?symbol=ADA.");
+    }
+  });
+
+  it("a link and example lines, where the link is a spec, is read as the OpenAPI file and says the lines were ignored", async () => {
+    const text = "https://api.example.com/v3/api-docs\nGET /price?symbol=ADA";
+    const first = await brief(text, vi.fn().mockResolvedValue(PRICE_SPEC));
+    expect(first.apis).toEqual([]);
+    expect(first.msgs[0].body).toMatch(/^Step 1 of 7, Read your file: That link is an OpenAPI file, so I read it and ignored your example requests\. I read Price API and found 3 endpoints/);
+    const linked = await brief(text, vi.fn().mockResolvedValue(PRICE_SPEC), { linked: true });
+    expect(linked.apis).toEqual([{ openapi_url: "https://api.example.com/v3/api-docs", intake_kind: "openapi" }]);
+    expect(linked.msgs[0].body).toBe(
+      "Step 1 of 7, Read your file: That link is an OpenAPI file, so I read it and ignored your example requests. Got your link. Reading https://api.example.com/v3/api-docs now.");
+  });
+
+  it("fetches at most 3 links, likely OpenAPI files first", async () => {
+    const fetchSpec = vi.fn().mockResolvedValue("<html></html>");
+    await brief("https://a.example.com/x https://b.example.com/y https://c.example.com/z https://d.example.com/openapi.json", fetchSpec);
+    expect(fetchSpec.mock.calls.map((c) => c[0])).toEqual(["https://d.example.com/openapi.json", "https://a.example.com/x", "https://b.example.com/y"]);
+  });
+
+  it("a reply with a link is fetched the same way", async () => {
+    const t = await newTask();
+    const { soko, setEvents } = fakeSoko({ [t.id]: t.task });
+    setEvents([{ id: `evt_${rand()}`, taskId: t.id, createdAt: past, actor: { type: "user", id: t.user } }]);
+    const fetchSpec = vi.fn().mockResolvedValue(PRICE_SPEC);
+    const inbox = createInbox({ pool: db.pool, soko, webBaseUrl: WEB, fetchSpec });
+    await inbox.poll();
+    setEvents([comment(t.id, t.user, "here: https://api.example.com/docs/json")]);
+    await inbox.poll();
+    expect(fetchSpec).toHaveBeenCalledWith("https://api.example.com/docs/json");
+    expect((await messagesForTask(t.id)).at(-1)?.body).toMatch(/I read Price API and found 3 endpoints/);
+  });
+});
+
+describe("an OpenAPI file hosted somewhere else (GitHub)", () => {
+  const GH = "https://raw.githubusercontent.com/acme/price/main/openapi.json";
+  async function firstTime(spec: string) {
+    const t = await newTask({ description: GH });
+    const { soko, setEvents } = fakeSoko({ [t.id]: t.task });
+    setEvents([{ id: `evt_${rand()}`, taskId: t.id, createdAt: past, actor: { type: "user", id: t.user } }]);
+    await createInbox({ pool: db.pool, soko, webBaseUrl: WEB, fetchSpec: vi.fn().mockResolvedValue(spec) }).poll();
+    return (await messagesForTask(t.id))[0].body;
+  }
+  it("is read when servers[0] is the API's full base URL", async () => {
+    const body = await firstTime(JSON.stringify({ ...JSON.parse(PRICE_SPEC), servers: [{ url: "https://api.acme.dev/v1" }] }));
+    expect(body).toMatch(/I read Price API and found 3 endpoints/);
+  });
+  it("without a full servers URL, says so before the sign-in", async () => {
+    const body = await firstTime(PRICE_SPEC);
+    expect(body).toMatch(/I couldn't read .*raw\.githubusercontent\.com, which can't be where your API runs\. Set the first servers URL/);
+    expect(body).not.toContain("/setup?t=");
   });
 });
 
@@ -145,7 +275,7 @@ describe("replies on a task", () => {
     const msgs = (await messagesForTask(t.id)).slice(1);
     expect(msgs).toEqual([
       { body: "Step 3 of 7, Choose endpoints: Selling GET /price. Per-job hires (Masumi escrow) run getPrice.", task_status: "RUNNING", api_id: apiId },
-      { body: `Step 4 of 7, Prove ownership: Prove you own https://price.example.dev: add the x-hirakumi-verify line from this page at the root of your OpenAPI file, then sign once with your Cardano wallet (no payment): ${WEB}/apis/${apiId}/ownership`, task_status: "INPUT_REQUIRED", api_id: apiId },
+      { body: `Step 4 of 7, Prove ownership: Prove you own https://price.example.dev/${apiId}: make your API send the header X-Hirakumi-Verify with the code from this page on responses at your base URL (any status counts, even a 404 page), then sign once with your Cardano wallet (no payment): ${WEB}/apis/${apiId}/ownership`, task_status: "INPUT_REQUIRED", api_id: apiId },
     ]);
   });
 
@@ -195,6 +325,19 @@ describe("replies on a task", () => {
       `Step 7 of 7, Register on Masumi: Publishing needs your wallet signature, so I can't do it from a comment. Approve it here (one signature): ${WEB}/apis/${apiId}/review`);
   });
 
+  it("`price` on a status-only text promise reminds the seller to set the phrase before publishing", async () => {
+    const { t, apiId, get, reply } = await setup("rule_built");
+    await db.pool.query(`update operations set enabled = (id = $1) where api_id = $2`, [get, apiId]);
+    const statusOnly = inferRuleFromResponses([{ status: 200, contentType: "text/plain", body: "1.5", latencyMs: 1 }]);
+    await db.pool.query(`insert into rules (id, operation_id, version, definition, hash) values ($1, $2, 1, $3::jsonb, 'sha256:x')`, [`rule_${rand()}`, get, JSON.stringify(statusOnly)]);
+    await reply("price 2");
+    expect((await messagesForTask(t.id)).at(-1)?.body).toMatch(/approve it here \(one signature\): \S+\/review Before publishing, set the phrase every good answer must contain on the same page\.$/);
+    const phrased = withRequiredPhrase(statusOnly, "price");
+    await db.pool.query(`insert into rules (id, operation_id, version, definition, hash) values ($1, $2, 2, $3::jsonb, 'sha256:y')`, [`rule_${rand()}`, get, JSON.stringify(phrased)]);
+    await reply("price 3");
+    expect((await messagesForTask(t.id)).at(-1)?.body).toMatch(/approve it here \(one signature\): \S+\/review$/);
+  });
+
   it("`price` before the test calls are done is refused", async () => {
     const { t, reply } = await setup("described");
     await reply("price 2");
@@ -215,11 +358,13 @@ describe("replies on a task", () => {
     expect((await messagesForTask(t.id)).at(-1)).toMatchObject({ body: "Test calls are running. I'll post the promise and a suggested price here when they're done.", api_id: apiId });
   });
 
-  it("at the ownership step it says to add the field to the OpenAPI file, never to host a file", async () => {
+  it("at the ownership step it says to send the X-Hirakumi-Verify header at the base URL, never to host a file", async () => {
     const { t, apiId, reply } = await setup("endpoints_confirmed");
     await reply("what now?");
     const body = (await messagesForTask(t.id)).at(-1)?.body ?? "";
-    expect(body).toContain("add the x-hirakumi-verify line from this page at the root of your OpenAPI file, then sign once with your Cardano wallet");
+    expect(body).toContain(`Next, prove you own https://price.example.dev/${apiId}: make your API send the header X-Hirakumi-Verify with the code from this page`);
+    expect(body).toContain("any status counts, even a 404 page), then sign once with your Cardano wallet");
+    expect(body).not.toMatch(/x-hirakumi-verify line|hirakumi-verify\.json|OpenAPI file/);
     expect(body).toContain(`${WEB}/apis/${apiId}/ownership`);
     expect(body).not.toMatch(/well-known|challenge|download|upload/i);
     expect(body).not.toMatch(/[–—]/);

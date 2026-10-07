@@ -47,6 +47,31 @@ describe("qaOperation for answers that aren't plain JSON", () => {
     expect(r.rule).toMatchObject({ contentType: "text/csv", schema: { type: "string", minLength: 1, pattern: "^symbol,price\\r?\\n" } });
   });
 
+  it("suggests a phrase every good text answer has and the wrong request's answer lacks; none for JSON", async () => {
+    const csv = fakeGateway((i) => (i.symbol === INVALID_STRING ? text(404, "unknown symbol", "text/plain") : text(200, `symbol,price\n${String(i.symbol)},1`)));
+    expect((await qaOperation(csv.gateway, "api_1", { op_id: "getPrice", input_schema: SCHEMA }, [])).suggestedPhrase).toBe("symbol,price");
+    const plain = fakeGateway((i) => (i.symbol === INVALID_STRING ? text(404, "Unknown symbol", "text/plain") : text(200, `Price of ${String(i.symbol)}: 1 USD`, "text/plain")));
+    const r = await qaOperation(plain.gateway, "api_1", { op_id: "getPrice", input_schema: SCHEMA }, []);
+    expect(r.suggestedPhrase).toBe("Price of");
+    const numbers = fakeGateway((i) => (i.symbol === INVALID_STRING ? text(404, "unknown symbol", "text/plain") : text(200, i.symbol === "ADA" ? "0.31" : "61000", "text/plain")));
+    expect((await qaOperation(numbers.gateway, "api_1", { op_id: "getPrice", input_schema: SCHEMA }, [])).suggestedPhrase).toBeNull();
+    const js = fakeGateway((i) => (i.symbol === INVALID_STRING ? json(404, { error: "unknown symbol" }) : json(200, { symbol: i.symbol, price: 0.31 })));
+    expect((await qaOperation(js.gateway, "api_1", { op_id: "getPrice", input_schema: SCHEMA }, [])).suggestedPhrase).toBeNull();
+  });
+
+  it("suggests no phrase when every good call used one input: its words may belong to that input", async () => {
+    const one: InputSchema = { ...SCHEMA, properties: { symbol: { type: "string", examples: ["ADA"] } } };
+    let n = 0;
+    // The price moves between calls, so the answers differ, but all of them name Cardano.
+    const { gateway, preview } = fakeGateway((i) => (i.symbol === INVALID_STRING
+      ? text(404, "unknown symbol", "text/plain")
+      : text(200, `Cardano (ADA) price today: 0.3${n++} USD`, "text/plain")));
+    const r = await qaOperation(gateway, "api_1", { op_id: "getPrice", input_schema: one }, []);
+    expect(preview).toHaveBeenCalledTimes(MIN_CALLS + 1);
+    expect(r.testInputs).toEqual([{ symbol: "ADA" }]);
+    expect(r.suggestedPhrase).toBeNull();
+  });
+
   it("refuses binary answers for good, with a reason the seller can act on", async () => {
     const { gateway } = fakeGateway(() => text(200, "%PDF-1.7", "application/pdf"));
     const p = qaOperation(gateway, "api_1", { op_id: "getPrice", input_schema: SCHEMA }, []);

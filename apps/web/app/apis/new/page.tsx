@@ -1,4 +1,6 @@
 import { SetupForm } from "@/components/setup-form";
+import { getSql } from "@/lib/db";
+import { samplesIntakeOpen } from "@/lib/repo/schema";
 import { requireSellerPage } from "@/lib/page-auth";
 
 export default async function NewApiPage({ searchParams }: { searchParams: Promise<{ openapiUrl?: string }> }) {
@@ -11,7 +13,7 @@ export default async function NewApiPage({ searchParams }: { searchParams: Promi
         Paste the link to your OpenAPI 3 description. Hirakumi reads it and lists the endpoints it could sell.
         Nothing is published until you approve it.
       </p>
-      <SetupForm initialUrl={typeof openapiUrl === "string" ? openapiUrl : ""} />
+      <SetupForm initialUrl={typeof openapiUrl === "string" ? openapiUrl : ""} samples={await samplesIntakeOpen(getSql())} />
     </section>
   );
 }

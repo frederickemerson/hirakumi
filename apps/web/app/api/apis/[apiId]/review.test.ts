@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { inferTextRule, withRequiredPhrase } from "@hirakumi/core";
 import { getSql } from "@/lib/db";
 import { setGatewayForTests, type Gateway } from "@/lib/gateway";
+import { getSuggestedPhrases } from "@/lib/repo/rules";
 import type { Api, Seller } from "@/lib/types";
 import { resetDb } from "@/test/db";
-import { seedApi, seedOperation, seedPack, seedRule, seedSeller } from "@/test/factories";
+import { seedApi, seedOnboardStep, seedOperation, seedPack, seedRule, seedSeller } from "@/test/factories";
 import { cookieFor, ctx, jsonRequest } from "@/test/requests";
 import { POST as pricing } from "./pricing/route";
 import { POST as publish } from "./publish/route";
@@ -115,5 +117,42 @@ describe("pricing and publish", () => {
     await seedPack(api.id);
     const statuses = (await Promise.all([pub(), pub()])).map((r) => r.status).sort();
     expect(statuses).toEqual([200, 409]);
+  });
+
+  it("refuses to publish while a text promise only checks the status, naming the endpoint", async () => {
+    await setup("priced");
+    await seedPack(api.id);
+    const text = await seedOperation(api.id, { opId: "getQuote", path: "/quote", enabled: true });
+    const statusOnly = inferTextRule("text/plain", ["BTC 64000", "ETH 3100"]);
+    await seedRule(text.id, { definition: statusOnly });
+    const res = await pub();
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: "Add a phrase every good answer contains for GET /quote before publishing. Without a phrase, an error page sent with status 200 could count as a good answer.",
+    });
+    expect(await state()).toBe("priced");
+
+    // A later version with a phrase is the promise from now on, so publishing goes through.
+    await seedRule(text.id, { definition: withRequiredPhrase(statusOnly, "USD"), version: 2 });
+    expect((await pub()).status).toBe(200);
+    expect(await state()).toBe("registering");
+  });
+
+  it("a disabled endpoint's status-only promise doesn't block publishing", async () => {
+    await setup("priced");
+    await seedPack(api.id);
+    const off = await seedOperation(api.id, { opId: "getQuote", path: "/quote", enabled: false });
+    await seedRule(off.id, { definition: inferTextRule("text/plain", ["BTC 64000", "ETH 3100"]) });
+    expect((await pub()).status).toBe(200);
+  });
+
+  it("reads QA's suggested phrases by operation, skipping odd values", async () => {
+    await setup("rule_built");
+    const quote = await seedOperation(api.id, { opId: "getQuote", path: "/quote", enabled: true });
+    await seedOperation(api.id, { opId: "getOdd", path: "/odd", enabled: true });
+    await seedOnboardStep(api.id, "qa", "done", { suggestedPhrases: { getQuote: " Last price: ", getOdd: "two\nlines", missing: "x" } });
+    expect(await getSuggestedPhrases(getSql(), api.id)).toEqual({ [quote.id]: "Last price:" });
+    await getSql()`delete from onboard_steps where api_id = ${api.id}`;
+    expect(await getSuggestedPhrases(getSql(), api.id)).toEqual({});
   });
 });

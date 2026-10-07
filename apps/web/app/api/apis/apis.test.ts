@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getSql } from "@/lib/db";
 import { resetDb } from "@/test/db";
 import { seedSeller } from "@/test/factories";
@@ -59,20 +59,49 @@ describe("POST /api/apis (Setup)", () => {
       mode: "samples", baseUrl: "https://price.example.dev/v1", samples: "GET /price?symbol=ADA\nGET /coins/{id=cardano}", ...o,
     });
 
-    it("stores the samples and points the ownership check at the proof file in the base folder", async () => {
+    afterEach(() => vi.unstubAllEnvs());
+
+    it("is refused in plain words while SAMPLES_INTAKE is off, and stores nothing", async () => {
+      vi.stubEnv("SAMPLES_INTAKE", "");
+      const seller = await seedSeller();
+      const res = await POST(jsonRequest("/api/apis", { cookie: cookieFor(seller), body: samplesBody() }));
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({
+        error: "Listing an API from example requests isn't available yet. Paste the link to your OpenAPI description instead.",
+      });
+      expect(await getSql()`select 1 from apis where seller_id = ${seller.id}`).toHaveLength(0);
+      // An OpenAPI link still works.
+      const link = await POST(jsonRequest("/api/apis", { cookie: cookieFor(seller), body: { openapiUrl: "https://price.example.dev/openapi.json" } }));
+      expect(link.status).toBe(201);
+    });
+
+    it("stores the samples with no OpenAPI link, and the base's origin", async () => {
       const seller = await seedSeller();
       const res = await POST(jsonRequest("/api/apis", { cookie: cookieFor(seller), body: samplesBody() }));
       expect(res.status).toBe(201);
       const { apiId } = (await res.json()) as { apiId: string };
-      const [row] = await getSql()<{ origin: string; openapiUrl: string; intakeKind: string; samples: unknown; name: string }[]>`
+      const [row] = await getSql()<{ origin: string; openapiUrl: string | null; intakeKind: string; samples: unknown; name: string }[]>`
         select origin, openapi_url, intake_kind, samples, name from apis where id = ${apiId}`;
       expect(row).toEqual({
         origin: "https://price.example.dev",
-        openapiUrl: "https://price.example.dev/v1/hirakumi-verify.json",
+        openapiUrl: null,
         intakeKind: "samples",
         samples: { base: "https://price.example.dev/v1", lines: "GET /price?symbol=ADA\nGET /coins/{id=cardano}" },
         name: "price.example.dev",
       });
+    });
+
+    it("dedupes by seller and samples base: another base, or another seller, is another API", async () => {
+      const seller = await seedSeller();
+      const send = (cookie: string, body: Record<string, unknown>) => POST(jsonRequest("/api/apis", { cookie, body }));
+      const id = async (r: Response) => ((await r.json()) as { apiId: string }).apiId;
+      const a = await id(await send(cookieFor(seller), samplesBody()));
+      const v2 = await id(await send(cookieFor(seller), samplesBody({ baseUrl: "https://price.example.dev/v2" })));
+      expect(v2).not.toBe(a);
+      const theirs = await id(await send(cookieFor(await seedSeller()), samplesBody()));
+      expect(theirs).not.toBe(a);
+      const [n] = await getSql()<{ n: number }[]>`select count(*)::int as n from apis where id in (${a}, ${v2}, ${theirs})`;
+      expect(n.n).toBe(3);
     });
 
     it("the same samples twice return the same API; corrected samples replace the earlier API, not add a second", async () => {

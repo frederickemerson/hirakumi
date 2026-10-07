@@ -39,7 +39,7 @@ const seedsOwnBase = (state: string) => (ACTIVE_LISTING_STATES as readonly strin
 
 export async function seedApi(
   pool: pg.Pool,
-  o: { state?: string; name?: string; openapiUrl?: string; sokosumiTaskId?: string | null; sellerId?: string; pathPrefix?: string } = {},
+  o: { state?: string; name?: string; openapiUrl?: string | null; sokosumiTaskId?: string | null; sellerId?: string; pathPrefix?: string } = {},
 ): Promise<string> {
   const sellerId = o.sellerId ?? `sel_${rand()}`;
   const apiId = `api_${rand()}`;
@@ -50,7 +50,7 @@ export async function seedApi(
   await pool.query(
     `insert into apis (id, seller_id, name, origin, openapi_url, state, sokosumi_task_id, path_prefix)
      values ($1, $2, $3, 'https://price.example.dev', $4, $5, $6, $7)`,
-    [apiId, sellerId, o.name ?? "Price API", o.openapiUrl ?? "https://price.example.dev/openapi.json", state, o.sokosumiTaskId ?? null, pathPrefix],
+    [apiId, sellerId, o.name ?? "Price API", o.openapiUrl === undefined ? "https://price.example.dev/openapi.json" : o.openapiUrl, state, o.sokosumiTaskId ?? null, pathPrefix],
   );
   return apiId;
 }

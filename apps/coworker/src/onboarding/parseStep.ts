@@ -1,5 +1,5 @@
 import {
-  checkSpecBinding, judgeListingBase, listActiveOnOrigin, newId, parseSampleLines, SampleError, sha256Hex, specFromSamples, type QueryFn,
+  AMBIGUOUS_PATH, judgeListingBase, listActiveOnOrigin, newId, parseSampleLines, SampleError, sha256Hex, specFromSamples, type QueryFn,
 } from "@hirakumi/core";
 import type pg from "pg";
 import { withTx } from "../db.js";
@@ -8,32 +8,64 @@ import { enqueueMessage } from "../messages.js";
 import { describeAuthHint, parseOpenApi, type ParseResult } from "../openapi/parse.js";
 import { finishStep, runStep, type StepOutcome } from "../steps.js";
 
-export type ParseDeps = { pool: pg.Pool; fetchSpec: (url: string) => Promise<string>; now?: () => Date };
+/** allowInsecure: an http://localhost base is accepted (local development only, ALLOW_INSECURE_UPSTREAM=1). */
+export type ParseDeps = { pool: pg.Pool; fetchSpec: (url: string) => Promise<string>; now?: () => Date; allowInsecure?: boolean };
 
-/** intake → parsed: fetch + parse the spec, insert operations (all disabled), save the LLM context. */
 /**
- * Where the operations live (review I7). servers[0].url may be absolute or relative to the OpenAPI file.
- * The seller proves ownership by adding a code (x-hirakumi-verify) to this OpenAPI file, which only vouches
- * for APIs on the file's own origin and at or under its folder. A server elsewhere is refused now, before
- * the seller reaches the ownership step (the gateway re-checks the same rule when it reads the code).
+ * Hosts that serve files, never the seller's API. An OpenAPI file there needs a full servers[0] URL: a relative one
+ * (or none) would make the file host the API.
  */
-function serverPathPrefix(serverUrl: string | null, openapiUrl: string, origin: string): string {
-  if (!serverUrl) return checked("/", null, openapiUrl, origin);
-  let base: URL;
-  try { base = new URL(serverUrl, openapiUrl); } catch { throw new PermanentError(`The servers URL in your OpenAPI file is not a valid link: ${serverUrl}`); }
-  if (base.origin !== new URL(origin).origin) {
+const FILE_HOSTS = new Set([
+  "raw.githubusercontent.com", "gist.githubusercontent.com", "github.com", "gist.github.com", "gitlab.com", "bitbucket.org", "cdn.jsdelivr.net",
+]);
+
+/**
+ * Where the operations live (review I7): the API's origin and base path, from servers[0].url. The OpenAPI file is
+ * not part of ownership (the seller proves the base URL with a response header), so it may be hosted anywhere.
+ * An absolute servers[0] names the API wherever the file is. A relative one resolves against the file's link,
+ * and no servers means the file's origin and "/". For example requests, `ref` is the base the seller gave.
+ */
+export function apiBase(serverUrl: string | null, ref: string, allowInsecure = false): { origin: string; pathPrefix: string } {
+  let refUrl: URL;
+  try {
+    refUrl = new URL(ref);
+  } catch {
+    throw new PermanentError(`The link ${ref} is not a valid URL.`);
+  }
+  let absolute = false;
+  if (serverUrl) {
+    try {
+      new URL(serverUrl);
+      absolute = true;
+    } catch { /* relative */ }
+  }
+  if (!absolute && FILE_HOSTS.has(refUrl.hostname)) {
     throw new PermanentError(
-      `Your OpenAPI file says the API runs on ${base.origin}, but the file itself is on ${new URL(origin).origin}. The ownership code in your OpenAPI file only covers its own host, so host the OpenAPI file on ${base.origin} and paste that link instead.`,
+      `Your OpenAPI file is on ${refUrl.hostname}, which can't be where your API runs. ` +
+        "Set the first servers URL in the file to your API's full base URL, for example https://api.example.com/v1, then try again.",
     );
   }
+  let base: URL;
+  try {
+    base = new URL(serverUrl ?? "/", refUrl);
+  } catch {
+    throw new PermanentError(`The servers URL in your OpenAPI file is not a valid link: ${serverUrl}`);
+  }
+  const what = `Your API's base URL ${serverUrl ?? base.origin}`;
+  const local = base.hostname === "localhost" || base.hostname === "127.0.0.1";
+  if (base.protocol !== "https:" && !(allowInsecure && base.protocol === "http:" && local)) throw new PermanentError(`${what} must start with https://`);
+  if (base.username || base.password) throw new PermanentError(`${what} has a username or password. Remove them.`);
+  // "api.example.com." names the same host but is a different origin and listing base: one spelling only.
+  if (base.hostname.endsWith(".")) throw new PermanentError(`${what} has a dot at the end of its host name. Remove it.`);
+  if (base.search !== "" || base.hash !== "" || /[?#]/.test(serverUrl ?? "")) throw new PermanentError(`${what} has a ?query or #fragment. Use a plain base URL.`);
+  if (/\{|%7b/i.test(serverUrl ?? "") || /%7b/i.test(base.pathname)) throw new PermanentError(`${what} has a {variable} with no default. Give it a default or write the full URL.`);
+  if (AMBIGUOUS_PATH.test(base.pathname) || (serverUrl ?? "").includes("\\")) {
+    throw new PermanentError(`${what} has an encoded slash, dot or a ';' in its path. Use a plain path.`);
+  }
+  // The ownership check requests exactly this base; an empty segment would make it a second spelling of another folder.
+  if (base.pathname.includes("//")) throw new PermanentError(`${what} has two slashes in a row in its path. Use a plain path.`);
   const prefix = base.pathname.replace(/\/+$/, "");
-  return checked(prefix === "" ? "/" : prefix, serverUrl, openapiUrl, origin);
-}
-
-function checked(pathPrefix: string, serverUrl: string | null, openapiUrl: string, origin: string): string {
-  const binding = checkSpecBinding({ openapiUrl, origin, pathPrefix, serverUrl });
-  if (!binding.ok) throw new PermanentError(binding.detail);
-  return pathPrefix;
+  return { origin: base.origin, pathPrefix: prefix === "" ? "/" : prefix };
 }
 
 /**
@@ -52,8 +84,7 @@ type Samples = { base: string; lines: string };
 
 /**
  * Any API without an OpenAPI file: build the document from the seller's example requests (checked again here,
- * not trusted from intake), then parse it like any other. servers[0] is the base, so the folder binding with
- * the proof file (openapi_url) is checked the same way.
+ * not trusted from intake), then parse it like any other. servers[0] is the base, checked by apiBase like any other.
  */
 function specTextFromSamples(s: Samples, name: string): string {
   try {
@@ -77,20 +108,30 @@ export function keyNote(parsed: Pick<ParseResult, "operations" | "authHint">): s
 
 export async function parseStep(deps: ParseDeps, apiId: string): Promise<StepOutcome> {
   return runStep(deps.pool, apiId, "parse", async () => {
-    const { rows } = await deps.pool.query<{ openapi_url: string; origin: string; name: string; samples: Samples | null }>(
-      `select openapi_url, origin, name, samples from apis where id = $1`, [apiId]);
+    const { rows } = await deps.pool.query<{ openapi_url: string | null; name: string; samples: Samples | null }>(
+      `select openapi_url, name, samples from apis where id = $1`, [apiId]);
     if (!rows[0]) throw new PermanentError(`API ${apiId} no longer exists.`);
-    const fromSamples = rows[0].samples !== null;
-    const text = fromSamples ? specTextFromSamples(rows[0].samples!, rows[0].name) : await deps.fetchSpec(rows[0].openapi_url);
+    const { samples, openapi_url: openapiUrl } = rows[0];
+    if (!samples && !openapiUrl) throw new PermanentError(`API ${apiId} has neither an OpenAPI link nor example requests.`);
+    const fromSamples = samples !== null;
+    const text = samples ? specTextFromSamples(samples, rows[0].name) : await deps.fetchSpec(openapiUrl!);
     const parsed = await parseOpenApi(text);
-    const pathPrefix = serverPathPrefix(parsed.serverUrl, rows[0].openapi_url, rows[0].origin);
-    await refuseIfListedByOther(deps.pool, apiId, rows[0].origin, pathPrefix);
+    // apis.origin was only a placeholder (the link's origin) until now: the base comes from servers[0].
+    const { origin, pathPrefix } = apiBase(parsed.serverUrl, samples ? samples.base : openapiUrl!, deps.allowInsecure);
+    await refuseIfListedByOther(deps.pool, apiId, origin, pathPrefix);
     if (parsed.operations.length === 0) {
       const why = parsed.skipped.map((s) => `${s.method} ${s.path}: ${s.reason}`).join("; ");
       throw new PermanentError(`Your ${fromSamples ? "example requests have" : "OpenAPI file has"} no endpoints we can sell yet${why ? ` (${why})` : ""}.`);
     }
+    // With no name given, intake names the API after the link's host. The file may be on GitHub or a docs site,
+    // so that name follows the API's own host now that it is known. A name the seller typed stays.
+    const linkHost = openapiUrl ? new URL(openapiUrl).hostname : null;
+    const name = linkHost !== null && rows[0].name === linkHost ? new URL(origin).hostname : rows[0].name;
     await withTx(deps.pool, async (c) => {
-      const moved = await c.query(`update apis set state = 'parsed', openapi_sha256 = $2, path_prefix = $3 where id = $1 and state = 'intake'`, [apiId, sha256Hex(text), pathPrefix]);
+      const moved = await c.query(
+        `update apis set state = 'parsed', openapi_sha256 = $2, path_prefix = $3, origin = $4, name = $5 where id = $1 and state = 'intake'`,
+        [apiId, sha256Hex(text), pathPrefix, origin, name],
+      );
       if (moved.rowCount !== 1) return;
       for (const op of parsed.operations) {
         await c.query(

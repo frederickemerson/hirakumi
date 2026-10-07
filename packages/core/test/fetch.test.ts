@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import {
-  decodeBody, isBlockedAddress, safeFetch, UpstreamBlockedError, UpstreamTimeoutError, UpstreamTooLargeError,
+  decodeBody, isBlockedAddress, safeFetch, safeFetchWithHeaders, UpstreamBlockedError, UpstreamTimeoutError, UpstreamTooLargeError,
 } from "../src/fetch";
 
 let server: http.Server;
@@ -15,12 +15,23 @@ beforeAll(async () => {
     if (req.url === "/slow") { setTimeout(() => { res.writeHead(200); res.end("{}"); }, 1000); return; }
     if (req.url === "/bom.csv") { res.writeHead(200, { "content-type": "text/csv" }); res.end(Buffer.from("\uFEFFsym,price\nADA,0.35\n")); return; }
     if (req.url === "/latin1.csv") { res.writeHead(200, { "content-type": "text/csv; charset=ISO-8859-1" }); res.end(Buffer.from("café,1\n", "latin1")); return; }
+    if (req.url === "/hdr-big") { res.writeHead(200, { "x-hirakumi-verify": "hkv_a" }); res.end("x".repeat(2_000_000)); return; }
+    if (req.url === "/hdr-stream") { res.writeHead(200, { "x-hirakumi-verify": "hkv_a", "content-type": "text/event-stream" }); res.write("data: 1\n\n"); return; }
+    if (req.url === "/hdr-slow-head") { setTimeout(() => { res.writeHead(200, { "x-hirakumi-verify": "hkv_a" }); res.end(); }, 1000); return; }
+    const hdr = /^\/hdr\/(\d{3})$/.exec(req.url ?? "");
+    if (hdr) {
+      res.statusCode = Number(hdr[1]);
+      res.setHeader("x-hirakumi-verify", ["hkv_a", "hkv_b"]);
+      if (res.statusCode === 302) res.setHeader("location", `${base}/hdr/200`);
+      res.end(res.statusCode === 302 ? "" : "page");
+      return;
+    }
     res.writeHead(404); res.end();
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
-afterAll(async () => { await new Promise((r) => server.close(r)); });
+afterAll(async () => { server.closeAllConnections(); await new Promise((r) => server.close(r)); });
 afterEach(() => { delete process.env.ALLOW_INSECURE_UPSTREAM; });
 
 describe("isBlockedAddress", () => {
@@ -94,6 +105,51 @@ describe("safeFetch with ALLOW_INSECURE_UPSTREAM=1 (local stubs)", () => {
   it("times out", async () => {
     process.env.ALLOW_INSECURE_UPSTREAM = "1";
     await expect(safeFetch(`${base}/slow`, { method: "GET" }, { timeoutMs: 100 })).rejects.toBeInstanceOf(UpstreamTimeoutError);
+  });
+});
+
+describe("safeFetchWithHeaders", () => {
+  it.each([200, 404, 500])("returns the headers on a %s, repeated ones as a list", async (status) => {
+    process.env.ALLOW_INSECURE_UPSTREAM = "1";
+    const r = await safeFetchWithHeaders(`${base}/hdr/${status}`, { method: "GET" });
+    expect(r).toMatchObject({ status });
+    expect(r).not.toHaveProperty("body");
+    expect(r.headers["x-hirakumi-verify"]).toEqual(["hkv_a", "hkv_b"]);
+  });
+  it("returns a 3xx with its headers and does not follow it", async () => {
+    process.env.ALLOW_INSECURE_UPSTREAM = "1";
+    const r = await safeFetchWithHeaders(`${base}/hdr/302`, { method: "GET" });
+    expect(r).toMatchObject({ status: 302 });
+    expect(r.headers.location).toBe(`${base}/hdr/200`);
+    expect(r.headers["x-hirakumi-verify"]).toEqual(["hkv_a", "hkv_b"]);
+  });
+  it("keeps the SSRF guard and the timeout to the headers", async () => {
+    await expect(safeFetchWithHeaders("https://169.254.169.254/", { method: "GET" })).rejects.toBeInstanceOf(UpstreamBlockedError);
+    process.env.ALLOW_INSECURE_UPSTREAM = "1";
+    await expect(safeFetchWithHeaders(`${base}/slow`, { method: "GET" }, { timeoutMs: 100 })).rejects.toBeInstanceOf(UpstreamTimeoutError);
+    await expect(safeFetchWithHeaders(`${base}/hdr-slow-head`, { method: "GET" }, { timeoutMs: 100 })).rejects.toBeInstanceOf(UpstreamTimeoutError);
+  });
+  it("never reads the body: a large or never-ending body still gives its headers", async () => {
+    process.env.ALLOW_INSECURE_UPSTREAM = "1";
+    const big = await safeFetchWithHeaders(`${base}/hdr-big`, { method: "GET" }, { timeoutMs: 1000 });
+    expect(big).toMatchObject({ status: 200, headers: { "x-hirakumi-verify": "hkv_a" } });
+    const stream = await safeFetchWithHeaders(`${base}/hdr-stream`, { method: "GET" }, { timeoutMs: 300 });
+    expect(stream).toMatchObject({ status: 200, headers: { "x-hirakumi-verify": "hkv_a" } });
+    // Nothing fires later: the dropped body leaves no stray timeout or stream error.
+    const errors: unknown[] = [];
+    const onErr = (e: unknown) => errors.push(e);
+    process.on("uncaughtException", onErr);
+    process.on("unhandledRejection", onErr);
+    try { await new Promise((r) => setTimeout(r, 400)); } finally {
+      process.off("uncaughtException", onErr);
+      process.off("unhandledRejection", onErr);
+    }
+    expect(errors).toEqual([]);
+  });
+  it("safeFetch itself still returns no headers and refuses a 3xx", async () => {
+    process.env.ALLOW_INSECURE_UPSTREAM = "1";
+    expect(await safeFetch(`${base}/hdr/200`, { method: "GET" })).not.toHaveProperty("headers");
+    await expect(safeFetch(`${base}/hdr/302`, { method: "GET" })).rejects.toMatchObject({ name: "UpstreamRedirectError" });
   });
 });
 

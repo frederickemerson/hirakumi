@@ -3,7 +3,8 @@
  * "Try it live" is the same button on every surface that shows a live API: a working link when it is
  * healthy, a disabled button with the reason when it is Down. Each page below renders against the test DB.
  */
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
+import { inferTextRule } from "@hirakumi/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getSql } from "@/lib/db";
 import { DEMO_API_ID } from "@/lib/demo";
@@ -12,6 +13,7 @@ import type { Health } from "@/lib/types";
 import { resetDb } from "@/test/db";
 import { seedApi, seedOperation, seedPack, seedRule, seedSeller } from "@/test/factories";
 import { TRY_DOWN_REASON } from "@/components/try-live-link";
+import { STATUS_ONLY_LABEL } from "@/components/status-only-note";
 
 const session = { sellerId: "", addr: "addr_test1qseller" };
 vi.mock("@/lib/page-auth", async () => ({
@@ -103,5 +105,41 @@ describe("Try it live on every live-API surface", () => {
     const links = screen.getAllByRole("link", { name: "Try a live API" });
     expect(links.length).toBeGreaterThanOrEqual(3);
     for (const l of links) expect(l).toHaveAttribute("href", `/p/${DEMO_API_ID}/try`);
+  });
+});
+
+describe("a status-only promise is labelled for buyers", () => {
+  beforeEach(resetDb);
+
+  async function liveTextApi(id?: string) {
+    const apiId = await liveApi("healthy", id);
+    await getSql()`delete from rules`;
+    const [op] = await getSql()<{ id: string }[]>`select id from operations where api_id = ${apiId}`;
+    await seedRule(op.id, { definition: inferTextRule("text/plain", ["BTC 64000", "ETH 3100"]), plainEnglish: "A plain text answer." });
+    return apiId;
+  }
+
+  it("on the public page, the try page and /demo", async () => {
+    const apiId = await liveTextApi();
+    const { default: PublicPage } = await import("./p/[apiId]/page");
+    const { default: TryPage } = await import("./p/[apiId]/try/page");
+    render(await PublicPage({ params: Promise.resolve({ apiId }) }));
+    expect(screen.getByTestId("status-only")).toHaveTextContent(STATUS_ONLY_LABEL);
+    cleanup();
+    render(await TryPage({ params: Promise.resolve({ apiId }) }));
+    expect(screen.getByTestId("status-only")).toHaveTextContent(STATUS_ONLY_LABEL);
+    cleanup();
+    await resetDb();
+    await liveTextApi(DEMO_API_ID);
+    const { default: Demo } = await import("./demo/page");
+    render(await Demo());
+    expect(screen.getByTestId("status-only")).toHaveTextContent(STATUS_ONLY_LABEL);
+  });
+
+  it("not for a JSON promise", async () => {
+    const apiId = await liveApi("healthy");
+    const { default: PublicPage } = await import("./p/[apiId]/page");
+    render(await PublicPage({ params: Promise.resolve({ apiId }) }));
+    expect(screen.queryByTestId("status-only")).toBeNull();
   });
 });

@@ -93,16 +93,16 @@ describe("judging a base against active listings", () => {
   });
 });
 
-describe("early check on a submitted link", () => {
-  it("is taken when another account lists a base at or above the spec's folder", () => {
-    const others = [listed({ pathPrefix: "/" })];
-    expect(takenEarly({ sellerId: "sel_me", openapiUrl: "https://H.com/openapi.json" }, others)).toBe(true);
-    expect(takenEarly({ sellerId: "sel_me", openapiUrl: "https://h.com/v1/openapi.json" }, others)).toBe(true);
+describe("early check on a known base", () => {
+  const me = { sellerId: "sel_me", origin: "https://H.com", pathPrefix: "/v1" };
+  it("is taken when another account lists the same base, a folder above it or one below it", () => {
+    for (const pathPrefix of ["/v1", "/v1/", "/", "", "/v1/x"]) expect(takenEarly(me, [listed({ pathPrefix })]), pathPrefix).toBe(true);
   });
-  it("is not taken when the other base might not overlap, or it is the seller's own", () => {
-    expect(takenEarly({ sellerId: "sel_me", openapiUrl: "https://h.com/openapi.json" }, [listed({ pathPrefix: "/v1" })])).toBe(false);
-    expect(takenEarly({ sellerId: "sel_me", openapiUrl: "https://h.com/v10/openapi.json" }, [listed({ pathPrefix: "/v1" })])).toBe(false);
-    expect(takenEarly({ sellerId: "sel_other", openapiUrl: "https://h.com/openapi.json" }, [listed()])).toBe(false);
+  it("is not taken by a sibling, a look-alike, another origin or the seller's own listing", () => {
+    expect(takenEarly(me, [listed({ pathPrefix: "/v2" })])).toBe(false);
+    expect(takenEarly(me, [listed({ pathPrefix: "/v10" })])).toBe(false);
+    expect(takenEarly(me, [listed({ origin: "https://other.com", pathPrefix: "/" })])).toBe(false);
+    expect(takenEarly(me, [listed({ sellerId: "sel_me", pathPrefix: "/v1" })])).toBe(false);
   });
 });
 

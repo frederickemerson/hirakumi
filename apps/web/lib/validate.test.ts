@@ -15,15 +15,23 @@ describe("validateOpenApiUrl", () => {
     ["not a url", "That doesn't look like a web link. It should start with https://"],
     ["http://price.example.dev/openapi.json", "The link must start with https://"],
     ["https://user:pw@price.example.dev/openapi.json", "Remove the username and password from the link. Hirakumi only supports public API descriptions."],
-    // audit I1: a query or a content-serving route would prove the whole host from one file
+    // a query often carries an access token, and the link is stored and shown
     ["https://victim.example/proxy?u=https://evil.example/openapi.json", "Remove the ?query from the link."],
     ["https://price.example.dev/openapi.json?v=2", "Remove the ?query from the link."],
-    ["https://price.example.dev/openapi.json#top", "Remove the #fragment from the link."],
+    ["https://price.example.dev/openapi.json?", "Remove the ?query from the link."],
     ["https://price.example.dev./openapi.json", "Remove the dot at the end of the host name in the link."],
     ["https://price.example.dev.:8443/openapi.json", "Remove the dot at the end of the host name in the link."],
   ])("rejects %j", (input, message) => {
     expect(() => validateOpenApiUrl(input, false)).toThrow(ValidationError);
     expect(() => validateOpenApiUrl(input, false)).toThrow(message);
+  });
+
+  it("accepts a file hosted anywhere, and drops a #fragment", () => {
+    expect(validateOpenApiUrl("https://raw.githubusercontent.com/acme/prices/main/openapi.yaml#top", false)).toEqual({
+      url: "https://raw.githubusercontent.com/acme/prices/main/openapi.yaml",
+      origin: "https://raw.githubusercontent.com",
+      hostname: "raw.githubusercontent.com",
+    });
   });
 
   it("allows http://localhost only when insecure upstreams are allowed", () => {

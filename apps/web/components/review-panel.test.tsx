@@ -13,7 +13,13 @@ const promises: RuleView[] = [{
   operationId: "op_1", opId: "getPrice", method: "GET", path: "/price", version: 1, hash: "sha256:abc",
   definition: { version: 1, schema: { properties: { last_updated: { type: "string", maxAgeSeconds: 300 } } } },
   plainEnglish: 'The response has a number "price" and a "last_updated" time under 5 minutes old.',
+  statusOnly: false, requiredPhrases: [],
 }];
+const STATUS_ONLY_NOTICE = "This promise only checks the status. Add a phrase every good answer contains before you publish. Without a phrase, an error page sent with status 200 could count as a good answer.";
+const statusOnly: RuleView = {
+  ...promises[0], operationId: "op_2", path: "/quote", statusOnly: true,
+  definition: { version: 1, contentType: "text/plain", schema: { type: "string", minLength: 1 } },
+};
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -34,6 +40,57 @@ describe("ReviewPanel", () => {
     render(<ReviewPanel apiId="api_1" state="rule_built" promises={[promises[0], csv]} pack={null} />);
     expect(screen.getAllByText(/checked as text/)).toHaveLength(1);
     expect(screen.getByText("Answers are CSV (text/csv), checked as text.")).toBeInTheDocument();
+  });
+
+  it("offers a phrase field only for a text promise; a status-only one needs it before publishing", () => {
+    render(<ReviewPanel apiId="api_1" state="priced" promises={[promises[0], statusOnly]} pack={null} />);
+    expect(screen.getAllByLabelText(/^Every good answer contains/)).toHaveLength(1);
+    expect(screen.getByLabelText("Every good answer contains (required)")).toHaveValue("");
+    expect(screen.getByTestId("status-only-notice")).toHaveTextContent(STATUS_ONLY_NOTICE);
+    expect(screen.getByText("Type a word or label every good answer contains, like Price or Symbol. Capital letters don't matter.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Publish at this price" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save price" })).toBeEnabled();
+    expect(screen.getByTestId("publish-needs-phrase")).toHaveTextContent(
+      "Add a phrase every good answer contains for GET /quote before publishing. Without a phrase, an error page sent with status 200 could count as a good answer.",
+    );
+  });
+
+  it("prefills QA's suggested phrase for a status-only promise and saves it as confirmed", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ ok: true, version: 2 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<ReviewPanel apiId="api_1" state="priced" promises={[statusOnly]} pack={null} suggestedPhrases={{ op_2: "Last price:" }} />);
+    expect(screen.getByLabelText("Every good answer contains (required)")).toHaveValue("Last price:");
+    expect(screen.getByText("We found this in every good test answer and not in the wrong one. Check it or change it.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add phrase" }));
+    await vi.waitFor(() => expect(nav.refresh).toHaveBeenCalled());
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ operationId: "op_2", phrase: "Last price:" });
+  });
+
+  it("ignores a suggestion for a promise that already checks more than the status", () => {
+    const csv: RuleView = { ...promises[0], operationId: "op_3", definition: { version: 1, contentType: "text/csv", schema: { type: "string", pattern: "^symbol,price" } } };
+    render(<ReviewPanel apiId="api_1" state="priced" promises={[csv]} pack={null} suggestedPhrases={{ op_3: "symbol" }} />);
+    expect(screen.getByLabelText("Every good answer contains (optional)")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Publish at this price" })).toBeEnabled();
+    expect(screen.queryByTestId("publish-needs-phrase")).toBeNull();
+  });
+
+  it("saves a phrase for a text promise and refreshes; shows the phrases already required", async () => {
+    const text: RuleView = {
+      ...promises[0], operationId: "op_2", requiredPhrases: ["price:"],
+      definition: { version: 1, contentType: "text/plain", schema: { type: "string", allOf: [{ pattern: "\\S" }, { pattern: "price:" }] } },
+    };
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ ok: true, version: 3 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<ReviewPanel apiId="api_1" state="priced" promises={[text]} pack={null} />);
+    expect(screen.queryByTestId("status-only-notice")).toBeNull();
+    expect(screen.getByText('Every good answer contains: "price:"')).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Every good answer contains (optional)"), "BTC");
+    await user.click(screen.getByRole("button", { name: "Add phrase" }));
+    await vi.waitFor(() => expect(nav.refresh).toHaveBeenCalled());
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/apis/api_1/promise-phrase");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ operationId: "op_2", phrase: "BTC" });
   });
 
   it("suggests 100 calls for 2 tUSDM and shows the per-call price", () => {
