@@ -31,7 +31,7 @@ export async function POST(req: Request): Promise<Response> {
   const body = await readJson(req);
   if (!body) return errorJson(400, "Paste the link to your OpenAPI description, or your base URL and example requests.");
   if (body.mode === "samples") {
-    // Behind SAMPLES_INTAKE until the coworker that reads example requests runs (lib/env.ts), and needs migration 0014.
+    // Behind SAMPLES_INTAKE until the coworker that reads example requests runs (lib/env.ts), and needs migrations 0014 and 0015.
     if (!env.samplesIntake()) return errorJson(400, SAMPLES_OFF);
     const updating = await updatingResponse(getSql());
     if (updating) return updating;

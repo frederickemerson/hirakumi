@@ -309,7 +309,7 @@ export async function getOwnershipTarget(sql: Sql, apiId: string): Promise<{ id:
   return row ?? null;
 }
 
-/** This API's open verification code (kind 'header'); at most one exists (unique index, migration 0014). */
+/** This API's open verification code (kind 'header'); at most one exists (unique index, migration 0015). */
 export async function getOpenVerifyCode(sql: Sql, apiId: string): Promise<{ id: string; token: string } | null> {
   const [row] = await sql<{ id: string; token: string }[]>`
     select id, token from challenges

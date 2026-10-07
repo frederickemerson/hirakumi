@@ -12,7 +12,7 @@ export const VERIFY_PASS_TTL_MINUTES = 30;
  */
 export type VerifyCode = { id: string; code: string; passedAt: string | null };
 
-/** This API's open code, or null. At most one exists per API (unique index, migration 0014). */
+/** This API's open code, or null. At most one exists per API (unique index, migration 0015). */
 export async function findVerifyCode(sql: Sql, apiId: string): Promise<VerifyCode | null> {
   const [row] = await sql<VerifyCode[]>`
     select id, token as code, proof->>'passedAt' as passed_at from challenges

@@ -16,13 +16,13 @@
 
 ## Final checks (T-4h → T-1h)
 - [ ] `pnpm test` green on `main`; the tag `submission` is pushed
-- [ ] Deploy order for any-API (migration 0014): only the gateway applies migrations (at boot), and the web app and the coworker read `apis.intake_kind` / `apis.samples`. The web app tolerates 0014 not having run yet (it hides the new features and answers "being updated"), and samples intake stays off until `SAMPLES_INTAKE=1`.
-  1. Gateway: set `UPSTREAM_AUTH_PRIVATE_KEY`, restart it (it applies 0014 at boot; or run `pnpm --filter @hirakumi/db migrate` against Neon), and check `select 1 from schema_migrations where name = '0014_any_api_samples.sql'` returns a row.
+- [ ] Deploy order for any-API (migrations 0014 and 0015): only the gateway applies migrations (at boot), and the web app and the coworker read `apis.intake_kind` / `apis.samples`. The web app tolerates 0014 or 0015 not having run yet (it hides the new features and answers "being updated"), and samples intake stays off until `SAMPLES_INTAKE=1`.
+  1. Gateway: set `UPSTREAM_AUTH_PRIVATE_KEY`, restart it (it applies 0014 and 0015 at boot; or run `pnpm --filter @hirakumi/db migrate` against Neon), and check `select name from schema_migrations where name in ('0014_any_api_samples.sql', '0015_header_verify.sql')` returns both rows.
   2. Coworker: restart it on the new build.
   3. Web: set `UPSTREAM_AUTH_PUBLIC_KEY` on Vercel and promote the build.
   4. Only then set `SAMPLES_INTAKE=1` on Vercel and redeploy.
 
-  0014 also adds the `header` challenge kind that the new ownership check uses, so the gateway, the web app and the demo seller (which now sends `X-Hirakumi-Verify` on every response) go out together; open `openapi` codes are not carried over, so a seller mid-proof gets a new code.
+  0015 adds the `header` challenge kind that the new ownership check uses, so the gateway, the web app and the demo seller (which now sends `X-Hirakumi-Verify` on every response) go out together; open `openapi` codes are not carried over, so a seller mid-proof gets a new code.
 - [ ] No secrets in the repo: `git log -p | grep -E 'BUYER_MNEMONIC=|ADMIN_TOKEN=|PAYMENT_SERVICE_TOKEN=' ` returns nothing with a value
 - [ ] `DEMO_MODE=1` stays on and the price API mode is `ok` during judging
 - [ ] Buyer and purchasing wallets keep ≥ 10 tADA so judges can re-run the buyer
