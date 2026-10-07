@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { DoorDoodle } from "@/components/brand/doodles";
 import { WalletLogin } from "@/components/wallet-login";
@@ -28,16 +27,6 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
           Hirakumi runs on the Cardano preprod test network. Switch your wallet to preprod before you log in.
         </p>
       </div>
-      <Link
-        href="/demo"
-        className="group flex items-center justify-between gap-4 rounded-[2px] border-2 border-ink bg-ice px-5 py-4 text-body-lg transition-colors duration-150 hover:bg-frost"
-      >
-        <span>
-          <span className="block font-semibold">Explore the demo seller (read-only)</span>
-          <span className="block text-body text-graphite">A live API on preprod, its numbers and its public status page. No wallet needed.</span>
-        </span>
-        <span aria-hidden className="shrink-0 transition-transform duration-150 ease-[var(--ease-press)] group-hover:translate-x-1">→</span>
-      </Link>
     </section>
   );
 }
