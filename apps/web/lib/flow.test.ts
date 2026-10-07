@@ -22,6 +22,13 @@ describe("safeNextPath", () => {
     expect(safeNextPath("/\\evil.example")).toBe("/apis");
     expect(safeNextPath(undefined)).toBe("/apis");
   });
+
+  it("refuses paths a browser reads as another host once it strips tabs and newlines", () => {
+    expect(safeNextPath("/\t/evil.example")).toBe("/apis");
+    expect(safeNextPath("/\n/evil.example")).toBe("/apis");
+    expect(safeNextPath("/\r/evil.example")).toBe("/apis");
+    expect(safeNextPath("/apis?tab=sales#top")).toBe("/apis?tab=sales#top");
+  });
 });
 
 describe("isStale", () => {

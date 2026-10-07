@@ -19,9 +19,21 @@ export function stepForState(state: ApiState): Step {
   }
 }
 
+/**
+ * A same-site path to go to after login, else "/apis". The browser's own URL parser decides: a value it resolves to
+ * another origin (`//host`, `/\host`, or `/<tab>/host`, since parsers strip tabs and newlines) is refused.
+ */
 export function safeNextPath(raw: string | null | undefined): string {
-  if (!raw || !raw.startsWith("/") || raw.startsWith("//") || raw.startsWith("/\\")) return "/apis";
-  return raw;
+  if (!raw || !raw.startsWith("/")) return "/apis";
+  const base = "https://same-site.invalid";
+  let url: URL;
+  try {
+    url = new URL(raw, base);
+  } catch {
+    return "/apis";
+  }
+  if (url.origin !== base) return "/apis";
+  return url.pathname + url.search + url.hash;
 }
 
 export const STALE_AFTER_MS = 10 * 60 * 1000;
