@@ -324,6 +324,8 @@ export function chooseEndpointsPrompt(ops: ListedOp[], sellable: number): string
   return [
     `Found ${ops.length} endpoints; ${sellable} look sellable (read-only):`,
     ...ops.map(opLine),
+    // Sokosumi renders Markdown: without a blank line this sentence folds into the last list item.
+    "",
     "Next, choose the endpoints to sell: reply `sell 1` with their numbers (for example `sell 1 2`). " +
       "Endpoints marked [may change data] also need `readonly` at the end, to confirm they change nothing on your server.",
   ].join("\n");
