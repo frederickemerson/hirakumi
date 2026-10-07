@@ -182,6 +182,15 @@ describe("specFromSamples", () => {
     ]);
   });
 
+  it("keeps an integer too large for a JS number as a string, so its example is the value sent", () => {
+    const spec = specFromSamples({ title: "t", base: "https://h.com", samples: parseSampleLines("/x?id=9007199254740993&n=9007199254740991") });
+    const params = (spec.paths as Record<string, Record<string, { parameters: { name: string; schema: unknown }[] }>>)["/x"].get.parameters;
+    expect(params.map((p) => p.schema)).toEqual([
+      { type: "string", examples: ["9007199254740993"] },
+      { type: "integer", examples: [9007199254740991] },
+    ]);
+  });
+
   it("makes a parameter optional when a line leaves it out", () => {
     const spec = specFromSamples({ title: "t", base: "https://h.com", samples: parseSampleLines("/p?a=1&b=x\n/p?a=2") });
     const params = (spec.paths as Record<string, Record<string, { parameters: { name: string; required: boolean }[] }>>)["/p"].get.parameters;

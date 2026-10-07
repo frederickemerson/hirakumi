@@ -29,6 +29,10 @@ describe("adversarial: IP literal encodings stay blocked", () => {
     }
   });
 
+  it("blocks the IPv4 documentation and 6to4 relay ranges like their IPv6 counterparts", () => {
+    for (const ip of ["192.0.2.1", "198.51.100.7", "203.0.113.200", "192.88.99.1"]) expect(isBlockedAddress(ip)).toBe(true);
+    expect(isBlockedAddress("8.8.8.8")).toBe(false);
+  });
   it("isBlockedAddress treats non-IP input as blocked", () => {
     expect(isBlockedAddress("")).toBe(true);
     expect(isBlockedAddress("localhost")).toBe(true);

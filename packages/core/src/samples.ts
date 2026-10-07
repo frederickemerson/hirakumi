@@ -15,7 +15,7 @@ import { isUnambiguousKeyParamName, looksLikeSecret, paramHoldsSecret } from "./
  *
  * The API's key never goes in a line: every value becomes a public input example for buyers, and the lines are
  * stored as they are. A line with a credential parameter (api_key=…, access_token=…), a key-shaped value under any
- * name (?k=7f3a9c1e…) or a key elsewhere in it is refused, and
+ * name (?k=7f3a9c1e…) or a key elsewhere in it gets a warning (a name can't prove a key, so the line is kept), and
  * the seller adds the key on the ownership page instead, sealed so only the gateway can read it.
  *
  * Ownership is proven like any other API: the X-Hirakumi-Verify response header at the base URL (ownership.ts).
@@ -160,7 +160,7 @@ function parseLine(line: string, n: number, warnings: string[]): Sample {
       fail(`the request body must be JSON, for example {"q": "ada"}.`);
     }
   }
-  // Named key parameters were refused above with their name; this catches a key under any other name or in the body.
+  // Named key parameters were warned about above with their name; this catches a key under any other name or in the body.
   if (looksLikeSecret(line)) warn(`this line may have a key, token or password in it. ${KEY_ADVICE}`);
   return { method, path, pathParams, query, ...(body !== undefined ? { body } : {}) };
 }
@@ -187,7 +187,8 @@ type Json = Record<string, unknown>;
 
 /** A value written in a URL, typed the way a buyer would send it: integer, number or boolean when exact. */
 function typedExample(value: string): { type: string; example: unknown } {
-  if (/^-?(0|[1-9]\d{0,15})$/.test(value)) return { type: "integer", example: Number(value) };
+  // Only integers a JS number holds exactly; 9007199254740993 would become ...992, so it stays a string.
+  if (/^-?(0|[1-9]\d*)$/.test(value) && Number.isSafeInteger(Number(value))) return { type: "integer", example: Number(value) };
   if (/^-?(0|[1-9]\d*)\.\d+$/.test(value) && String(Number(value)) === value) return { type: "number", example: Number(value) };
   if (value === "true" || value === "false") return { type: "boolean", example: value === "true" };
   return { type: "string", example: value };

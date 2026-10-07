@@ -285,7 +285,13 @@ export function inferRuleFromResponses(good: UpstreamResult[], bad?: UpstreamRes
   if (types.length !== 1) throw new RuleInferenceError(`The answers came back with different content types (${types.join(", ")}). A promise needs one.`);
   const ct = types[0];
   if (isJsonMediaType(ct)) {
-    const samples = good.map((r) => JSON.parse(r.body) as unknown);
+    const samples = good.map((r) => {
+      try {
+        return JSON.parse(r.body) as unknown;
+      } catch {
+        throw new RuleInferenceError(`An answer says it is ${ct} but its body isn't valid JSON.`);
+      }
+    });
     let errorSample: unknown;
     if (bad) {
       try { errorSample = JSON.parse(bad.body); } catch { errorSample = bad.body; }

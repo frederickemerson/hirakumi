@@ -198,3 +198,9 @@ describe("media types module", () => {
     expect(pkg.exports["./media-types"]).toBe("./src/mediaTypes.ts");
   });
 });
+
+describe("inferRuleFromResponses with a JSON media type", () => {
+  it("says the answer isn't JSON with a RuleInferenceError, not a SyntaxError", () => {
+    expect(() => inferRuleFromResponses([res("not json", "application/json")])).toThrow(RuleInferenceError);
+  });
+});
