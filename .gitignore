@@ -17,3 +17,9 @@ deploy/masumi.env
 **/.tokens.json*
 **/.pending-payments.json*
 **/.escrow-keys.json*
+deploy/masumi.env.*
+!deploy/masumi.env.example
+*.pem
+*.key
+*.skey
+*.vkey
