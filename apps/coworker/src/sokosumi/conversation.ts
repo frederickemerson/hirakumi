@@ -42,6 +42,7 @@ const SUGGESTED_PRICE = `${formatTusdm(SUGGESTED_PACK.priceMicros)} tUSDM for ${
  * How ownership is proven, with the exact record: a DNS TXT record named _hirakumi.<host> holding the API's own code,
  * then one wallet signature. The API itself doesn't change. The code is not a secret (anyone can read DNS), so it is
  * safe in a task comment. Name is given the way DNS dashboards ask for it (the part before the domain) and in full.
+ * Sokosumi renders comments as Markdown, so the record's fields are code spans: a bare `_hirakumi` turns into italics.
  */
 export function ownershipMessage(api: Pick<TaskApi, "origin" | "pathPrefix">, code: string, link: string): string {
   const rec = verifyRecordFor(api.origin);
@@ -50,10 +51,11 @@ export function ownershipMessage(api: Pick<TaskApi, "origin" | "pathPrefix">, co
   const short = domain && rec.name.endsWith(`.${domain}`) ? rec.name.slice(0, -(domain.length + 1)) : rec.name;
   return [
     `Prove you own ${rec.host}: add this DNS TXT record where your domain's DNS is managed (your API itself doesn't change), then sign once with your Cardano wallet (no payment): ${link}`,
-    "- Type: TXT",
-    short === rec.name ? `- Name: ${rec.name}` : `- Name: ${short} (the full name is ${rec.name})`,
-    `- Value: ${code}`,
-    "The page checks every 10 seconds and unlocks signing once the record is live.",
+    "- Type: `TXT`",
+    short === rec.name ? `- Name: \`${rec.name}\`` : `- Name: \`${short}\` (the full name is \`${rec.name}\`)`,
+    `- Value: \`${code}\``,
+    "",
+    "Open the link to finish: the page checks every 10 seconds and unlocks the wallet signature once the record is live.",
   ].join("\n");
 }
 
