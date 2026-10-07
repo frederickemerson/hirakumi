@@ -27,7 +27,7 @@ Hirakumi takes any read-only API to the agent market. The seller gives an OpenAP
 - **Seller API keys:** sealed in the web app with the gateway's X25519 public key and bound to the API's id, origin, path and placement. Only the gateway can open a key, adds it only to calls inside the proven origin and folder, and withholds any answer that contains it.
 
 ### Stack
-TypeScript throughout: Express gateway, Next.js web app, Node coworker, Postgres (Neon) with plain SQL migrations, Vitest (about 1,770 tests across workspaces), Aiken for the validator, Docker Compose and Caddy on AWS EC2, Vercel for the web app.
+TypeScript throughout: Express gateway, Next.js web app, Node coworker, Postgres (Neon) with plain SQL migrations, Vitest (over 2,100 tests across 10 workspaces), Aiken for the validator, Docker Compose and Caddy on AWS EC2, Vercel for the web app.
 
 ## Measured on preprod
 - x402 packs settled in 16.5 s and 9.4 s, paid straight to the seller; paid calls through the gateway returned in about 0.3 s.
