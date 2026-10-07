@@ -8,7 +8,7 @@ import { findSelfTestPack, saveSelfTestPack } from "./self-test-repo";
 import { paySelfPayment, prepareSelfPayment, SelfPayError, type BuildPayment, type SelfPayTarget } from "./self-test-wallet";
 import { createBuyHandler } from "./try-buy";
 import { createReceiptsHandler, createTryHandler } from "./try-handler";
-import { demoBudgetProblem, tryEscrowStore } from "./try-repo";
+import { reserveTryCall, tryEscrowStore } from "./try-repo";
 import type { Api } from "./types";
 
 /**
@@ -79,7 +79,7 @@ export function createSelfTestHandlers(d: SelfTestDeps) {
         gatewayBase: d.gatewayBase,
         pack: (apiId) => findSelfTestPack(o.sql, apiId, o.sellerId),
         allow: d.allowCall,
-        budget: (_apiId, token) => demoBudgetProblem(o.sql, token, CALLS_PER_HOUR),
+        budget: (_apiId, token) => reserveTryCall(o.sql, token, CALLS_PER_HOUR),
         escrow: tryEscrowStore(o.sql),
         receiptsUrl: (apiId) => `${sellerTryPath(apiId)}/receipts`,
         fetchImpl: d.fetchImpl,

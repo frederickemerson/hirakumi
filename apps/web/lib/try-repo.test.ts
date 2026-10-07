@@ -163,3 +163,39 @@ describe("escrow live packs", () => {
     expect(await store.rule("sha256:forged")).toBeNull();
   });
 });
+
+describe("reserveTryCall: the hourly budget is reserved before the call", () => {
+  beforeEach(resetDb);
+
+  async function pack() {
+    const seller = await seedSeller();
+    const api = await seedApi(seller.id, "live");
+    const p = await seedPack(api.id);
+    await getSql()`insert into credit_tokens (id, api_id, pack_id, token_hash, status, remaining, payment_payload_hash)
+      values ('ct_budget', ${api.id}, ${p.id}, ${sha256Hex("hk_budget")}, 'active', 1000, 'pp_budget')`;
+  }
+
+  it("50 tries at once get exactly the 30 slots of the hour", async () => {
+    await pack();
+    const { reserveTryCall } = await import("./try-repo");
+    const slots = await Promise.all(Array.from({ length: 50 }, () => reserveTryCall(getSql(), "hk_budget", 30)));
+    expect(slots.filter((s) => s.ok)).toHaveLength(30);
+    expect(slots.find((s) => !s.ok)).toMatchObject({ problem: expect.stringMatching(/this hour/) });
+  });
+
+  it("a released slot (the call never reached the gateway) is free again", async () => {
+    await pack();
+    const { reserveTryCall } = await import("./try-repo");
+    const a = await reserveTryCall(getSql(), "hk_budget", 1);
+    expect((await reserveTryCall(getSql(), "hk_budget", 1)).ok).toBe(false);
+    if (a.ok) await a.release();
+    expect((await reserveTryCall(getSql(), "hk_budget", 1)).ok).toBe(true);
+  });
+
+  it("a used-up pack gets no slot", async () => {
+    await pack();
+    await getSql()`update credit_tokens set remaining = 0, status = 'exhausted'`;
+    const { reserveTryCall } = await import("./try-repo");
+    expect(await reserveTryCall(getSql(), "hk_budget", 30)).toEqual({ ok: false, problem: expect.stringMatching(/used up/) });
+  });
+});

@@ -102,6 +102,37 @@ export async function demoBudgetProblem(sql: Sql, token: string, perHour: number
   return null;
 }
 
+/** A reserved paid try, or why there is none. `release` gives the slot back when the try never reached the gateway. */
+export type BudgetSlot = { ok: true; release: () => Promise<void> } | { ok: false; problem: string };
+
+const TRY_CALL_LOCK_NS = 727277; // with hashtext(credit token id): one budget check-and-reserve per pack at a time
+
+/**
+ * Reserves one of the pack's paid tries for this hour before the call is sent, so concurrent tries (any visitor,
+ * any serverless instance) can never spend more than `perHour`: count and insert run under one advisory lock per
+ * pack, in one transaction. Before migration 0016 (no try_call_slots) it falls back to demoBudgetProblem.
+ */
+export async function reserveTryCall(sql: Sql, token: string, perHour: number): Promise<BudgetSlot> {
+  if (!(await hasSelfTestSchema(sql))) {
+    const problem = await demoBudgetProblem(sql, token, perHour);
+    return problem ? { ok: false, problem } : { ok: true, release: async () => {} };
+  }
+  const slot = await sql.begin(async (tx): Promise<{ id: string } | { problem: string }> => {
+    const [t] = await tx<{ id: string; remaining: number; status: string }[]>`
+      select id, remaining, status from credit_tokens where token_hash = ${sha256Hex(token)}`;
+    // A pending pack goes through: the gateway answers token_pending until the payment settles.
+    if (!t || (t.status !== "active" && t.status !== "pending") || t.remaining <= 0) return { problem: "This pack is used up. Buy a new one live." };
+    await tx`select pg_advisory_xact_lock(${TRY_CALL_LOCK_NS}, hashtext(${t.id}))`;
+    const [used] = await tx<{ n: number }[]>`
+      select count(*)::int as n from try_call_slots where credit_token_id = ${t.id} and created_at > now() - interval '1 hour'`;
+    if (used.n >= perHour) return { problem: "This pack has made its calls for this hour. Try again later." };
+    const [row] = await tx<{ id: string }[]>`insert into try_call_slots (credit_token_id) values (${t.id}) returning id::text as id`;
+    return { id: row.id };
+  });
+  if ("problem" in slot) return { ok: false, problem: slot.problem };
+  return { ok: true, release: async () => { await sql`delete from try_call_slots where id = ${slot.id}::bigint`; } };
+}
+
 /** The demo wallet's IOU state for escrow packs, kept on its try_tokens row. */
 export function tryEscrowStore(sql: Sql): TryEscrowStore {
   return {

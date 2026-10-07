@@ -4,7 +4,7 @@ import { errorJson, type ApiRouteContext } from "@/lib/http";
 import { createRateLimiter, envTryToken } from "@/lib/try";
 import { createTryHandler } from "@/lib/try-handler";
 import { isLiveBuyApi } from "@/lib/try-live";
-import { demoBudgetProblem, findTryPack, tryEscrowStore } from "@/lib/try-repo";
+import { reserveTryCall, findTryPack, tryEscrowStore } from "@/lib/try-repo";
 
 /** Paid tries per hour per pack across all visitors, so one pack can't be drained in a minute. */
 const PAID_TRIES_PER_HOUR = 30;
@@ -22,7 +22,7 @@ export async function POST(req: Request, ctx: ApiRouteContext): Promise<Response
     gatewayBase: env.publicBaseUrl(),
     pack: (id) => findTryPack(getSql(), id, envTryToken(id)),
     allow,
-    budget: (_apiId, token) => demoBudgetProblem(getSql(), token, PAID_TRIES_PER_HOUR),
+    budget: (_apiId, token) => reserveTryCall(getSql(), token, PAID_TRIES_PER_HOUR),
     escrow: tryEscrowStore(getSql()),
   });
   return handle(req, apiId);

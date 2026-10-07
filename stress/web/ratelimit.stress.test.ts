@@ -41,6 +41,8 @@ describe("Try it live under concurrent abuse", () => {
     await getSql()`insert into credit_tokens (id, api_id, pack_id, token_hash, status, remaining, payment_payload_hash)
       values (${tokenId}, ${apiId}, ${pack.id}, ${sha256Hex(token)}, 'active', 1000, ${sha256Hex(tokenId)})`;
     vi.stubEnv("TRY_CREDIT_TOKENS", JSON.stringify({ [apiId]: token }));
+    // Public Try it live is the showcase only (TRY_LIVE_APIS).
+    vi.stubEnv("TRY_LIVE_APIS", apiId);
     gatewayCalls = 0;
     // The gateway: logs the paid call (what the hourly budget counts) after a short think, then answers 200.
     vi.stubGlobal("fetch", vi.fn(async (url: string | URL) => {
@@ -98,9 +100,9 @@ describe("Try it live under concurrent abuse", () => {
     expect(urls.every((u) => /\/a\/[^/]+\/x\/[^/]+(\?|$)/.test(u.replace("https://api.hirakumi.test", "")))).toBe(true);
   });
 
-  // BUG (medium): the hourly budget (30 paid tries per pack) is check-then-act on the calls log, which the gateway
-  // writes only after the paid call. 100 visitors at once (or one visitor across serverless instances) all pass it.
-  it.fails("100 distinct visitors at once cannot spend more than the 30-per-hour pack budget", async () => {
+  // Fixed: each try reserves a slot (try_call_slots, under a per-pack advisory lock) before the call is sent, so
+  // 100 visitors at once (or one visitor across serverless instances) can't overspend the hourly budget.
+  it("100 distinct visitors at once cannot spend more than the 30-per-hour pack budget", async () => {
     const st = await Promise.all(Array.from({ length: 100 }, () => tryReq(apiId, { "x-real-ip": freshIp() }).then((r) => r.status)));
     expect(gatewayCalls).toBeLessThanOrEqual(30);
     expect(st.filter((s) => s === 200).length).toBeLessThanOrEqual(30);

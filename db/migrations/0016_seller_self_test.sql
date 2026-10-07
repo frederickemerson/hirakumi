@@ -37,3 +37,13 @@ where t.payer = s.cardano_addr
    or exists (select 1 from pack_channels pc where pc.credit_token_id = t.id and pc.refund_address = s.cardano_addr)
    or exists (select 1 from try_tokens y where y.token_hash = t.token_hash and y.api_id = t.api_id and y.self_test_seller_id is not null)
    or exists (select 1 from self_test_packs x where x.token_hash = t.token_hash and x.api_id = t.api_id);
+
+-- Try it live's per-pack hourly call budget, reserved before each call goes to the gateway (the calls log is only
+-- written after the call, so counting it let concurrent tries overspend). One row per reserved try; a try that
+-- never reached the gateway deletes its row. Counted under an advisory lock per credit token (lib/try-repo.ts).
+create table try_call_slots (
+  id bigserial primary key,
+  credit_token_id text not null references credit_tokens(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+create index try_call_slots_token_created on try_call_slots (credit_token_id, created_at);

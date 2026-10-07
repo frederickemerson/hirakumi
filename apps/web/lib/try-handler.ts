@@ -3,7 +3,7 @@ import { clientAddress } from "./client-address";
 import { errorJson, json, readJson, sameOrigin } from "./http";
 import { buildGatewayCall, describeTryResult, type TryReceipt } from "./try";
 import { escrowCall, IOU_HEADER, type TryEscrowStore } from "./try-escrow";
-import type { TryPack } from "./try-repo";
+import type { BudgetSlot, TryPack } from "./try-repo";
 
 const METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 const MAX_BODY_CHARS = 20_000;
@@ -15,8 +15,11 @@ export type TryDeps = {
   pack: (apiId: string) => Promise<TryPack | null>;
   /** false = this visitor called too recently */
   allow: (key: string) => boolean;
-  /** Shared limit across instances: a message when the pack can't take another paid try, else null. */
-  budget: (apiId: string, token: string) => Promise<string | null>;
+  /**
+   * Shared limit across instances: reserves one paid try for this pack before the call is sent (atomic, see
+   * reserveTryCall), or says why it can't take another.
+   */
+  budget: (apiId: string, token: string) => Promise<BudgetSlot>;
   /** IOU state for escrow packs. Without it an escrow pack is refused (nothing could be signed for it). */
   escrow?: TryEscrowStore;
   /** Where the receipt links to; default the public pack's receipts. */
@@ -61,11 +64,11 @@ export function createTryHandler(d: TryDeps) {
     if (!d.allow(visitorKey(req))) return errorJson(429, "One call every few seconds, please. Wait a moment and try again.");
     const pack = await d.pack(apiId);
     if (!pack) return json({ error: "No pack with credits yet. Buy one live first.", needsPack: true }, 409);
-    const problem = await d.budget(apiId, pack.token);
-    if (problem) return errorJson(429, problem);
-
     const channel = pack.channel ?? null;
     if (channel && !d.escrow) return errorJson(503, "Live tries for escrow packs aren't set up right now. Try again later.");
+    const slot = await d.budget(apiId, pack.token);
+    if (!slot.ok) return errorJson(429, slot.problem);
+
     const call = buildGatewayCall(d.gatewayBase, apiId, { opId, method }, input as Record<string, unknown>, pack.token);
     const send = (iou: string | null) => {
       const headers = { ...(call.init.headers as Record<string, string>), ...(iou ? { [IOU_HEADER]: iou } : {}) };
@@ -85,6 +88,8 @@ export function createTryHandler(d: TryDeps) {
         text = await res.text();
       }
     } catch {
+      // The call never got an answer: give the reserved try back.
+      await slot.release().catch(() => {});
       return errorJson(502, "We couldn't reach the Hirakumi gateway. Try again in a minute.");
     }
     const latencyMs = Math.round(now() - started);

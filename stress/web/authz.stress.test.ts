@@ -22,6 +22,11 @@ import { POST as publish } from "@/app/api/apis/[apiId]/publish/route";
 import { POST as retire } from "@/app/api/apis/[apiId]/retire/route";
 import { DELETE as authDelete, POST as authSave } from "@/app/api/apis/[apiId]/upstream-auth/route";
 import { GET as chatGet, POST as chatPost } from "@/app/api/chat/route";
+import { POST as selfTry } from "@/app/api/apis/[apiId]/try/route";
+import { POST as selfFree } from "@/app/api/apis/[apiId]/try/free/route";
+import { GET as selfReceipts } from "@/app/api/apis/[apiId]/try/receipts/route";
+import { POST as selfPrepare } from "@/app/api/apis/[apiId]/try/pay/prepare/route";
+import { POST as selfPay } from "@/app/api/apis/[apiId]/try/pay/route";
 
 type Handler = (req: Request, c: { params: Promise<{ apiId: string }> }) => Promise<Response>;
 const ROUTES: { name: string; method: string; h: Handler; body?: unknown }[] = [
@@ -37,6 +42,11 @@ const ROUTES: { name: string; method: string; h: Handler; body?: unknown }[] = [
   { name: "retire", method: "POST", h: retire, body: {} },
   { name: "upstream-auth save", method: "POST", h: authSave, body: { in: "header", name: "X-API-Key", value: "hkfake_0123456789abcdef" } },
   { name: "upstream-auth delete", method: "DELETE", h: authDelete },
+  { name: "self-test call", method: "POST", h: selfTry, body: { opId: "getPrice", method: "GET", input: {} } },
+  { name: "self-test free", method: "POST", h: selfFree, body: {} },
+  { name: "self-test receipts", method: "GET", h: selfReceipts },
+  { name: "self-test prepare", method: "POST", h: selfPrepare, body: { utxos: ["00"], changeAddress: "00" } },
+  { name: "self-test pay", method: "POST", h: selfPay, body: { tx: "00", witnessSet: "00", nonce: `${"0".repeat(64)}#0`, priceMicros: "1" } },
 ];
 
 const b64 = (s: string) => Buffer.from(s).toString("base64url");

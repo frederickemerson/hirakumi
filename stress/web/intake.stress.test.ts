@@ -177,7 +177,8 @@ describe("ids no row can have", () => {
         method: "POST", headers: { "content-type": "application/json", "x-real-ip": `203.0.113.${100 + i}` },
         body: JSON.stringify({ opId: "getPrice", method: "GET", input: { symbol: "ADA" } }),
       }), ctx(id));
-      expect(t.status).toBe(409);
+      // Not a showcase API (TRY_LIVE_APIS), so refused before any lookup.
+      expect(t.status).toBe(404);
       expect((await receipts(new Request("https://web.hirakumi.test/x"), ctx(id))).status).toBe(404);
     }
   });

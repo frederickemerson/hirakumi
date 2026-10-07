@@ -2,7 +2,7 @@ import { outputHash } from "@hirakumi/core";
 import { describe, expect, it } from "vitest";
 import { createBuyHandler } from "./try-buy";
 import { createReceiptsHandler, createTryHandler, visitorKey } from "./try-handler";
-import type { TryPack } from "./try-repo";
+import type { BudgetSlot, TryPack } from "./try-repo";
 import { readBuyEvents } from "./try-stream";
 
 describe("visitorKey (audit M1)", () => {
@@ -23,13 +23,13 @@ const PACK: TryPack = {
   boughtAt: new Date("2026-10-06T10:00:00Z"), source: "live",
 };
 
-function setup(reply: () => Response, opts: { pack?: TryPack | null; allow?: () => boolean; budget?: () => Promise<string | null> } = {}) {
+function setup(reply: () => Response, opts: { pack?: TryPack | null; allow?: () => boolean; budget?: () => Promise<BudgetSlot> } = {}) {
   const calls: Call[] = [];
   const handle = createTryHandler({
     gatewayBase: "https://gw.test",
     pack: async () => (opts.pack === undefined ? PACK : opts.pack),
     allow: opts.allow ?? (() => true),
-    budget: opts.budget ?? (async () => null),
+    budget: opts.budget ?? (async () => ({ ok: true as const, release: async () => {} })),
     fetchImpl: (async (url: string, init: RequestInit) => {
       calls.push({ url, init });
       return reply();
@@ -92,7 +92,7 @@ describe("try handler", () => {
   it("rate-limits before it looks up the pack, so throttled requests cost no query", async () => {
     let lookups = 0;
     const handle = createTryHandler({
-      gatewayBase: "https://gw.test", pack: async () => (lookups++, PACK), allow: () => false, budget: async () => null,
+      gatewayBase: "https://gw.test", pack: async () => (lookups++, PACK), allow: () => false, budget: async () => ({ ok: true as const, release: async () => {} }),
       fetchImpl: (() => { throw new Error("no"); }) as unknown as typeof fetch,
     });
     expect((await handle(req({ opId: "getPrice", method: "GET", input: {} }), "api_1")).status).toBe(429);
@@ -100,7 +100,7 @@ describe("try handler", () => {
   });
 
   it("refuses once the pack's hourly budget is used, without calling the gateway (audit: drain)", async () => {
-    const { calls, handle } = setup(() => new Response("{}"), { budget: async () => "This pack has made its calls for this hour. Try again later." });
+    const { calls, handle } = setup(() => new Response("{}"), { budget: async () => ({ ok: false as const, problem: "This pack has made its calls for this hour. Try again later." }) });
     const res = await handle(req({ opId: "getPrice", method: "GET", input: {} }), "api_1");
     expect(res.status).toBe(429);
     expect(((await res.json()) as { error: string }).error).toMatch(/this hour/);
