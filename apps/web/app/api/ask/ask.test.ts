@@ -240,6 +240,14 @@ describe("Ask teaches the current ownership flow (audit I4)", () => {
     expect(facts).toMatch(/payout address/);
   });
 
+  it("mentions keys in several parts and Basic passwords only once they can be saved (UPSTREAM_AUTH_V3)", () => {
+    const before = buildInstructions(null, false);
+    expect(before).toMatch(/HTTP Basic with the key as the user name/);
+    expect(before).not.toMatch(/2 to 4 parts|a user name and a password/);
+    const after = buildInstructions(null, true);
+    expect(after).toMatch(/HTTP Basic with the key as the user name\.\n- It also offers HTTP Basic with a user name and a password, and keys made of 2 to 4 parts/);
+  });
+
   it("no offline answer mentions the old file", () => {
     for (const a of [...Object.values(OFFLINE_FAQ), OFFLINE_DEFAULT]) {
       expect(a).not.toMatch(OLD_FLOW);

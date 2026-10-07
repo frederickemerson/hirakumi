@@ -55,6 +55,25 @@ describe("describeTryResult", () => {
   it("anything else is an error", () => {
     expect(describeTryResult(502, null).kind).toBe("error");
   });
+  it("a refused or forbidden key on a 422 says so, still with no credit used", () => {
+    expect(describeTryResult(422, { error: "promise_not_met", auth: "refused", reasons: ["key refused"] })).toEqual({
+      kind: "not_kept", headline: "Your API refused its key on this call. No credit used.", reasons: ["key refused"],
+    });
+    expect(describeTryResult(422, { error: "promise_not_met", auth: "forbidden" })).toMatchObject({ kind: "not_kept", headline: expect.stringContaining("403") });
+    expect(describeTryResult(422, { error: "promise_not_met", auth: "other" }).headline).toBe("Promise not kept. No credit used.");
+  });
+  it("an upstream 429 is a free 503 that isn't Down, with the wait when the gateway gave one", () => {
+    const r = describeTryResult(503, { error: "upstream_rate_limited", reasons: ["slow down"] }, 30);
+    expect(r).toMatchObject({ kind: "error", reasons: ["slow down"] });
+    expect(r.headline).toMatch(/limiting calls.*No credit used\. Try again in 30 seconds\.$/);
+    expect(describeTryResult(503, { error: "upstream_rate_limited" }, 1).headline).toMatch(/in 1 second\.$/);
+    expect(describeTryResult(503, { error: "upstream_rate_limited" }).headline).toMatch(/Try again in a minute\.$/);
+  });
+  it("too many failed calls on the pack is a 429 with no credit used", () => {
+    const r = describeTryResult(429, { error: "too_many_failed_calls" }, 12);
+    expect(r).toMatchObject({ kind: "error", headline: "Too many calls on this pack failed in the last minute. No credit used. Try again in 12 seconds." });
+    expect(describeTryResult(429, { error: "other" }).kind).toBe("error");
+  });
 });
 
 describe("parseTryTokens", () => {

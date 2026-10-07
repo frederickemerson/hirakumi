@@ -139,4 +139,13 @@ describe("key rotation before publishing", () => {
     expect(screen.getByTestId("upstream-auth-current")).toHaveTextContent("X-API-Key in header, ending in WXYZ");
     expect(document.body.textContent).not.toContain("hks1");
   });
+  it("the review page lists the parts of a key sent in several places, never the sealed bag", async () => {
+    const api = await seedApi(sellerId, "priced");
+    const stored = { v: 3, parts: [{ in: "header", name: "apikey", hint: "WXYZ" }, { in: "header", name: "Authorization", hint: "" }], sealed: "hks3.x" };
+    await getSql()`update apis set upstream_auth = ${getSql().json(stored)} where id = ${api.id}`;
+    render(await ReviewPage({ params: Promise.resolve({ apiId: api.id }) }));
+    expect(screen.getByTestId("upstream-auth-current")).toHaveTextContent("Header apikey ••••WXYZ");
+    expect(screen.getByTestId("upstream-auth-current")).toHaveTextContent("Header Authorization");
+    expect(document.body.textContent).not.toContain("hks3");
+  });
 });

@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
+import { valueLooksLikeKey } from "@hirakumi/core";
 import { redirect } from "next/navigation";
 import { OwnershipPanel } from "@/components/ownership-panel";
 import { UpstreamAuthForm } from "@/components/upstream-auth-form";
 import { getSql } from "@/lib/db";
 import { apiBaseUrl } from "@/lib/copy";
+import { env } from "@/lib/env";
 import { stepForState } from "@/lib/flow";
 import { loadApiPage } from "@/lib/page-auth";
 import { EmptyState, ErrorState, NoticeList } from "@/components/states";
@@ -51,7 +53,8 @@ export default async function OwnershipPage({ params }: { params: Promise<{ apiI
       <NoticeList items={notes.warnings} />
       <OwnershipPanel apiId={apiId} baseUrl={apiBaseUrl(api)} code={code} initiallyPassed={passed}
         platforms={platforms}
-        beforeSigning={<UpstreamAuthForm apiId={apiId} initial={upstreamAuth} hint={authHint} />} />
+        beforeSigning={<UpstreamAuthForm apiId={apiId} initial={upstreamAuth} hint={authHint} checkable
+          v3={env.upstreamAuthV3()} egressIps={env.gatewayEgressIps()} keyInAddress={api.pathPrefix.split("/").some(valueLooksLikeKey)} />} />
     </section>
   );
 }

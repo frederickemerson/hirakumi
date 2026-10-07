@@ -2,7 +2,10 @@
 // repeats the seller's key in a common encoding must be caught, and redaction must leave no form of it behind.
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
-import { redactUpstreamSecret, textLeaksSecret, upstreamSecretForms, WITHHELD_TEXT } from "@hirakumi/core";
+import { randomBytes } from "node:crypto";
+import {
+  redactUpstreamParts, redactUpstreamSecret, textLeaksAny, textLeaksSecret, upstreamSecretForms, validateUpstreamBag, WITHHELD_TEXT,
+} from "@hirakumi/core";
 import { runs } from "./runs";
 
 /** A key: 16-48 characters of the alphabet real keys use, with letters and digits. */
@@ -136,6 +139,95 @@ describe("redactUpstreamSecret", () => {
     const t = Date.now();
     textLeaksSecret(big, k);
     redactUpstreamSecret(big, k);
+    expect(Date.now() - t).toBeLessThan(10_000);
+  });
+});
+
+/**
+ * A bag as the web app renders it (validateUpstreamBag gives what the gateway looks for): 1-4 distinct keys, each sent
+ * as is or after "Bearer ", with the leak list every key and every sent value. Some bags leave the leak list empty, so
+ * only what the gateway derives itself covers them.
+ */
+const bag = fc.uniqueArray(key, { minLength: 1, maxLength: 4, selector: (k) => k.toLowerCase() })
+  .filter((ks) => ks.every((a) => ks.every((b) => a === b || !a.toLowerCase().includes(b.toLowerCase()))))
+  .chain((keys) => fc.tuple(fc.constant(keys), fc.array(fc.boolean(), { minLength: keys.length, maxLength: keys.length }), fc.boolean()))
+  .map(([keys, bearer, emptyLeak]) => {
+    const values = keys.map((k, i) => (bearer[i] ? `Bearer ${k}` : k));
+    const leak = emptyLeak ? [] : [...new Set(keys.flatMap((k, i) => [k, values[i]!]))];
+    const { leakParts } = validateUpstreamBag(keys.map((_, i) => ({ in: "header" as const, name: `X-K${i}` })), { values, fixed: [], leak });
+    return { keys, leakParts };
+  });
+
+describe("textLeaksAny and redactUpstreamParts (sealed bags)", () => {
+  it("find any of a bag's keys in every common encoding, as is and inside a JSON body", () => {
+    fc.assert(fc.property(bag, fc.nat(), fc.constantFrom(...ENCODINGS), filler, filler, ({ keys, leakParts }, i, [, enc], a, b) => {
+      const k = keys[i % keys.length]!;
+      expect(textLeaksAny(a + enc(k) + b, leakParts)).toBe(true);
+      expect(textLeaksAny(inJson(a + enc(k) + b), leakParts)).toBe(true);
+    }), runs(500));
+  });
+
+  it("redaction is complete: no part of the bag is left, whichever key the answer repeats and however", () => {
+    fc.assert(fc.property(bag, fc.nat(), fc.constantFrom(...ENCODINGS), filler, filler, ({ keys, leakParts }, i, [, enc], a, b) => {
+      const k = keys[i % keys.length]!;
+      const out = redactUpstreamParts(inJson(a + enc(k) + b + enc(`Bearer ${k}`)), leakParts);
+      expect(textLeaksAny(out, leakParts)).toBe(false);
+    }), runs(500));
+  });
+
+  it("text with only other keys is not flagged", () => {
+    fc.assert(fc.property(bag, key, filler, ({ keys, leakParts }, other, a) => {
+      fc.pre(keys.every((k) => !other.toLowerCase().includes(k.toLowerCase()) && !k.toLowerCase().includes(other.toLowerCase())));
+      expect(textLeaksAny(a + other + a, leakParts)).toBe(false);
+    }), runs(300));
+  });
+});
+
+/** The fastest of `n` runs of each, interleaved so a busy machine slows both alike. */
+function fastest(n: number, ...fns: (() => unknown)[]): number[] {
+  const best = fns.map(() => Infinity);
+  for (let r = 0; r < n; r++) {
+    fns.forEach((f, i) => {
+      const t = performance.now();
+      f();
+      best[i] = Math.min(best[i]!, performance.now() - t);
+    });
+  }
+  return best;
+}
+
+describe("leak-check CPU budget (a seller can't stall the gateway with a big bag)", () => {
+  /** About `mb` MB of JSON answers carrying base64 blobs, MIME-wrapped, with a few escapes: base64-heavy and decodable. */
+  const body = (mb: number) => Array.from({ length: Math.round(mb * 1300) }, (_, i) =>
+    `{"id":${i},"note":"caf\\u00e9 %41 &#65;","blob":"${randomBytes(570).toString("base64").replace(/(.{76})/g, "$1\\r\\n")}"}\n`).join("");
+  const keys = Array.from({ length: 4 }, (_, i) => `hkfake_${i}Zx9Qw8Er7Ty6Ui5Op4As3Df2Gh1Jk0L`);
+  const placements = keys.map((_, i) => ({ in: "header" as const, name: `X-K${i}` }));
+  const ONE_MB = body(1);
+
+  it("a max bag as rendered (4 'Bearer K' values, 8 leak entries) costs at most 2x one 'Bearer K' key", () => {
+    // Like for like: a value with a space ("Bearer K") makes the check also read "+" as a space, for one key or many.
+    const values = keys.map((k) => `Bearer ${k}`);
+    const { leakParts } = validateUpstreamBag(placements, { values, fixed: [], leak: keys.flatMap((k, i) => [k, values[i]!]) });
+    const [one, many] = fastest(7, () => textLeaksSecret(ONE_MB, values[0]!), () => textLeaksAny(ONE_MB, leakParts));
+    expect(many!).toBeLessThanOrEqual(2 * one!);
+  });
+
+  it("12 distinct keys (8 leak entries + 4 values) cost at most 2x one key", () => {
+    const distinct = Array.from({ length: 12 }, (_, i) => `hk_${i}_${randomBytes(24).toString("base64url")}`);
+    const { leakParts } = validateUpstreamBag(placements, { values: distinct.slice(0, 4), fixed: [], leak: distinct.slice(4) });
+    expect(leakParts).toHaveLength(12);
+    const [one, many] = fastest(7, () => textLeaksSecret(ONE_MB, distinct[0]!), () => textLeaksAny(ONE_MB, leakParts));
+    expect(many!).toBeLessThanOrEqual(2 * one!);
+  });
+
+  it("grows linearly with the answer: 2 MB costs about twice 1 MB", () => {
+    const values = keys.map((k) => `Bearer ${k}`);
+    const { leakParts } = validateUpstreamBag(placements, { values, fixed: [], leak: keys.flatMap((k, i) => [k, values[i]!]) });
+    const TWO_MB = body(2);
+    const [small, big] = fastest(5, () => textLeaksAny(ONE_MB, leakParts), () => textLeaksAny(TWO_MB, leakParts));
+    expect(big!).toBeLessThan(3 * small!);
+    const t = Date.now();
+    redactUpstreamParts(TWO_MB, leakParts);
     expect(Date.now() - t).toBeLessThan(10_000);
   });
 });

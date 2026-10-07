@@ -17,7 +17,7 @@ export type PackDemoOptions = {
 };
 export type PackDemoSummary = {
   bought: boolean; txHash: string | null; passed: number; notMet: number; upstreamErrors: number;
-  down: number; lastRemaining: number | null; creditAccountingOk: boolean;
+  down: number; rateLimited: number; lastRemaining: number | null; creditAccountingOk: boolean;
 };
 
 export type RecoverResult =
@@ -51,12 +51,15 @@ export async function recoverPack(
   return { kind: "recovered", token: body.token, credits: body.credits, pending: body.status === "pending" };
 }
 
+/** The longest a rate-limited run waits before its next call, whatever Retry-After asks for. */
+export const MAX_RATE_LIMIT_WAIT_MS = 60_000;
+
 function describe(o: CallOutcome): string {
   return o.kind === "unexpected" ? `HTTP ${o.status}` : o.kind;
 }
 
 export async function runPackDemo(deps: PackDemoDeps, o: PackDemoOptions): Promise<PackDemoSummary> {
-  const s: PackDemoSummary = { bought: false, txHash: null, passed: 0, notMet: 0, upstreamErrors: 0, down: 0, lastRemaining: null, creditAccountingOk: true };
+  const s: PackDemoSummary = { bought: false, txHash: null, passed: 0, notMet: 0, upstreamErrors: 0, down: 0, rateLimited: 0, lastRemaining: null, creditAccountingOk: true };
   const target = { gatewayUrl: o.gatewayUrl, apiId: o.apiId, opId: o.opId, query: o.query };
 
   /** A payment from an earlier run whose settlement timed out: re-key its token instead of paying again. */
@@ -169,6 +172,7 @@ export async function runPackDemo(deps: PackDemoDeps, o: PackDemoOptions): Promi
     }
     pendingSince = null;
     let stop = false;
+    let waitMs = o.intervalMs;
     switch (r.kind) {
       case "ok":
         s.passed++;
@@ -189,6 +193,12 @@ export async function runPackDemo(deps: PackDemoDeps, o: PackDemoOptions): Promi
         s.down++;
         deps.log(`#${i} 503 Down: ${r.message}. No credit used.`);
         break;
+      case "rate_limited":
+        s.rateLimited++;
+        deps.log(`#${i} rate-limited (${r.error}), no credit used.` + (r.retryAfter !== null ? ` Retry-After ${r.retryAfter}s.` : ""));
+        checkCredits(r.remaining, false);
+        if (r.retryAfter !== null) waitMs = Math.max(waitMs, Math.min(r.retryAfter * 1000, MAX_RATE_LIMIT_WAIT_MS));
+        break;
       case "credits_required":
         deps.log(`#${i} 402: credits used up. Stopping.`);
         stop = true;
@@ -203,11 +213,11 @@ export async function runPackDemo(deps: PackDemoDeps, o: PackDemoOptions): Promi
     }
     if (stop) break;
     i++;
-    if (i <= o.calls) await deps.sleep(o.intervalMs);
+    if (i <= o.calls) await deps.sleep(waitMs);
   }
 
   deps.log(
-    `Summary: ${s.passed} passed, ${s.notMet} promise not met, ${s.upstreamErrors} upstream errors, ${s.down} down. ` +
+    `Summary: ${s.passed} passed, ${s.notMet} promise not met, ${s.upstreamErrors} upstream errors, ${s.down} down, ${s.rateLimited} rate-limited. ` +
       `Credits left: ${s.lastRemaining ?? "?"}. Credit accounting ${s.creditAccountingOk ? "OK: refusals used no credits" : "MISMATCH"}.`,
   );
   return s;

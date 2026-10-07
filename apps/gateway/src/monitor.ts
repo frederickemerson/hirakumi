@@ -2,10 +2,11 @@ import {
   insertCall, listMonitoredApiIds, listOwnershipRecheckTargets, loadProbeInputs, recordHealthTransition, recordOwnershipRecheck,
   scheduleOwnershipRecheck, touchHealthCheck, type OwnershipRecheckOutcome, type OwnershipRecheckTarget, type Sql,
 } from "@hirakumi/db";
+import { OPERATOR_KEYS_UNAVAILABLE } from "@hirakumi/core";
 import type { GatewayConfig } from "./config";
 import type { HealthReason, HealthTracker, HealthTransition } from "./health";
 import { probeVerifyHeader, type OwnershipReason } from "./ownership";
-import type { ApiRegistry } from "./registry";
+import { KEYS_UNAVAILABLE, type ApiRegistry } from "./registry";
 import { runOperation } from "./upstream";
 
 export type MonitorDeps = {
@@ -32,6 +33,8 @@ export class Monitor {
   private running = false;
   private readonly rotation = new Map<string, number>();
   private readonly rechecking = new Map<string, Promise<OwnershipRecheck | null>>();
+  /** APIs already logged as blocked by the gateway's own key problem, so the log says it once per API. */
+  private readonly operatorLogged = new Set<string>();
   constructor(private readonly d: MonitorDeps) {}
 
   start(): void {
@@ -62,11 +65,23 @@ export class Monitor {
   async probeApi(apiId: string): Promise<HealthTransition | null> {
     const loaded = await this.d.registry.get(apiId);
     if (!loaded) return null;
+    // The gateway can't read keys: our problem, not the seller's. No upstream call is made; the API still turns Down
+    // so nothing unusable is sold, and the coworker sends the seller no message for this reason.
+    if (loaded.api.credentialError === KEYS_UNAVAILABLE) {
+      if (!this.operatorLogged.has(apiId)) {
+        this.operatorLogged.add(apiId);
+        console.error(`[monitor] operator: keys unavailable (${apiId})`);
+      }
+      return this.record(apiId, [{ op: "*", reason: OPERATOR_KEYS_UNAVAILABLE }]);
+    }
+    this.operatorLogged.delete(apiId);
     const inputs = await loadProbeInputs(this.d.sql, apiId);
     const byOp = new Map<string, unknown[]>();
     for (const row of inputs) byOp.set(row.op_id, [...(byOp.get(row.op_id) ?? []), row.input]);
 
     let probed = 0;
+    // An op answered 429 (rate limited) is neither a pass nor a fail: a drained quota must not gate sales.
+    let inconclusive = 0;
     const reasons: HealthReason[] = [];
     for (const [opId, list] of byOp) {
       const op = loaded.ops.get(opId);
@@ -82,13 +97,23 @@ export class Monitor {
         kind: "probe", apiId, opId, ruleId: op.ruleRow?.id ?? null, execution: outcome.execution,
         verdict: outcome.verdict, reasons: outcome.reasons, latencyMs: outcome.latencyMs,
       });
-      if (!(outcome.execution === "upstream_ok" && outcome.verdict === "pass")) {
+      if (outcome.result?.status === 429) inconclusive += 1;
+      else if (!(outcome.execution === "upstream_ok" && outcome.verdict === "pass")) {
         reasons.push(...(outcome.reasons.length ? outcome.reasons : [outcome.execution]).map((reason) => ({ op: opId, reason })));
       }
     }
     // Audit I4: an API we cannot check must not stay "Live". Say so instead of trusting it blindly.
     if (probed === 0) reasons.push({ op: "*", reason: "no saved test input for any enabled operation, so Hirakumi can't check this API" });
+    // Every op was rate limited: nothing was learned, so health is left as it was.
+    if (probed > 0 && inconclusive === probed) {
+      await touchHealthCheck(this.d.sql, apiId);
+      return null;
+    }
+    return this.record(apiId, reasons);
+  }
 
+  /** Feeds one probe round into the health tracker and stores a transition (or just the check time). */
+  private async record(apiId: string, reasons: HealthReason[]): Promise<HealthTransition | null> {
     const t = this.d.health.record(apiId, reasons.length === 0, reasons);
     if (t) {
       const since = t.failingSince?.toISOString() ?? null;

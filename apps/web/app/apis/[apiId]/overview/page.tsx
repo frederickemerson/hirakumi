@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { formatHealthReasons } from "@hirakumi/core";
+import { formatHealthReasons, valueLooksLikeKey } from "@hirakumi/core";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { BuyerSnippet } from "@/components/buyer-snippet";
@@ -140,7 +140,8 @@ export default async function OverviewPage({ params }: { params: Promise<{ apiId
 
       {api.state !== "retired" && keysOn && (
         // For key rotation: a new key takes effect on the next call, nothing else changes.
-        <UpstreamAuthForm apiId={apiId} initial={upstreamAuth} hint={null} title="Your API's key" notice={keyNotice} />
+        <UpstreamAuthForm apiId={apiId} initial={upstreamAuth} hint={null} title="Your API's key" notice={keyNotice} checkable
+          v3={env.upstreamAuthV3()} egressIps={env.gatewayEgressIps()} keyInAddress={api.pathPrefix.split("/").some(valueLooksLikeKey)} />
       )}
 
       {api.state === "live" && <RetireButton apiId={apiId} name={api.name} />}

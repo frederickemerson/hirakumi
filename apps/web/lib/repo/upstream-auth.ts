@@ -3,8 +3,15 @@ import type { StoredUpstreamAuth, UpstreamAuthPlacement } from "@hirakumi/core";
 import type { Sql } from "../db";
 import { hasAnyApiSchema } from "./schema";
 
-/** What the seller may see of a stored key: where it goes and its last characters. Never the sealed key. */
-export type UpstreamAuthView = { in: UpstreamAuthPlacement; name: string; hint: string };
+/** What the seller may see of one stored key part: where it goes and its last characters. Never the sealed key. */
+export type UpstreamAuthSetting = { in: UpstreamAuthPlacement; name: string; hint: string };
+/** One part of a bag as the seller sees it: `fixed` marks public fixed text (a version header), whose hint is "". */
+export type UpstreamAuthPart = UpstreamAuthSetting & { fixed?: true };
+/**
+ * A stored key as the seller sees it: one header or query parameter (hks2, the shape from before bags), or the
+ * parts of a bag (hks3), told apart by `"parts" in view`.
+ */
+export type UpstreamAuthView = UpstreamAuthSetting | { parts: UpstreamAuthPart[] };
 /** The coworker's guess from the OpenAPI file (parse step output "authHint"), to prefill the key form. */
 export type AuthHint = { in: UpstreamAuthPlacement; name: string; prefix?: string };
 
@@ -13,12 +20,31 @@ const isPlacement = (v: unknown): v is UpstreamAuthPlacement => v === "header" |
 export async function getUpstreamAuth(sql: Sql, apiId: string): Promise<UpstreamAuthView | null> {
   // Before migration 0014 no key can be stored (lib/repo/schema.ts).
   if (!(await hasAnyApiSchema(sql))) return null;
-  // Only the three display fields leave the database; the sealed key is never selected here.
-  const [row] = await sql<{ placement: unknown; name: unknown; hint: unknown }[]>`
-    select upstream_auth->>'in' as placement, upstream_auth->>'name' as name, upstream_auth->>'hint' as hint
+  // Only the display fields leave the database; the sealed key is never selected here (only whether it is a bag).
+  const [row] = await sql<{ placement: unknown; name: unknown; hint: unknown; bag: boolean; parts: unknown }[]>`
+    select upstream_auth->>'in' as placement, upstream_auth->>'name' as name, upstream_auth->>'hint' as hint,
+      (upstream_auth->>'v' = '3' or left(upstream_auth->>'sealed', 5) = 'hks3.') is true as bag,
+      upstream_auth->'parts' as parts
     from apis where id = ${apiId} and upstream_auth is not null`;
-  if (!row || !isPlacement(row.placement) || typeof row.name !== "string") return null;
-  return { in: row.placement, name: row.name, hint: typeof row.hint === "string" ? row.hint : "" };
+  if (!row) return null;
+  if (row.bag) {
+    const parts = Array.isArray(row.parts) ? row.parts.map(part) : [];
+    return parts.length > 0 && parts.every((p) => p !== null) ? { parts: parts as UpstreamAuthPart[] } : null;
+  }
+  return setting({ in: row.placement, name: row.name, hint: row.hint });
+}
+
+/** One bag part's display fields, with the fixed-text flag, or null when the row doesn't hold them. */
+function part(raw: unknown): UpstreamAuthPart | null {
+  const p = setting(raw);
+  return p && (raw as { fixed?: unknown }).fixed === true ? { ...p, fixed: true } : p;
+}
+
+/** One part's display fields, or null when the row doesn't hold them. */
+function setting(raw: unknown): UpstreamAuthSetting | null {
+  const p = raw as { in?: unknown; name?: unknown; hint?: unknown } | null;
+  if (!p || typeof p !== "object" || !isPlacement(p.in) || typeof p.name !== "string") return null;
+  return { in: p.in, name: p.name, hint: typeof p.hint === "string" ? p.hint : "" };
 }
 
 /**

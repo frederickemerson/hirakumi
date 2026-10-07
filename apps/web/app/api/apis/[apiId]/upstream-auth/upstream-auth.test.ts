@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { generateUpstreamAuthKeys, openUpstreamSecret, UpstreamAddressChangedError, type StoredUpstreamAuth } from "@hirakumi/core";
+import { generateUpstreamAuthKeys, openUpstreamSecret, UpstreamAddressChangedError, type StoredUpstreamSecret } from "@hirakumi/core";
 import { getSql } from "@/lib/db";
 import { GatewayError, setGatewayForTests, type Gateway } from "@/lib/gateway";
 import { deleteApi } from "@/lib/repo/delete-api";
@@ -40,7 +40,7 @@ function remove(asCookie = cookie, id = api.id) {
   return DELETE(jsonRequest(`/api/apis/${id}/upstream-auth`, { cookie: asCookie, method: "DELETE" }), ctx(id));
 }
 async function storedRow(id = api.id) {
-  const [row] = await getSql()<{ upstreamAuth: StoredUpstreamAuth | null }[]>`select upstream_auth from apis where id = ${id}`;
+  const [row] = await getSql()<{ upstreamAuth: StoredUpstreamSecret | null }[]>`select upstream_auth from apis where id = ${id}`;
   return row.upstreamAuth;
 }
 

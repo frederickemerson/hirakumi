@@ -97,7 +97,11 @@ export function createTryHandler(d: TryDeps) {
     const body = parseBody(text, res.status, contentType);
     const remaining = res.headers.get("x-credits-remaining");
     const creditsRemaining = remaining !== null && /^\d+$/.test(remaining) ? Number(remaining) : null;
-    const result = describeTryResult(res.status, body);
+    // The gateway sets x-credits-remaining on every call that reached the API. Without it (Down, a used-up pack,
+    // too many failed calls...) the API was never called, so the reserved try goes back to the pack's budget.
+    if (remaining === null) await slot.release().catch(() => {});
+    const retryAfter = res.headers.get("retry-after");
+    const result = describeTryResult(res.status, body, retryAfter !== null && /^\d+$/.test(retryAfter.trim()) ? Number(retryAfter.trim()) : null);
     const receipt: TryReceipt = {
       verdict: result.kind === "kept" ? "kept" : result.kind === "not_kept" ? "not_kept" : "no_charge",
       creditsLeft: creditsRemaining,

@@ -3,7 +3,13 @@ import { BlockList, isIP, type LookupFunction } from "node:net";
 import { Agent, request, type Dispatcher } from "undici";
 import { isJsonMediaType, mediaTypeOf } from "./rules";
 
-export type UpstreamResult = { status: number; contentType: string | null; body: string; latencyMs: number };
+/**
+ * An upstream answer. `contentEncoding` is every Content-Encoding value, lowercased, when the answer had one
+ * (contentEncodingOf; the body is never decompressed). `retryAfter` is the Retry-After header in seconds (parseRetryAfter), when it parses.
+ */
+export type UpstreamResult = {
+  status: number; contentType: string | null; body: string; latencyMs: number; contentEncoding?: string; retryAfter?: number;
+};
 /** Response headers as undici gives them: lowercase names, a repeated header as an array. */
 export type UpstreamHeaders = Record<string, string | string[] | undefined>;
 /** A header probe's answer: the status and headers only. The body is never read. */
@@ -78,6 +84,37 @@ function pinnedLookup(hostname: string, options: { all?: boolean; family?: numbe
 
 const strictAgent = new Agent({ connect: { lookup: pinnedLookup as unknown as LookupFunction }, keepAliveTimeout: 10_000 });
 const localAgent = new Agent({ keepAliveTimeout: 10_000 });
+
+/** Retry-After is clamped to this range of seconds: at least 1, at most an hour. */
+const RETRY_AFTER_MIN_S = 1;
+const RETRY_AFTER_MAX_S = 3600;
+
+/**
+ * A Retry-After header in whole seconds from now: decimal seconds ("120") or an HTTP-date, clamped to 1-3600
+ * (a date in the past gives 1). Null when it is missing or neither form.
+ */
+export function parseRetryAfter(value: string | string[] | null | undefined, now: number = Date.now()): number | null {
+  const v = (Array.isArray(value) ? value[0] : value)?.trim();
+  if (!v) return null;
+  let seconds: number;
+  if (/^\d+$/.test(v)) seconds = Number(v);
+  else {
+    const at = /[a-z]/i.test(v) ? Date.parse(v) : NaN;
+    if (Number.isNaN(at)) return null;
+    seconds = Math.ceil((at - now) / 1000);
+  }
+  return Math.min(RETRY_AFTER_MAX_S, Math.max(RETRY_AFTER_MIN_S, seconds));
+}
+
+/**
+ * Every Content-Encoding value (repeated headers and comma lists), lowercased and joined with ", ", or undefined.
+ * Only "identity" when every value is identity, so a "gzip" in a second header is never hidden behind the first.
+ */
+function contentEncodingOf(h: string | string[] | undefined): string | undefined {
+  const tokens = [h ?? []].flat().join(",").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  if (tokens.length === 0) return undefined;
+  return tokens.every((t) => t === "identity") ? "identity" : tokens.join(", ");
+}
 
 /** Drop a response body we refuse. The listener matters: destroy() makes undici emit an
  *  AbortError on the stream, and an unhandled stream error would crash the process. */
@@ -196,12 +233,17 @@ async function fetchGuarded(
     }
     const ct = res.headers["content-type"];
     const contentType = Array.isArray(ct) ? (ct[0] ?? null) : (ct ?? null);
-    return {
+    const result: UpstreamResult = {
       status: res.statusCode,
       contentType,
       body: decodeBody(Buffer.concat(chunks), contentType),
       latencyMs: Math.round(performance.now() - started),
     };
+    const contentEncoding = contentEncodingOf(res.headers["content-encoding"]);
+    if (contentEncoding) result.contentEncoding = contentEncoding;
+    const retryAfter = parseRetryAfter(res.headers["retry-after"]);
+    if (retryAfter !== null) result.retryAfter = retryAfter;
+    return result;
   } catch (err) {
     if (err instanceof UpstreamBlockedError || err instanceof UpstreamTooLargeError) throw err;
     const cause = (err as { cause?: unknown }).cause;

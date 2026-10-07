@@ -5,6 +5,7 @@ import { LiveProgress } from "@/components/live-progress";
 import { UpstreamAuthForm } from "@/components/upstream-auth-form";
 import { ErrorState, NoticeList, WaitingState } from "@/components/states";
 import { getSql } from "@/lib/db";
+import { env } from "@/lib/env";
 import { stepForState } from "@/lib/flow";
 import { loadApiPage } from "@/lib/page-auth";
 import { listingBaseNotes } from "@/lib/repo/apis";
@@ -37,7 +38,8 @@ export default async function ReviewPage({ params }: { params: Promise<{ apiId: 
         {failure ? (
           <>
             <ErrorState title="Your test calls didn't pass" detail={failure} />
-            {keysOn && <UpstreamAuthForm apiId={apiId} initial={upstreamAuth} hint={authHint} retriesTests />}
+            {keysOn && <UpstreamAuthForm apiId={apiId} initial={upstreamAuth} hint={authHint} retriesTests
+              v3={env.upstreamAuthV3()} egressIps={env.gatewayEgressIps()} />}
           </>
         ) : (
           <WaitingState title="Running test calls on your API"
@@ -64,7 +66,8 @@ export default async function ReviewPage({ params }: { params: Promise<{ apiId: 
         <ReviewPanel apiId={apiId} state={api.state} promises={promises} pack={pack} suggestedPhrases={suggestedPhrases} />
       )}
       {/* For key rotation before publishing: a new key takes effect on the next call. */}
-      {keysOn && <UpstreamAuthForm apiId={apiId} initial={upstreamAuth} hint={null} title="Your API's key" />}
+      {keysOn && <UpstreamAuthForm apiId={apiId} initial={upstreamAuth} hint={null} title="Your API's key"
+        v3={env.upstreamAuthV3()} egressIps={env.gatewayEgressIps()} />}
     </section>
   );
 }

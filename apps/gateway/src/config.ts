@@ -1,5 +1,5 @@
 import { isIP } from "node:net";
-import { DEFAULT_SETTLEMENT_POLICY, type SettlementPolicy } from "@hirakumi/core";
+import { DEFAULT_SETTLEMENT_POLICY, publicKeyFromPrivate, type SettlementPolicy } from "@hirakumi/core";
 import { walletKeys } from "@hirakumi/escrow/txs";
 import type { HealthThresholds } from "./health";
 
@@ -46,7 +46,14 @@ export type GatewayConfig = {
    * `pnpm --filter @hirakumi/gateway upstream-auth-keys`; the web app gets the public half). Unset: such APIs are blocked.
    */
   upstreamAuthPrivateKey: string | null;
+  /**
+   * Why UPSTREAM_AUTH_PRIVATE_KEY was set but not used: it doesn't parse, or it isn't the half of
+   * UPSTREAM_AUTH_PUBLIC_KEY. The gateway still starts; keyed APIs turn Down with an operator reason. Null when fine.
+   */
+  upstreamAuthKeyProblem: UpstreamAuthKeyProblem | null;
 };
+
+export type UpstreamAuthKeyProblem = "mismatch" | "unparseable";
 
 export type PackMode = "direct" | "escrow" | "hybrid";
 
@@ -114,8 +121,31 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     settlement: settlementFrom(env),
     startJobTrustedCidrs: parseTrustedCidrs(env.START_JOB_TRUSTED_CIDRS),
     tryLiveApis: parseTryLiveApis(env.TRY_LIVE_APIS),
-    upstreamAuthPrivateKey: env.UPSTREAM_AUTH_PRIVATE_KEY?.trim() || null,
+    ...upstreamAuthKeyFrom(env),
   };
+}
+
+/**
+ * UPSTREAM_AUTH_PRIVATE_KEY, checked against UPSTREAM_AUTH_PUBLIC_KEY when that is set too (the shared .env has
+ * both). A key that doesn't parse or doesn't match is not used, loudly, and never stops the process: keyless APIs,
+ * escrow and jobs keep running, and keyed APIs turn Down with an operator reason instead of failing to open.
+ */
+export function upstreamAuthKeyFrom(env: NodeJS.ProcessEnv): Pick<GatewayConfig, "upstreamAuthPrivateKey" | "upstreamAuthKeyProblem"> {
+  const privateKey = env.UPSTREAM_AUTH_PRIVATE_KEY?.trim() || null;
+  const publicKey = env.UPSTREAM_AUTH_PUBLIC_KEY?.trim() || null;
+  if (!privateKey) return { upstreamAuthPrivateKey: null, upstreamAuthKeyProblem: null };
+  let derived: string;
+  try {
+    derived = publicKeyFromPrivate(privateKey);
+  } catch {
+    console.error("[config] UPSTREAM_AUTH_PRIVATE_KEY does not parse: APIs that need a key are blocked until it is fixed");
+    return { upstreamAuthPrivateKey: null, upstreamAuthKeyProblem: "unparseable" };
+  }
+  if (publicKey && derived !== publicKey) {
+    console.error("[config] UPSTREAM_AUTH_PRIVATE_KEY is not the half of UPSTREAM_AUTH_PUBLIC_KEY: APIs that need a key are blocked until it is fixed");
+    return { upstreamAuthPrivateKey: null, upstreamAuthKeyProblem: "mismatch" };
+  }
+  return { upstreamAuthPrivateKey: privateKey, upstreamAuthKeyProblem: null };
 }
 
 /** GATEWAY_PORT: blank or unset is 4021. Number("") is 0 (a random port) and Number("x") is NaN, so check the text. */

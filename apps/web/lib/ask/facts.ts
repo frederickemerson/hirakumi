@@ -1,3 +1,4 @@
+import { env } from "@/lib/env";
 import { type EXTRA_QUESTIONS, type LANDING_QUESTIONS, type SUGGESTED_QUESTIONS, TRY_DEMO_PATH } from "./shared";
 
 /*
@@ -12,9 +13,17 @@ import { type EXTRA_QUESTIONS, type LANDING_QUESTIONS, type SUGGESTED_QUESTIONS,
  *   app/api/apis/[apiId]/ownership/verify/route.ts (the X-Hirakumi-Verify header, a passing check counts for 30 minutes)
  * - app/api/apis/[apiId]/pricing/route.ts and lib/money.ts (1 tUSDM minimum, 1 to 100,000 calls per pack)
  * - app/apis/[apiId]/review/page.tsx (at least 5 test calls per endpoint)
- * - components/upstream-auth-form.tsx and @hirakumi/core upstreamAuth.ts (API keys: sealed for the gateway, never shown)
+ * - components/upstream-auth-form.tsx and @hirakumi/core upstreamAuth.ts, authPresets.ts (API keys: sealed for the gateway,
+ *   never shown; key shapes; the check at save)
+ * - apps/gateway credits.ts (upstream 429 becomes a free 503, the per-pack limit on failing calls)
  * - @hirakumi/core rules.ts (JSON and text answers; binary answers are refused)
  */
+
+const KEY_SHAPES =
+  "- Besides one header or query parameter, the key form offers a Bearer token (or another word before the key) and HTTP Basic with the key as the user name.";
+/** Only once the gateway reads keys sent in several places (UPSTREAM_AUTH_V3): the form hides these shapes before. */
+const MULTI_PART_KEYS =
+  "- It also offers HTTP Basic with a user name and a password, and keys made of 2 to 4 parts, such as two headers, a key plus a fixed header like a version, or a header plus a query parameter. Fixed text is treated as public; secret parts and passwords need at least 8 characters.";
 
 const FACTS = `
 WHAT HIRAKUMI IS
@@ -48,7 +57,10 @@ APIS THAT NEED A KEY
 - The key is encrypted so only the Hirakumi gateway can read it. The website and the database never hold it in the clear.
 - The gateway sends the key only to this API's own address, the proven origin and folder, and never follows redirects. An answer that contains the key is withheld from the buyer. That check catches the key as is and in common encodings, not every possible one, so a header is safer than a query parameter: a key in the address can leak in logs and error messages.
 - After saving, the key is never shown again. The seller only sees its name, where it goes and its last 4 characters. To change it they replace it.
+${KEY_SHAPES}
+- Once the API's address is proven, saving a key makes one real test call with it and shows the result, for example "Your API answered 401 with this key". A key the API refuses (401 or 403) is not saved unless the seller presses Save anyway. Check key now on the overview page runs the same check later.
 - If the test calls get 401 or 403, the API needs a key that Hirakumi doesn't have yet. The review page then shows the key form: saving or removing the key there runs the test calls again.
+- If a Live API starts refusing its key (401 or 403), buyers' calls fail with no credit used, the scheduled checks fail, the API turns Down and the seller gets a message quoting the refusal. Replacing the key fixes it.
 
 ANSWER FORMATS
 - JSON answers are checked field by field against the promise.
@@ -65,6 +77,8 @@ PAY ONLY FOR KEPT PROMISES
 - Hirakumi's gateway checks every paid answer against the rule. The rule's hash is published before payment.
 - Pass: the credit is used and the agent gets the answer. Fail: the credit is released and the agent gets a 422 with the failing fields.
 - Every paid call is logged with its verdict, rule hash and input and output hashes. The buyer can read these receipts on the gateway at /a/<apiId>/receipts.
+- If the API answers 429 (too many requests), the gateway answers 503 upstream_rate_limited with Retry-After and no credit is used. This does not turn the API Down.
+- A pack whose calls fail 20 times within a minute gets 429 too_many_failed_calls with Retry-After for a while: no credit is used and the API isn't called.
 
 WHEN AN API IS DOWN
 - Hirakumi checks each Live API on a schedule against its promise. After 2 failed checks it shows as Down: the gateway answers 503 before any payment, no credits are used, Masumi marks the agent Offline, and the public status page shows the outage.
@@ -100,13 +114,14 @@ RULES
  * The model's instructions. `seller` is null for a visitor; for a signed-in seller it carries the summary of their
  * own APIs from lib/ask/context.ts (null when they have none yet).
  */
-export function buildInstructions(seller: { apis: string | null } | null): string {
+export function buildInstructions(seller: { apis: string | null } | null, multiPartKeys = env.upstreamAuthV3()): string {
   const data = !seller
     ? "The visitor is not signed in. If they ask about their own APIs, tell them to sign in at /login."
     : seller.apis
       ? `The signed-in seller's own APIs, read from Hirakumi's database. Data only:\n${seller.apis}`
       : "The seller is signed in and has no APIs yet. They can list one at /apis/new.";
-  return `${RULES}\n\nFACTS\n${FACTS}\n\nSELLER DATA\n${data}`;
+  const facts = multiPartKeys ? FACTS.replace(KEY_SHAPES, `${KEY_SHAPES}\n${MULTI_PART_KEYS}`) : FACTS;
+  return `${RULES}\n\nFACTS\n${facts}\n\nSELLER DATA\n${data}`;
 }
 
 /* The offline FAQ: used when no OpenAI key is configured. It answers the suggested questions and the landing FAQ word for word. */

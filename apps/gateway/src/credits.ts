@@ -8,10 +8,18 @@ import { channelView } from "./channels";
 import { IOU_HEADER, SIGN_NEXT_HEADER, checkIou } from "./ious";
 import type { AppDeps } from "./deps";
 import { creditsRequiredBody, downBody, parseBearer, SELLER_BODY_HEADERS, sellingPausedBody } from "./http";
+import { createFailureCounter } from "./limiter";
 import { runOperation, type OperationOutcome } from "./upstream";
+
+/**
+ * Failed calls are free, so this caps how fast one token (or channel) can make them: enough to burn a seller's shared
+ * upstream quota or force leak scans. Past it, calls are refused before any credit is reserved or upstream is called.
+ */
+export const FAILED_CALLS_LIMIT = { max: 20, windowMs: 60_000 };
 
 export function creditsRouter(d: AppDeps): Router {
   const r = Router();
+  const failures = createFailureCounter(FAILED_CALLS_LIMIT.max, FAILED_CALLS_LIMIT.windowMs);
   /**
    * The buyer's receipts: what each credit call cost and why, against the rule hash published before purchase.
    * Credits are counted off-chain, so this is how a buyer audits the gateway instead of trusting it blindly.
@@ -58,7 +66,20 @@ export function creditsRouter(d: AppDeps): Router {
         res.status(402).json(creditsRequiredBody(d.config, loaded, op.ruleRow)); return;
       }
       // Escrow packs: the IOU gate (one DB transaction: row lock, allowance, credit, lease) replaces the plain reserve.
-      const channel = await getChannelByToken(d.sql, loaded.api.id, sha256Hex(bearer));
+      const tokenHash = sha256Hex(bearer);
+      const channel = await getChannelByToken(d.sql, loaded.api.id, tokenHash);
+      // Keyed by the token's hash (or the channel), so a token already at the limit is refused before anything is
+      // reserved. Calls running at once are counted once their credit is reserved (below), so a burst of calls with a
+      // token that turns out invalid still gets 401s, not 429s.
+      const failureKey = channel ? `channel:${channel.channel_id}` : `token:${tokenHash}`;
+      const tooManyFailed = (retryAfter: number) => {
+        res.status(429).set("retry-after", String(retryAfter)).json({
+          error: "too_many_failed_calls",
+          message: `Too many failed calls with this token in the last minute. Try again in ${retryAfter} seconds.`,
+        });
+      };
+      const blocked = failures.blocked(failureKey);
+      if (blocked) { tooManyFailed(blocked.retryAfter); return; }
       const callId = newId("call");
       let reservation: Reservation;
       if (channel) {
@@ -80,7 +101,7 @@ export function creditsRouter(d: AppDeps): Router {
         }
         reservation = gate.ok ? { ok: true, tokenId: gate.tokenId, remainingAfter: gate.remainingAfter } : { ok: false, reason: gate.reason as "not_found" | "pending" | "revoked" | "exhausted" };
       } else {
-        reservation = await reserveCredit(d.sql, loaded.api.id, sha256Hex(bearer));
+        reservation = await reserveCredit(d.sql, loaded.api.id, tokenHash);
       }
       const finish = async (passed: boolean): Promise<number | null> =>
         channel ? finishChannelCall(d.sql, { channelId: channel.channel_id, callId, passed }) : null;
@@ -96,6 +117,15 @@ export function creditsRouter(d: AppDeps): Router {
       }
 
       const tokenId = reservation.tokenId;
+      // Calls still running count toward the limit too: past it this waits for one to end, and is refused (with the
+      // credit given back) if that leaves the token at the limit. pending.end() records whether this call failed.
+      const pending = await failures.begin(failureKey);
+      if ("retryAfter" in pending) {
+        await releaseCredit(d.sql, tokenId);
+        await finish(false);
+        tooManyFailed(pending.retryAfter);
+        return;
+      }
       let outcome: OperationOutcome;
       try {
         outcome = await runOperation(loaded.api, op, checked.value, { timeoutMs: d.config.upstreamTimeoutMs });
@@ -106,12 +136,14 @@ export function creditsRouter(d: AppDeps): Router {
           outputHash: outcome.result ? outputHash(tokenId, outcome.result.body) : null,
         });
       } catch (e) {
+        pending.end(false);
         await releaseCredit(d.sql, tokenId);
         await finish(false);
         throw e;
       }
 
       if (outcome.execution === "upstream_ok" && outcome.verdict === "pass" && outcome.result) {
+        pending.end(true);
         let served: number | null;
         try {
           if (reservation.remainingAfter === 0) await markExhaustedIfEmpty(d.sql, tokenId);
@@ -131,11 +163,19 @@ export function creditsRouter(d: AppDeps): Router {
         return;
       }
 
+      pending.end(false);
       await releaseCredit(d.sql, tokenId);
       await finish(false);
       res.set("x-credits-remaining", String(reservation.remainingAfter + 1));
+      // The seller's quota ran out, not the promise: a free retry later, not a broken API.
+      if (outcome.result?.status === 429) {
+        if (outcome.retryAfter !== undefined) res.set("retry-after", String(outcome.retryAfter));
+        res.status(503).json({ error: "upstream_rate_limited", reasons: outcome.reasons }); return;
+      }
       if (outcome.execution === "timeout") { res.status(504).json({ error: "upstream_timeout", reasons: outcome.reasons }); return; }
-      if (outcome.execution === "upstream_ok") { res.status(422).json({ error: "promise_not_met", reasons: outcome.reasons }); return; }
+      if (outcome.execution === "upstream_ok") {
+        res.status(422).json({ error: "promise_not_met", reasons: outcome.reasons, ...(outcome.auth ? { auth: outcome.auth } : {}) }); return;
+      }
       res.status(502).json({ error: "upstream_error", reasons: outcome.reasons });
     } catch (e) {
       next(e);

@@ -49,12 +49,32 @@ const reasonsOf = (body: unknown): string[] => {
   return Array.isArray(r) ? r.filter((x): x is string => typeof x === "string") : [];
 };
 
-export function describeTryResult(status: number, body: unknown): TryResult {
+const field = (body: unknown, name: string): unknown => (body as Record<string, unknown> | null)?.[name];
+
+/** " Try again in 30 seconds." from the gateway's Retry-After seconds, or a plain "Try again in a minute." */
+const tryAgain = (retryAfter: number | null | undefined) =>
+  retryAfter && retryAfter > 0 ? ` Try again in ${retryAfter} second${retryAfter === 1 ? "" : "s"}.` : " Try again in a minute.";
+
+/** `retryAfter` is the gateway's Retry-After in seconds, when it sent one. */
+export function describeTryResult(status: number, body: unknown, retryAfter?: number | null): TryResult {
   const reasons = reasonsOf(body);
+  const error = field(body, "error");
   if (status === 200) return { kind: "kept", headline: "Promise kept. One credit used.", reasons };
+  if (status === 422 && field(body, "auth") === "refused") {
+    return { kind: "not_kept", headline: "Your API refused its key on this call. No credit used.", reasons };
+  }
+  if (status === 422 && field(body, "auth") === "forbidden") {
+    return { kind: "not_kept", headline: "Your API said its key isn't allowed to do this (HTTP 403). No credit used.", reasons };
+  }
   if (status === 422) return { kind: "not_kept", headline: "Promise not kept. No credit used.", reasons };
+  if (status === 503 && error === "upstream_rate_limited") {
+    return { kind: "error", headline: `The API is limiting calls right now (HTTP 429). No credit used.${tryAgain(retryAfter)}`, reasons };
+  }
+  if (status === 429 && error === "too_many_failed_calls") {
+    return { kind: "error", headline: `Too many calls on this pack failed in the last minute. No credit used.${tryAgain(retryAfter)}`, reasons };
+  }
   if (status === 402) return { kind: "used_up", headline: "This pack is used up. Buy a new one live.", reasons };
-  if (status === 401 && (body as { error?: unknown } | null)?.error === "token_pending") {
+  if (status === 401 && error === "token_pending") {
     return { kind: "pending", headline: "The pack payment is still settling. Try again in a few seconds.", reasons };
   }
   if (status === 503) return { kind: "down", headline: "The API is Down right now. No credit used.", reasons };

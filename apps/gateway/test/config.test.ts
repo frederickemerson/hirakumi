@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { generateUpstreamAuthKeys } from "@hirakumi/core";
 import { estimatedDowntimeSeconds, loadConfig } from "../src/config";
 
 const env = {
@@ -81,5 +82,36 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...env, SETTLEMENT_ESCROW_FROM_MICROS: "2.5" })).toThrow(/SETTLEMENT_ESCROW_FROM_MICROS/);
     expect(() => loadConfig({ ...env, SETTLEMENT_MIN_UPTIME_PCT: "101" })).toThrow(/SETTLEMENT_MIN_UPTIME_PCT/);
     expect(() => loadConfig({ ...env, SETTLEMENT_MIN_LISTING_DAYS: "-1" })).toThrow(/SETTLEMENT_MIN_LISTING_DAYS/);
+  });
+});
+
+describe("loadConfig: the upstream-auth key pair", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+  const keys = generateUpstreamAuthKeys();
+  const other = generateUpstreamAuthKeys();
+
+  it("a private key matching the public key is kept", () => {
+    const c = loadConfig({ ...env, UPSTREAM_AUTH_PRIVATE_KEY: keys.privateKey, UPSTREAM_AUTH_PUBLIC_KEY: ` ${keys.publicKey} ` });
+    expect(c).toMatchObject({ upstreamAuthPrivateKey: keys.privateKey, upstreamAuthKeyProblem: null });
+  });
+
+  it("a mismatched or unparseable private key is not used, is logged, and never stops the gateway", () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(loadConfig({ ...env, UPSTREAM_AUTH_PRIVATE_KEY: other.privateKey, UPSTREAM_AUTH_PUBLIC_KEY: keys.publicKey }))
+      .toMatchObject({ upstreamAuthPrivateKey: null, upstreamAuthKeyProblem: "mismatch" });
+    for (const bad of ["not-a-key", Buffer.from("garbage bytes").toString("base64")]) {
+      expect(loadConfig({ ...env, UPSTREAM_AUTH_PRIVATE_KEY: bad, UPSTREAM_AUTH_PUBLIC_KEY: keys.publicKey }))
+        .toMatchObject({ upstreamAuthPrivateKey: null, upstreamAuthKeyProblem: "unparseable" });
+    }
+    expect(err).toHaveBeenCalledTimes(3);
+    for (const [line] of err.mock.calls) expect(String(line)).not.toContain(other.privateKey);
+  });
+
+  it("without a public key the private key is used as before; without either, keys are off", () => {
+    expect(loadConfig({ ...env, UPSTREAM_AUTH_PRIVATE_KEY: keys.privateKey }))
+      .toMatchObject({ upstreamAuthPrivateKey: keys.privateKey, upstreamAuthKeyProblem: null });
+    expect(loadConfig({ ...env, UPSTREAM_AUTH_PUBLIC_KEY: keys.publicKey }))
+      .toMatchObject({ upstreamAuthPrivateKey: null, upstreamAuthKeyProblem: null });
+    expect(loadConfig(env)).toMatchObject({ upstreamAuthPrivateKey: null, upstreamAuthKeyProblem: null });
   });
 });

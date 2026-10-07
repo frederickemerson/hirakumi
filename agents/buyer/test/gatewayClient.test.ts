@@ -40,6 +40,21 @@ describe("gatewayClient", () => {
     expect((await call(fakeGateway({ modes: ["upstream_502"] }).fetch, TOKEN))).toMatchObject({ kind: "upstream_error", status: 502 });
   });
 
+  it("classifies 503 upstream_rate_limited and 429 too_many_failed_calls as rate_limited", async () => {
+    const r = await call(fakeGateway({ modes: ["rate_limited"], retryAfter: 12 }).fetch, TOKEN);
+    expect(r).toEqual({ kind: "rate_limited", error: "upstream_rate_limited", retryAfter: 12, remaining: 5 });
+    const r2 = await call(fakeGateway({ modes: ["too_many_failed"], retryAfter: 40 }).fetch, TOKEN);
+    expect(r2).toEqual({ kind: "rate_limited", error: "too_many_failed_calls", retryAfter: 40, remaining: null });
+    const r3 = await call(async () => json(503, { error: "upstream_rate_limited" }, { "Retry-After": "soon" }), TOKEN);
+    expect(r3).toMatchObject({ kind: "rate_limited", retryAfter: null });
+  });
+
+  it("any other 503 is down, any other 429 is unexpected", async () => {
+    expect(await call(async () => json(503, { error: "unavailable", message: "API is Down" }), TOKEN))
+      .toEqual({ kind: "down", message: "API is Down" });
+    expect(await call(async () => json(429, { error: "slow_down" }), TOKEN)).toMatchObject({ kind: "unexpected", status: 429 });
+  });
+
   it("classifies 400 as bad input", async () => {
     const r = await call(async () => json(400, { error: "invalid_input", message: "symbol must be one of ADA" }));
     expect(r).toEqual({ kind: "bad_input", message: "symbol must be one of ADA" });

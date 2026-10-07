@@ -150,6 +150,31 @@ describe("try handler", () => {
     expect((calls[0].init.headers as Record<string, string>).accept).toBe("application/json, text/*;q=0.9, */*;q=0.8");
   });
 
+  it("hands the reserved try back when the gateway never called the API (no x-credits-remaining)", async () => {
+    const slots = () => {
+      let released = 0;
+      return { budget: async () => ({ ok: true as const, release: async () => { released++; } }), released: () => released };
+    };
+    const down = slots();
+    const { handle } = setup(() => Response.json({ error: "down", reasons: ["price is old"] }, { status: 503 }), { budget: down.budget });
+    expect((await (await handle(req({ opId: "getPrice", method: "GET", input: {} }), "api_1")).json()).result.kind).toBe("down");
+    expect(down.released()).toBe(1);
+
+    const limited = slots();
+    const { handle: h2 } = setup(() => Response.json({ error: "too_many_failed_calls" }, { status: 429, headers: { "retry-after": "42" } }), { budget: limited.budget });
+    const out = await (await h2(req({ opId: "getPrice", method: "GET", input: {} }), "api_1")).json();
+    expect(out.result.headline).toContain("Try again in 42 seconds.");
+    expect(limited.released()).toBe(1);
+
+    // The API was called (pass or fail): the try counts against the hour.
+    for (const [status, body] of [[200, "{}"], [422, '{"error":"promise_not_met","auth":"refused"}'], [503, '{"error":"upstream_rate_limited"}']] as const) {
+      const used = slots();
+      const { handle: h3 } = setup(() => new Response(body, { status, headers: { "x-credits-remaining": "9", "retry-after": "5" } }), { budget: used.budget });
+      await h3(req({ opId: "getPrice", method: "GET", input: {} }), "api_1");
+      expect(used.released()).toBe(0);
+    }
+  });
+
   it("keeps non-JSON bodies as text", async () => {
     const { handle } = setup(() => new Response("plain", { status: 200 }));
     const out = await (await handle(req({ opId: "getPrice", method: "GET", input: {} }), "api_1")).json();

@@ -1,6 +1,7 @@
 import Ajv2020 from "ajv/dist/2020.js";
 import {
-  compileRule, formatSchemaErrors, jcs, openUpstreamSecret, UpstreamAddressChangedError, validateUpstreamAuth, type CompiledRule, type UpstreamCredential,
+  compileRule, formatSchemaErrors, isUpstreamBag, jcs, openUpstreamBag, openUpstreamSecret, UpstreamAddressChangedError, validateUpstreamAuth,
+  validateUpstreamBag, type CompiledRule, type UpstreamAuth, type UpstreamCredential,
 } from "@hirakumi/core";
 import { loadApiBundle, type ApiRow, type OperationRow, type PackRow, type RuleRow, type Sql } from "@hirakumi/db";
 import type { HealthTracker } from "./health";
@@ -9,9 +10,13 @@ export type InputCheck = { ok: true; value: Record<string, unknown> } | { ok: fa
 export type LoadedOp = { row: OperationRow; ruleRow: RuleRow | null; rule: CompiledRule | null; validateInput(input: unknown): InputCheck };
 /**
  * How the gateway reaches the API: its row, plus the opened key when it needs one. credentialError is set when a
- * key is stored but can't be opened; every upstream call is then blocked rather than sent without it.
+ * key is stored but can't be opened; every upstream call is then blocked rather than sent without it. A key of
+ * several parts (an hks3 bag) opens to `auth` instead, with credential null: read either through resolveAuth.
  */
-export type UpstreamAccess = { credential: UpstreamCredential | null; credentialError: string | null };
+export type UpstreamAccess = { credential: UpstreamCredential | null; credentialError: string | null; auth?: UpstreamAuth };
+
+/** credentialError when the gateway has no usable private key. The monitor reads it as an operator problem. */
+export const KEYS_UNAVAILABLE = "this API needs a key, and the gateway can't read keys right now";
 export type LoadedApi = { api: ApiRow & UpstreamAccess; ops: Map<string, LoadedOp>; packs: PackRow[] };
 
 /**
@@ -19,13 +24,19 @@ export type LoadedApi = { api: ApiRow & UpstreamAccess; ops: Map<string, LoadedO
  * buyers can see, so it never names the key or the gateway's settings. The placement and name are stored in the
  * clear, so they are checked again here like the web app checks them (no reserved header, no line breaks).
  * The key opens only for the placement, name, origin and path prefix it was sealed with: a key saved before the
- * API's address changed blocks every call until the seller saves it again.
+ * API's address changed blocks every call until the seller saves it again. A bag (hks3) opens the same way for its
+ * parts' placements and names in order, and its parts and leak list are checked again (validateUpstreamBag).
  */
 export function openCredential(api: Pick<ApiRow, "id" | "upstream_auth" | "origin" | "path_prefix">, privateKey: string | null): UpstreamAccess {
   const stored = api.upstream_auth;
   if (!stored) return { credential: null, credentialError: null };
-  if (!privateKey) return { credential: null, credentialError: "this API needs a key, and the gateway can't read keys right now" };
+  if (!privateKey) return { credential: null, credentialError: KEYS_UNAVAILABLE };
   try {
+    if (isUpstreamBag(stored)) {
+      const parts = stored.parts.map((p) => ({ in: p.in, name: p.name }));
+      const bag = openUpstreamBag(privateKey, { apiId: api.id, parts, origin: api.origin, pathPrefix: api.path_prefix }, stored.sealed);
+      return { credential: null, credentialError: null, auth: validateUpstreamBag(parts, bag) };
+    }
     const value = openUpstreamSecret(privateKey, { apiId: api.id, in: stored.in, name: stored.name, origin: api.origin, pathPrefix: api.path_prefix }, stored.sealed);
     return { credential: validateUpstreamAuth({ in: stored.in, name: stored.name, value }), credentialError: null };
   } catch (e) {

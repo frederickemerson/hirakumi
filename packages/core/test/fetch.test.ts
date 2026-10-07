@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import {
-  decodeBody, isBlockedAddress, safeFetch, safeFetchWithHeaders, UpstreamBlockedError, UpstreamTimeoutError, UpstreamTooLargeError,
+  decodeBody, isBlockedAddress, parseRetryAfter, safeFetch, safeFetchWithHeaders, UpstreamBlockedError, UpstreamTimeoutError, UpstreamTooLargeError,
 } from "../src/fetch";
 
 let server: http.Server;
@@ -12,6 +12,9 @@ beforeAll(async () => {
     if (req.url === "/ok") { res.writeHead(200, { "content-type": "application/json" }); res.end('{"ok":true}'); return; }
     if (req.url === "/redirect") { res.writeHead(302, { location: "http://169.254.169.254/" }); res.end(); return; }
     if (req.url === "/big") { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ pad: "x".repeat(5000) })); return; }
+    if (req.url === "/gz-429") { res.writeHead(429, { "content-encoding": "GZIP", "retry-after": "120" }); res.end("x"); return; }
+    if (req.url === "/gz-twice") { res.writeHead(200, [["content-encoding", "identity"], ["content-encoding", "gzip"]]); res.end("x"); return; }
+    if (req.url === "/id-twice") { res.writeHead(200, [["content-encoding", "identity"], ["content-encoding", "Identity"]]); res.end("x"); return; }
     if (req.url === "/slow") { setTimeout(() => { res.writeHead(200); res.end("{}"); }, 1000); return; }
     if (req.url === "/bom.csv") { res.writeHead(200, { "content-type": "text/csv" }); res.end(Buffer.from("\uFEFFsym,price\nADA,0.35\n")); return; }
     if (req.url === "/latin1.csv") { res.writeHead(200, { "content-type": "text/csv; charset=ISO-8859-1" }); res.end(Buffer.from("café,1\n", "latin1")); return; }
@@ -93,6 +96,17 @@ describe("safeFetch with ALLOW_INSECURE_UPSTREAM=1 (local stubs)", () => {
     const r = await safeFetch(`${base}/ok`, { method: "GET" });
     expect(r).toMatchObject({ status: 200, contentType: "application/json", body: '{"ok":true}' });
     expect(r.latencyMs).toBeGreaterThanOrEqual(0);
+  });
+  it("reports Content-Encoding (lowercased) and Retry-After (seconds) only when the answer has them", async () => {
+    process.env.ALLOW_INSECURE_UPSTREAM = "1";
+    expect(await safeFetch(`${base}/gz-429`, { method: "GET" })).toMatchObject({ status: 429, contentEncoding: "gzip", retryAfter: 120 });
+    const ok = await safeFetch(`${base}/ok`, { method: "GET" });
+    expect("contentEncoding" in ok || "retryAfter" in ok).toBe(false);
+  });
+  it("reports every Content-Encoding header, so a gzip after identity is not hidden", async () => {
+    process.env.ALLOW_INSECURE_UPSTREAM = "1";
+    expect((await safeFetch(`${base}/gz-twice`, { method: "GET" })).contentEncoding).toBe("identity, gzip");
+    expect((await safeFetch(`${base}/id-twice`, { method: "GET" })).contentEncoding).toBe("identity");
   });
   it("caps the response size", async () => {
     process.env.ALLOW_INSECURE_UPSTREAM = "1";
@@ -187,5 +201,21 @@ describe("safeFetch decodes text", () => {
     process.env.ALLOW_INSECURE_UPSTREAM = "1";
     expect((await safeFetch(`${base}/bom.csv`, { method: "GET" })).body).toBe("sym,price\nADA,0.35\n");
     expect((await safeFetch(`${base}/latin1.csv`, { method: "GET" })).body).toBe("café,1\n");
+  });
+});
+
+describe("parseRetryAfter", () => {
+  const now = Date.parse("2026-10-07T12:00:00Z");
+  it("reads decimal seconds and HTTP-dates, clamped to 1-3600 seconds", () => {
+    expect(parseRetryAfter("120", now)).toBe(120);
+    expect(parseRetryAfter(" 7 ", now)).toBe(7);
+    expect(parseRetryAfter("0", now)).toBe(1);
+    expect(parseRetryAfter("86400", now)).toBe(3600);
+    expect(parseRetryAfter("Wed, 07 Oct 2026 12:01:30 GMT", now)).toBe(90);
+    expect(parseRetryAfter("Wed, 07 Oct 2026 11:00:00 GMT", now)).toBe(1);
+    expect(parseRetryAfter(["30", "60"], now)).toBe(30);
+  });
+  it("is null when missing or neither form", () => {
+    for (const v of [undefined, null, "", "soon", "-5", "1.5", "12abc", []]) expect(parseRetryAfter(v as string | undefined, now), String(v)).toBeNull();
   });
 });
