@@ -125,6 +125,24 @@ services:
     expose:
       - "4100"
 
+  weather-api:
+    # A third demo seller (sellers/weather-api, "Sky Weather"), served at its own hostname on a domain whose DNS the
+    # team edits, so the _hirakumi TXT ownership proof can be shown live. Not part of Hirakumi itself.
+    build:
+      context: .
+      dockerfile: deploy/app.Dockerfile
+      args:
+        APP_DIR: sellers/weather-api
+    restart: unless-stopped
+    environment:
+      PORT: "4100"
+      PUBLIC_URL: https://weather.patricksteveharrison.com
+      API_TITLE: Sky Weather
+      # The seller's own key: /current and /forecast refuse calls without it, so only Hirakumi's gateway gets answers.
+      API_KEY: ${WEATHER_API_KEY:?set WEATHER_API_KEY in .env}
+    expose:
+      - "4100"
+
   caddy:
     image: caddy:2.11-alpine
     restart: unless-stopped
