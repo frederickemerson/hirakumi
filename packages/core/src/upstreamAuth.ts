@@ -32,7 +32,7 @@ export const MAX_UPSTREAM_SECRET_LENGTH = 4096;
 // Headers the gateway sets itself, or that would change how the request is framed or routed.
 const RESERVED_HEADERS = new Set([
   "accept", "user-agent", "content-type", "content-length", "host", "connection", "transfer-encoding", "te", "trailer",
-  "upgrade", "keep-alive", "proxy-authorization", "proxy-connection", "expect", "x-hirakumi-probe", "forwarded",
+  "upgrade", "keep-alive", "proxy-authorization", "proxy-connection", "expect", "x-hirakumi-probe", "x-hirakumi-hop", "forwarded",
   "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-real-ip",
 ]);
 
