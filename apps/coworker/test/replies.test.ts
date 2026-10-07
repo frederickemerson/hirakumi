@@ -3,7 +3,7 @@ import type { StructuredCall } from "../src/llm/claude.js";
 import { mapReplyToChoice, type Offered } from "../src/llm/replyChoice.js";
 import { stepPrefix } from "../src/humanSteps.js";
 import {
-  callsLinkASpec, findLinks, findSampleLines, findSamplesIntake, formatCommand, isOnlySamples, likelySpecLink, LinkError, linksToProbe, looksLikeOpenApiLink, looksLikeSecret,
+  callsLinkASpec, findLinks, findSampleLines, findSamplesIntake, formatCommand, likelySpecLink, LinkError, linksToProbe, looksLikeOpenApiLink, looksLikeSecret,
   parseCommand, tusdmToMicros, validateOpenApiUrl,
 } from "../src/sokosumi/replies.js";
 
@@ -165,12 +165,6 @@ describe("samples intake (any API, no OpenAPI file)", () => {
       .toEqual({ choices: ["https://one.example.com/v1", "https://two.example.com/v1"], lines: "GET /price?symbol=ADA" });
     expect(findSamplesIntake("Try https://one.example.com/v1 or https://two.example.com/v1\nGET /price?symbol=ADA"))
       .toEqual({ choices: ["https://one.example.com/v1", "https://two.example.com/v1"], lines: "GET /price?symbol=ADA" });
-  });
-
-  it("tells a message of only links and example lines from one with other words in it", () => {
-    expect(isOnlySamples("Docs: https://docs.example.com/guide\nAPI: https://api.example.com/v1\n- GET /price?symbol=ADA\n")).toBe(true);
-    expect(isOnlySamples("price 2\n/history needs ?days=7 though, see https://docs.example.com/guide")).toBe(false);
-    expect(isOnlySamples("")).toBe(false);
   });
 
   it.each([

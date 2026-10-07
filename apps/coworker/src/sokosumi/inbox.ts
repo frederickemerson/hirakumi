@@ -55,36 +55,41 @@ export function createInbox(deps: InboxDeps): { poll(): Promise<number> } {
       }
       let created = 0;
       for (const [taskId, events] of byTask) {
-        if (ignored.has(taskId)) continue;
-        const comments = events.filter(isComment).sort((a, b) => (at(a) || 0) - (at(b) || 0));
-        const { rows: [known] } = await deps.pool.query<Row>(
-          `select task_id, sokosumi_user_id, setup_token, created_at from coworker_tasks where task_id = $1`, [taskId]);
-        if (known) {
-          await handleReplies(convo, deps.soko, known, comments, ignored);
-          continue;
+        // One task that keeps failing (deleted, forbidden, a bad row) must not starve every task after it.
+        try {
+          if (ignored.has(taskId)) continue;
+          const comments = events.filter(isComment).sort((a, b) => (at(a) || 0) - (at(b) || 0));
+          const { rows: [known] } = await deps.pool.query<Row>(
+            `select task_id, sokosumi_user_id, setup_token, created_at from coworker_tasks where task_id = $1`, [taskId]);
+          if (known) {
+            await handleReplies(convo, deps.soko, known, comments, ignored);
+            continue;
+          }
+          const task = await deps.soko.getTask(taskId);
+          if (TERMINAL.has(task.status.toUpperCase())) {
+            ignored.add(taskId);
+            continue;
+          }
+          const token = randomBytes(24).toString("base64url");
+          const inserted = await withTx(deps.pool, async (c) => {
+            const r = await c.query(
+              `insert into coworker_tasks (task_id, sokosumi_user_id, sokosumi_organization_id, task_name, setup_token)
+               values ($1, $2, $3, $4, $5) on conflict (task_id) do nothing`,
+              [taskId, task.userId, task.organizationId, task.name, token],
+            );
+            if (r.rowCount !== 1) return false;
+            // Comments already on the task are part of its brief, not replies.
+            for (const e of comments) await c.query(`insert into coworker_task_events (event_id, task_id) values ($1, $2) on conflict do nothing`, [e.id, taskId]);
+            return true;
+          });
+          if (!inserted) continue;
+          created++;
+          const ownComments = comments.filter((e) => e.actor?.id === task.userId).map((e) => e.comment as string);
+          const brief = [task.name, task.description ?? "", ...ownComments].join("\n");
+          await answered(convo, taskId, `brief:${taskId}`, () => handleBrief(convo, { taskId, sokosumiUserId: task.userId, setupToken: token }, brief));
+        } catch (e) {
+          console.error(`[inbox] task ${taskId}:`, (e as Error).message);
         }
-        const task = await deps.soko.getTask(taskId);
-        if (TERMINAL.has(task.status.toUpperCase())) {
-          ignored.add(taskId);
-          continue;
-        }
-        const token = randomBytes(24).toString("base64url");
-        const inserted = await withTx(deps.pool, async (c) => {
-          const r = await c.query(
-            `insert into coworker_tasks (task_id, sokosumi_user_id, sokosumi_organization_id, task_name, setup_token)
-             values ($1, $2, $3, $4, $5) on conflict (task_id) do nothing`,
-            [taskId, task.userId, task.organizationId, task.name, token],
-          );
-          if (r.rowCount !== 1) return false;
-          // Comments already on the task are part of its brief, not replies.
-          for (const e of comments) await c.query(`insert into coworker_task_events (event_id, task_id) values ($1, $2) on conflict do nothing`, [e.id, taskId]);
-          return true;
-        });
-        if (!inserted) continue;
-        created++;
-        const ownComments = comments.filter((e) => e.actor?.id === task.userId).map((e) => e.comment as string);
-        const brief = [task.name, task.description ?? "", ...ownComments].join("\n");
-        await answered(convo, taskId, `brief:${taskId}`, () => handleBrief(convo, { taskId, sokosumiUserId: task.userId, setupToken: token }, brief));
       }
       return created;
     },

@@ -5,6 +5,7 @@ import type pg from "pg";
 import { withTx } from "../db.js";
 import { PermanentError } from "../errors.js";
 import { enqueueMessage } from "../messages.js";
+import { FILE_HOSTS } from "../openapi/fileHosts.js";
 import { describeAuthHint, parseOpenApi, type ParseResult } from "../openapi/parse.js";
 import { finishStep, runStep, type StepOutcome } from "../steps.js";
 
@@ -15,9 +16,6 @@ export type ParseDeps = { pool: pg.Pool; fetchSpec: (url: string) => Promise<str
  * Hosts that serve files, never the seller's API. An OpenAPI file there needs a full servers[0] URL: a relative one
  * (or none) would make the file host the API.
  */
-const FILE_HOSTS = new Set([
-  "raw.githubusercontent.com", "gist.githubusercontent.com", "github.com", "gist.github.com", "gitlab.com", "bitbucket.org", "cdn.jsdelivr.net",
-]);
 
 /**
  * Where the operations live (review I7): the API's origin and base path, from servers[0].url. The OpenAPI file is

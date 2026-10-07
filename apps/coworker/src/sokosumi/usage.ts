@@ -13,13 +13,19 @@ export async function reportOnboardingUsage(pool: pg.Pool, soko: SokosumiClient,
   );
   let reported = 0;
   for (const r of rows) {
-    await soko.reportUsage({
-      userId: r.sokosumi_user_id,
-      organizationId: r.sokosumi_organization_id,
-      idempotencyKey: `usage:${r.task_id}:onboarding`,
-      credits,
-      referenceId: r.api_id,
-    });
+    // One row Sokosumi keeps refusing must not stop every later fee; it is retried on the next pass.
+    try {
+      await soko.reportUsage({
+        userId: r.sokosumi_user_id,
+        organizationId: r.sokosumi_organization_id,
+        idempotencyKey: `usage:${r.task_id}:onboarding`,
+        credits,
+        referenceId: r.api_id,
+      });
+    } catch (e) {
+      console.error(`[usage] task ${r.task_id}:`, (e as Error).message);
+      continue;
+    }
     await pool.query(`update coworker_tasks set usage_reported_at = now() where task_id = $1`, [r.task_id]);
     reported++;
   }

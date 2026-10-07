@@ -2,6 +2,7 @@
  * Structured parsing of the seller's text on a Sokosumi task: the OpenAPI link and the replies the coworker asked
  * for (`sell 1 2`, `price 2.5 for 100 calls`, `publish`). Nothing here guesses intent; anything else is "no command".
  */
+import { FILE_HOSTS } from "../openapi/fileHosts.js";
 
 export class LinkError extends Error {}
 
@@ -128,8 +129,7 @@ export function looksLikeOpenApiLink(link: string): boolean {
   }
 }
 
-// Hosts that serve files, never an API: a link there is an OpenAPI file even without .json or .yaml.
-const FILE_HOSTS = new Set(["raw.githubusercontent.com", "gist.githubusercontent.com", "gist.github.com", "github.com", "gitlab.com", "bitbucket.org", "pastebin.com"]);
+// FILE_HOSTS: a link there is an OpenAPI file even without .json or .yaml.
 // A last path segment that names a description document (…/v1/spec, …/schema, …/openapi).
 const SPEC_SEGMENT = /\/(?:spec|specs|schema|definition|description|oas)(?:\/)?$/i;
 // The seller calls the link a spec ("My spec:", "OpenAPI here"), but not "no OpenAPI file" or "without a spec".
@@ -242,15 +242,6 @@ export function findSamplesIntake(text: string): SamplesIntake | null {
   const base = chooseBase(text);
   if (!base) return null;
   return { ...base, lines: lines.join("\n") };
-}
-
-/**
- * Nothing but links and example request lines: clearly a samples intake, even on a task whose API is under way
- * (where a reply such as "price 2" with a note under it is a command).
- */
-export function isOnlySamples(text: string): boolean {
-  const lines = text.split(/\r?\n/).map(cleanLine).filter(Boolean);
-  return lines.length > 0 && lines.every((l) => SAMPLE_LINE.test(l) || findLinks(l).length > 0);
 }
 
 /**

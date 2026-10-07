@@ -101,11 +101,13 @@ async function pollRegistration(deps: RegisterDeps, apiId: string, step: StepRow
   }
   const registeredAt = typeof output.registeredAt === "string" ? Date.parse(output.registeredAt) : now.getTime();
   if (now.getTime() - registeredAt > REGISTRY_SLOW_MS) {
-    await enqueueMessage(deps.pool, {
+    const queued = await enqueueMessage(deps.pool, {
       apiId,
-      body: "Registration is taking longer than usual (over 20 minutes). I'm still checking, and the Hirakumi team has been alerted.",
+      body: "Registration is taking longer than usual (over 20 minutes). I'm still checking, and the Hirakumi team is looking at it.",
       dedupeKey: `registry_slow:${apiId}`,
     });
+    // The operator's signal: the message above tells the seller the team knows, so the team must actually be told.
+    if (queued) console.error(`[register] ${apiId}: registration ${registrationId} still pending after 20 minutes`);
   }
 }
 

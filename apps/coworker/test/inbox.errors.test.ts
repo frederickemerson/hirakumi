@@ -41,4 +41,30 @@ describe("Sokosumi inbox when handling throws", () => {
     expect(error).toHaveBeenCalledWith(expect.stringContaining("boom"));
     error.mockRestore();
   });
+
+  it("one task the API refuses (deleted, forbidden) doesn't stop the others", async () => {
+    const bad = `tsk_${rand()}`;
+    const good = `tsk_${rand()}`;
+    const events: SokosumiEvent[] = [
+      { id: `evt_${rand()}`, taskId: bad, createdAt: "2020-01-01T00:00:00.000Z", actor: { type: "user", id: "user_1" } },
+      { id: `evt_${rand()}`, taskId: good, createdAt: "2020-01-01T00:00:00.000Z", actor: { type: "user", id: "user_1" } },
+    ];
+    const soko = {
+      me: vi.fn(),
+      listEvents: vi.fn(async () => ({ events, nextCursor: null })),
+      getTask: vi.fn(async (id: string) => {
+        if (id === bad) throw new Error("Sokosumi answered 404");
+        return { id, name: "Sell my API", userId: "user_1", organizationId: null, status: "READY" };
+      }),
+      createTaskEvent: vi.fn(),
+      reportUsage: vi.fn(),
+    } satisfies SokosumiClient;
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const inbox = createInbox({ pool: db.pool, soko, webBaseUrl: "https://web.test", fetchSpec: vi.fn() });
+    expect(await inbox.poll()).toBe(1);
+    const { rows } = await db.pool.query(`select task_id from coworker_tasks where task_id = any($1)`, [[bad, good]]);
+    expect(rows.map((r) => r.task_id)).toEqual([good]);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining(bad), expect.anything());
+    error.mockRestore();
+  });
 });

@@ -60,4 +60,20 @@ describe("reportOnboardingUsage", () => {
     expect(await reportOnboardingUsage(db.pool, client, 1500)).toBe(0);
     expect(client.reportUsage).toHaveBeenCalledWith({ userId: "user_7", organizationId: null, idempotencyKey: "usage:tsk_bill:onboarding", credits: 1500, referenceId: apiId });
   });
+  it("one row the API keeps refusing doesn't stop the others from being billed", async () => {
+    const badApi = await seedApi(db.pool, { state: "live", sokosumiTaskId: "tsk_bill_bad" });
+    const goodApi = await seedApi(db.pool, { state: "live", sokosumiTaskId: "tsk_bill_good" });
+    await db.pool.query(`insert into coworker_tasks (task_id, sokosumi_user_id, sokosumi_organization_id, task_name, setup_token) values ('tsk_bill_bad', 'user_bad', null, 'n', 'tok_bad'), ('tsk_bill_good', 'user_good', null, 'n', 'tok_good')`);
+    const client = soko(async () => ({ id: "x" }));
+    client.reportUsage.mockImplementation(async (u: { userId: string }) => {
+      if (u.userId === "user_bad") throw new Error("Sokosumi answered 422");
+      return { id: "ous_2" };
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await reportOnboardingUsage(db.pool, client, 1500)).toBe(1);
+    error.mockRestore();
+    const { rows } = await db.pool.query(`select task_id from coworker_tasks where usage_reported_at is not null and task_id like 'tsk_bill_%' order by task_id`);
+    expect(rows.map((r) => r.task_id)).toEqual(["tsk_bill_good"]);
+    void badApi; void goodApi;
+  });
 });
