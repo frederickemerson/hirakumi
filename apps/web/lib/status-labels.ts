@@ -1,3 +1,4 @@
+import { STATE_LABEL } from "./copy";
 import type { HourState, StatusHour } from "./repo/status";
 import type { ApiState, Health } from "./types";
 
@@ -22,6 +23,23 @@ export function apiStatus(state: ApiState, health: Health, stopped: boolean): { 
   if (state === "retired") return { tone: "retired", label: "Retired" };
   if (stopped) return { tone: "failed", label: "Stopped" };
   return { tone: "progress", label: "In progress" };
+}
+
+export type StatusLightColor = "mint" | "coral" | "pencil" | "sky";
+
+/**
+ * The round light before an API's name in the seller's lists: its colour, the short label shown on hover and focus
+ * (and read by screen readers), and whether it pulses (only while live and healthy). Built on the tone apiStatus
+ * derived from state, health and the onboarding timeline; `state` names the setup step.
+ */
+export function statusLight(tone: ApiStatusTone, state: ApiState): { color: StatusLightColor; label: string; pulse: boolean } {
+  switch (tone) {
+    case "live": return { color: "mint", label: "Running", pulse: true };
+    case "down": return { color: "coral", label: "Down", pulse: false };
+    case "failed": return { color: "pencil", label: "Stopped", pulse: false };
+    case "retired": return { color: "pencil", label: "Retired", pulse: false };
+    case "progress": return { color: "sky", label: `Setting up: ${STATE_LABEL[state]}`, pulse: false };
+  }
 }
 
 export const STATUS_BADGE_VARIANT: Record<ApiStatusTone, "sky" | "destructive" | "mint" | "secondary"> = {

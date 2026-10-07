@@ -325,6 +325,15 @@
   35% { opacity: 1; transform: translateY(-2px); }
 }
 
+/* Status light of a live, healthy API: a soft mint halo that swells and fades. */
+@keyframes status-pulse {
+  0% { box-shadow: 0 0 0 0 rgb(56 193 176 / 0.55); }
+  70%, 100% { box-shadow: 0 0 0 6px rgb(56 193 176 / 0); }
+}
+
+@utility animate-status-pulse {
+  animation: status-pulse 2s ease-out infinite;
+}
 @utility animate-bubble-in {
   animation: bubble-in 240ms var(--ease-snap) both;
 }
@@ -364,7 +373,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .animate-marquee, .animate-spin-square, .animate-blink, .stripes-sky, .animate-rise, .animate-pop, .animate-toast-in,
-  .animate-bubble-in, .animate-typing-dot {
+  .animate-bubble-in, .animate-typing-dot, .animate-status-pulse {
     animation: none !important;
   }
   .press, .press-sm {
