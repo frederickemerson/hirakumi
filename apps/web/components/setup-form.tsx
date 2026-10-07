@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { Elapsed } from "@/components/elapsed";
 import { InlineError, InlineStatus } from "@/components/states";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { postJson, RequestError } from "@/lib/client-fetch";
 import { startRouteProgress } from "@/lib/route-progress";
@@ -26,6 +26,8 @@ export function SetupForm({ initialUrl, setupToken, samples: samplesOn = false }
   const [busy, setBusy] = useState(false);
   // Example requests that may hold a key: the API is listed, and the seller reads these before going on.
   const [warned, setWarned] = useState<{ apiId: string; warnings: string[] } | null>(null);
+  // The seller already listed this API: say so, instead of jumping to it.
+  const [duplicate, setDuplicate] = useState<{ apiId: string; state: string; name: string } | null>(null);
 
   function openEndpoints(apiId: string) {
     startRouteProgress();
@@ -36,9 +38,16 @@ export function SetupForm({ initialUrl, setupToken, samples: samplesOn = false }
     e.preventDefault();
     setBusy(true);
     setError(null);
+    setDuplicate(null);
     try {
       const intake = mode === "openapi" ? { openapiUrl: url } : { mode: "samples", baseUrl, samples };
-      const data = await postJson<{ apiId: string; keyWarnings?: string[] }>("/api/apis", { ...intake, name, ...(setupToken ? { setupToken } : {}) });
+      const data = await postJson<{ apiId: string; state: string; name: string; created: boolean; keyWarnings?: string[] }>(
+        "/api/apis", { ...intake, name, ...(setupToken ? { setupToken } : {}) });
+      if (data.created === false) {
+        setDuplicate({ apiId: data.apiId, state: data.state, name: data.name });
+        setBusy(false);
+        return;
+      }
       if (data.keyWarnings?.length) {
         setWarned({ apiId: data.apiId, warnings: data.keyWarnings });
         setBusy(false);
@@ -111,6 +120,7 @@ export function SetupForm({ initialUrl, setupToken, samples: samplesOn = false }
         <Input id="api-name" type="text" value={name} onChange={(e) => setName(e.target.value)} disabled={busy} />
       </div>
       {error && <InlineError>{error}</InlineError>}
+      {duplicate && <AlreadyListed {...duplicate} onContinue={() => openEndpoints(duplicate.apiId)} />}
       {warned ? (
         <div className="space-y-3" data-testid="key-warnings">
           <ul className="list-disc space-y-1 pl-5 text-body">
@@ -132,5 +142,30 @@ export function SetupForm({ initialUrl, setupToken, samples: samplesOn = false }
         </div>
       )}
     </form>
+  );
+}
+
+/** The seller pasted an API they already listed: live means it is already monetized, otherwise they can pick up where they left off. */
+function AlreadyListed({ apiId, state, name, onContinue }: { apiId: string; state: string; name: string; onContinue: () => void }) {
+  const live = state === "live" || state === "registering";
+  return (
+    <div role="alert" data-testid="already-listed" className="space-y-3 rounded-[2px] border-2 border-ink border-l-8 border-l-canary bg-frost p-4 text-body">
+      {live ? (
+        <>
+          <p className="font-semibold">This API is already monetized on Hirakumi.</p>
+          <p>You listed it as {name}. Agents already buy it there, so it can&apos;t be listed twice.</p>
+          <div className="flex flex-wrap gap-3">
+            <a href={`/apis/${apiId}/overview`} className={buttonVariants({ size: "sm" })}>Open {name}</a>
+            <a href={`/p/${apiId}`} className={buttonVariants({ variant: "outline", size: "sm" })}>Its public page</a>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="font-semibold">You already started listing this API.</p>
+          <p>It is saved as {name}. Pick up where you left off.</p>
+          <Button type="button" size="sm" onClick={onContinue}>Continue listing {name}</Button>
+        </>
+      )}
+    </div>
   );
 }

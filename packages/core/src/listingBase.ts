@@ -10,7 +10,7 @@
 /** States from proven ownership on. 'retired' frees the base, and so does deleting the row. */
 export const ACTIVE_LISTING_STATES = ["ownership_verified", "rule_built", "priced", "registering", "live"] as const;
 
-export const LISTED_BY_OTHER = "This API is already listed by another account. If it's yours, retire that listing first.";
+export const LISTED_BY_OTHER = "This API is already registered on Hirakumi by another account, so it can't be listed again. If it's yours, retire that listing first.";
 
 export const overlapWarning = (name: string) => `This overlaps your listing ${name}, so some calls may be sold in both.`;
 

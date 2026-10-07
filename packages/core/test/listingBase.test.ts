@@ -67,7 +67,7 @@ describe("judging a base against active listings", () => {
   it("blocks an exact duplicate by another account without naming it", () => {
     const v = judgeListingBase(me, [listed({ pathPrefix: "/v1/" })]);
     expect(v).toEqual({ ok: false, reason: "taken_by_other", message: LISTED_BY_OTHER });
-    expect(LISTED_BY_OTHER).toBe("This API is already listed by another account. If it's yours, retire that listing first.");
+    expect(LISTED_BY_OTHER).toBe("This API is already registered on Hirakumi by another account, so it can't be listed again. If it's yours, retire that listing first.");
     expect(JSON.stringify(v)).not.toMatch(/Other API|sel_other|api_other/);
   });
   it("blocks an overlap by another account", () => {
