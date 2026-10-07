@@ -76,7 +76,7 @@ function prefersReducedMotion(): boolean {
   return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReason = null, liveBuy = false, paths, noPackNote, noPackHint, buyNote, onPackChange }: {
+export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReason = null, liveBuy = false, paths, noPackNote, noPackHint, buyNote, buyLabel, onPackChange }: {
   apiId: string;
   ops: TryOp[];
   /** A pack with credits left when the page loaded, or null: then the first step is "Buy a pack live". */
@@ -91,6 +91,8 @@ export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReas
   paths?: { call: string; buy: string };
   /** Shown instead of the buy button when there is no pack and no demo purchase (the seller's wallet payment). */
   noPackNote?: React.ReactNode;
+  /** Replaces "Buy a pack live" on the first step (the seller's free test). */
+  buyLabel?: string;
   /** Replaces the note under "Buy a pack live". */
   buyNote?: React.ReactNode;
   /** The empty result slot's hint when there is no pack and no demo purchase. */
@@ -241,7 +243,7 @@ export function TryConsole({ apiId, ops, initialPack, packPrice = null, downReas
   }
 
   const latest = history[0];
-  const primaryLabel = hasCredits ? "Call it" : "Buy a pack live";
+  const primaryLabel = hasCredits ? "Call it" : (buyLabel ?? "Buy a pack live");
 
   return (
     <div className="space-y-8">

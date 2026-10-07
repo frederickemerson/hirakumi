@@ -33,6 +33,7 @@ export function SellerTryLive({ apiId, ops, initialPack, packPrice, downReason, 
       packPrice={packPrice}
       downReason={downReason}
       liveBuy={free}
+      buyLabel={free ? "Run your free test" : undefined}
       paths={{ call: base, buy: `${base}/free` }}
       onPackChange={(p) => {
         setPack(p);

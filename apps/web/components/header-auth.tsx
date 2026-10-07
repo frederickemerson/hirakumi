@@ -135,7 +135,8 @@ function AccountMenu({ address }: { address: string }) {
         className="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-[2px] border-[1.5px] border-ink bg-frost px-3 text-caption font-medium transition-colors duration-150 hover:bg-ice"
       >
         <Wallet aria-hidden className="size-3.5 shrink-0" />
-        <span className="whitespace-nowrap">{address}</span>
+        {/* Icon only on phones: the full address pushes the menu button past a 390px screen. aria-label keeps it. */}
+        <span className="hidden whitespace-nowrap sm:inline">{address}</span>
         <ChevronDown aria-hidden className={cn("size-3.5 shrink-0 transition-transform duration-150", open && "rotate-180")} />
       </button>
       {open && (
