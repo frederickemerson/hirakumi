@@ -74,13 +74,17 @@ describe("a new task whose brief holds the OpenAPI link", () => {
     const inbox = createInbox({ pool: db.pool, soko, webBaseUrl: WEB, fetchSpec });
     expect(await inbox.poll()).toBe(1);
     expect(fetchSpec).toHaveBeenCalledWith("https://price.example.dev/openapi.json");
-    const [m] = await messagesForTask(t.id);
-    expect(m.task_status).toBe("INPUT_REQUIRED");
+    const [m, link] = await messagesForTask(t.id);
+    expect(m.task_status).toBe("RUNNING");
     expect(m.body).toMatch(/^Step 1 of 7, Read your file: I read Price API and found 3 endpoints \(I skipped 3\):/);
+    // The wallet link is its own comment after the list, like every later signing step.
+    expect(link.task_status).toBe("INPUT_REQUIRED");
+    expect(link.body).toMatch(/^Next: link your wallet\. Sign once with your Cardano wallet, or with Google or email \(no payment\), then close the tab\./);
     expect(m.body).toContain("1. GET /price (getPrice): Current price for a symbol");
     expect(m.body).toContain("Suggested price: 2 tUSDM for 100 calls");
     const { rows: [ct] } = await db.pool.query(`select setup_token from coworker_tasks where task_id = $1`, [t.id]);
-    expect(m.body).toContain(`${WEB}/setup?t=${ct.setup_token}`);
+    expect(m.body).not.toContain("/setup?t=");
+    expect(link.body).toContain(`${WEB}/setup?t=${ct.setup_token}&link=1`);
     expect((await db.pool.query(`select 1 from apis where sokosumi_task_id = $1`, [t.id])).rowCount).toBe(0);
   });
 
@@ -143,8 +147,9 @@ describe("a link is fetched to tell an OpenAPI file from a base URL", () => {
     const fetchSpec = vi.fn().mockResolvedValue(PRICE_SPEC);
     const { msgs, apis } = await brief(`Please sell ${link}`, fetchSpec);
     expect(fetchSpec).toHaveBeenCalledWith(link);
-    expect(msgs).toHaveLength(1);
+    expect(msgs).toHaveLength(2);
     expect(msgs[0].body).toMatch(/^Step 1 of 7, Read your file: I read Price API and found 3 endpoints/);
+    expect(msgs[1].body).toMatch(/^Next: link your wallet/);
     expect(msgs[0].body).not.toMatch(/example requests/);
     expect(apis).toEqual([]);
   });
@@ -221,7 +226,7 @@ describe("a link is fetched to tell an OpenAPI file from a base URL", () => {
     setEvents([comment(t.id, t.user, "here: https://api.example.com/docs/json")]);
     await inbox.poll();
     expect(fetchSpec).toHaveBeenCalledWith("https://api.example.com/docs/json");
-    expect((await messagesForTask(t.id)).at(-1)?.body).toMatch(/I read Price API and found 3 endpoints/);
+    expect((await messagesForTask(t.id)).at(-2)?.body).toMatch(/I read Price API and found 3 endpoints/);
   });
 });
 
