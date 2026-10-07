@@ -1,38 +1,34 @@
-# Submission checklist. Deadline 7 Oct 2026 23:59 SGT; our target 21:00 SGT
+# Submission checklist
+
+Deadline: 7 Oct 2026, 23:59 SGT.
 
 ## Track requirements (official brief)
 - [ ] Working prototype on Cardano preprod
-- [ ] Open-source repo with docs: GitHub repo **public**, `README.md` file lists per technology (Task 16 path check passes), MIT license
-- [ ] Live URL(s): dashboard https://hirakumi.vercel.app, gateway https://52-70-235-103.sslip.io, demo API https://price.52-70-235-103.sslip.io, try it live https://hirakumi.vercel.app/p/api_eejiaioyqt/try (all 200 from a private window)
-- [ ] Demo video **≤ 3:00** (YouTube unlisted + Drive), link opens in a private window
-- [ ] Slides: Google Drive link, "Anyone with the link → Viewer"
-- [ ] Short write-up: problem, technical approach incl. Cardano/Masumi/x402 infrastructure, deployment and scaling (`docs/submission/writeup.md`, measured numbers filled in)
+- [ ] Public GitHub repo with documentation: https://github.com/frederickemerson/hirakumi (`README.md`, MIT license)
+- [ ] Live URLs, each 200 from a private window: web https://hirakumi.vercel.app, gateway https://52-70-235-103.sslip.io, demo sellers https://price.52-70-235-103.sslip.io and https://mika.52-70-235-103.sslip.io, try page https://hirakumi.vercel.app/p/api_eejiaioyqt/try
+- [ ] Demo video, 3:00 or less (YouTube unlisted), link opens in a private window
+- [ ] Slides (Google Drive, "Anyone with the link: Viewer")
+- [ ] Write-up: problem, technical approach with tools, frameworks and Cardano infrastructure, deployment and scaling (`docs/submission/writeup.md`)
+
+## Links
+- Repo: https://github.com/frederickemerson/hirakumi
+- Write-up: https://github.com/frederickemerson/hirakumi/blob/main/docs/submission/writeup.md
+- Live: https://hirakumi.vercel.app
+- Video: ______
+- Slides: ______
 
 ## Order of submission
-1. [ ] Submit to the **main track** first (form on the track page): repo, live URL, video, slides, write-up.
-2. [ ] Then **add the Cardano "Agentic Commerce" track** to the same submission (or a second submission if the organisers said so in Task 1).
-3. [ ] Screenshot each confirmation page and post it in team chat.
-4. [ ] Re-open the submission and check every link works.
+1. [ ] Submit to the main track (form on the track page): repo, live URL, video, slides, write-up.
+2. [ ] Add the Cardano "Agentic Commerce" track to the same submission.
+3. [ ] Screenshot each confirmation page.
+4. [ ] Re-open the submission and check every link.
 
-## Final checks (T-4h → T-1h)
-- [ ] `pnpm test` green on `main`; the tag `submission` is pushed
-- [ ] Deploy order for any-API (migrations 0014 and 0015): only the gateway applies migrations (at boot), and the web app and the coworker read `apis.intake_kind` / `apis.samples`. The web app tolerates 0014 or 0015 not having run yet (it hides the new features and answers "being updated"), and samples intake stays off until `SAMPLES_INTAKE=1`.
-  1. Gateway: set `UPSTREAM_AUTH_PRIVATE_KEY`, restart it (it applies 0014 and 0015 at boot; or run `pnpm --filter @hirakumi/db migrate` against Neon), and check `select name from schema_migrations where name in ('0014_any_api_samples.sql', '0015_header_verify.sql')` returns both rows.
-  2. Coworker: restart it on the new build.
-  3. Web: set `UPSTREAM_AUTH_PUBLIC_KEY` on Vercel and promote the build.
-  4. Only then set `SAMPLES_INTAKE=1` on Vercel and redeploy.
-
-  0015 adds the `header` challenge kind that the new ownership check uses, so the gateway, the web app and the demo seller (which now sends `X-Hirakumi-Verify` on every response) go out together; open `openapi` codes are not carried over, so a seller mid-proof gets a new code.
-- [ ] No secrets in the repo: `git log -p | grep -E 'BUYER_MNEMONIC=|ADMIN_TOKEN=|PAYMENT_SERVICE_TOKEN=' ` returns nothing with a value
-- [ ] `DEMO_MODE=1` stays on and the price API mode is `ok` during judging
-- [ ] Buyer and purchasing wallets keep ≥ 10 tADA so judges can re-run the buyer
-- [ ] The answer to "how many tracks?" (Task 1) is recorded here: ______ (filled at hour 2)
-
-## Links (fill as created)
-- Repo:
-- Video:
-- Slides:
-- Write-up:
+## Final checks
+- [ ] `pnpm typecheck`, `pnpm test` and `aiken check` green on `main`
+- [ ] Gateway has applied migrations through 0015: `select name from schema_migrations order by name desc limit 1`
+- [ ] No secrets in the repo: `git log -p | grep -E 'MNEMONIC=|ADMIN_TOKEN=|PAYMENT_SERVICE_TOKEN=|PRIVATE_KEY='` shows no values
+- [ ] `DEMO_MODE=1` stays on and both demo sellers are in mode `ok` during judging
+- [ ] Buyer and purchasing wallets keep at least 10 tADA so judges can re-run the buyer
 
 ## Masumi track evidence (https://www.masumi.network/token2049/submission)
 All on Cardano preprod. Explorer: https://preprod.cardanoscan.io

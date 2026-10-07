@@ -2,7 +2,7 @@
 // facilitator → IOUs → Close → Raise → (contest period) → Settle; and a second
 // pack where the buyer closes with 0 and Settle refunds everything.
 //
-//   ENV_FILE=<repo .env> ESCROW_RUN_SECRETS=<0600 file> ESCROW_RUN_STATE=<json> pnpm --filter @hirakumi/escrow-run run <phase>
+//   ENV_FILE=<repo .env> ESCROW_RUN_SECRETS=<0600 file> ESCROW_RUN_STATE=<json> pnpm --filter @hirakumi/escrow-run run run <phase>
 //   phases: setup lock1 close1 raise1 settle1 lock2 close2 settle2 report all1 all2
 //
 // Secrets (mnemonics, IOU keys) live only in the two files outside git. Nothing here prints them.

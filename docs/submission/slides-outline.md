@@ -1,23 +1,22 @@
-# Hirakumi slides (8 slides + appendix)
+# Hirakumi slides (8 slides and an appendix)
 
-1. **Title:** "Hirakumi: any API, sold to AI agents in three minutes. Buyers only pay for answers that pass." Team names, TOKEN2049 Origins, Cardano Agentic Commerce track.
+1. **Title:** "Hirakumi: make your APIs monetizable for AI agents. Buyers pay only for answers that keep the promise." Team, TOKEN2049 Origins, Cardano Agentic Commerce track.
 2. **Problem:**
-   - Agents need paid data per call; API sellers have no way to reach them on Masumi without building an agent.
-   - Buyers pay even when a response is broken or stale.
-   - Per-call on-chain payment on Cardano costs about 1.2–1.5 ADA min-UTxO plus about 0.17 ADA fee, with a 20–60s confirmation.
-3. **Solution:** A Sokosumi coworker that turns any read-only API (an OpenAPI link, or a base URL plus example requests; JSON or text answers; keys sealed for the gateway only) into a Masumi-registered agent:
-   - confirm endpoints, prove ownership (a code in an X-Hirakumi-Verify response header + one wallet signature), approve a price and a plain-English promise, Publish;
-   - **call packs** over x402: one tUSDM payment straight to the seller for 100 calls;
-   - **credits used only on pass**: a failing answer returns 422 and costs nothing;
-   - **truthful health**: `/availability` returns 503 when the API is down, so the registry shows Offline.
-4. **Demo:** the video (embedded) or 3 screenshots: 402 with price and promise hash → Cardanoscan pack tx → 422 "credits unchanged" + Down.
-5. **How it fits Masumi:** table "Masumi already has → Hirakumi adds":
-   registry NFT → one-step registration from OpenAPI; `/availability` health check → answers from real test calls; escrow auto-refund → an acceptance rule decides whether a result is submitted; MIP-004 hashes → rule hash published before purchase; Sokosumi coworkers → the onboarding coworker plus health alerts.
-6. **Architecture:** gateway (Express on EC2: x402 packs, credits, MIP-003, monitor) · Masumi payment service (registry, escrow) · Postgres · Caddy · coworker · Next.js dashboard on Vercel · `@x402/*` 2.26.0 on Cardano preprod with the hosted facilitator.
-7. **Business model:**
-   - Onboarding fee: billed in Sokosumi credits, about $10–20 per API.
-   - Take rate on packs: 3% (second output if x402 supports it, else billed monthly).
-   - Pro: faster probes, analytics, a scored badge.
-   - Call-pack economics: about 1.4 ADA overhead once per pack = about 0.014 ADA per call at 100 calls, versus about 1.4 ADA per call if every call paid on-chain (100× cheaper per call). Non-custodial: pack payments go straight to the seller.
-8. **Roadmap:** packs paid into escrow (buyer protection if a seller disappears); public QA and pricing agents; drift detection; mainnet after the track; DNS ownership.
-- **Appendix:** edge cases we handle (replayed payment → same token; race for last credit → exactly one wins; settlement fails → token stays pending and unusable; SSRF guard; 15s upstream timeout).
+   - Agents need paid data per call; API owners have no simple way to sell to them on Masumi.
+   - Buyers pay even when an answer is empty or stale.
+   - Paying per call on chain costs about 1.2 to 1.5 ADA min-UTxO plus about 0.17 ADA fee, and waits for a block.
+3. **Solution:** any read-only API, listed in minutes:
+   - an OpenAPI link, or a base URL and a few example requests; JSON or text answers; API keys sealed for the gateway only;
+   - ownership by an `X-Hirakumi-Verify` response header (platform detected, snippet or "Let your AI do it" prompt) and one wallet signature, re-checked every 6 hours;
+   - a promise inferred from real test calls; text answers need a phrase the seller confirms;
+   - **call packs** over x402: one payment for 100 calls; **credits only on pass**: a failing answer is a 422 and costs nothing;
+   - **truthful health**: `/availability` answers 503 when the API breaks, so the Masumi registry shows Offline.
+4. **Settlement, chosen per purchase:** direct (one tx to the seller, cheapest) or escrow in an Aiken contract (large pack, low uptime, new seller, or the buyer asks). In escrow the buyer signs an IOU per good answer; Close, Raise, Settle; the seller is paid only for signed calls; the buyer can always exit.
+5. **Demo:** the video, or three screenshots: 402 with price, promise hash and settlement reasons; Cardanoscan lock and Settle; 422 with the API marked Down.
+6. **How it fits Masumi:** "Masumi has, Hirakumi adds": registry token, registration from an OpenAPI link; `/availability`, answers from real test calls; escrow refund, a promise decides whether a result is submitted; MIP-004 hashes, the rule hash published before purchase; Sokosumi coworkers, the onboarding coworker and health alerts.
+7. **Architecture:** gateway (Express on EC2: x402 packs, credits, escrow watcher, MIP-003, monitor), Masumi payment service, Postgres, Caddy, coworker, Next.js web app on Vercel, `pack_escrow` Aiken validator, `@x402/*` 2.26.0 on preprod with the hosted facilitator.
+8. **Business model and roadmap:**
+   - 3% fee on escrow packs (an output of the contract today); onboarding fee in Sokosumi credits.
+   - Economics: about 0.014 ADA overhead per call at 100 calls, versus about 1.4 ADA per call paid on chain.
+   - Next: reference-script UTxO for cheaper spends, contract audit, mainnet USDM, escrow as the default for new sellers.
+- **Appendix:** edge cases handled: a replayed payment returns the same token; a race for the last credit has exactly one winner; a failed settlement leaves the token pending and unusable; SSRF guard on every outbound call; a buyer that demands escrow never gets a silent direct offer; on-chain evidence links (README).
