@@ -1,10 +1,10 @@
 import type postgres from "postgres";
-import { ACTIVE_BASE_INDEX, checkListingBase, newId, newVerifyCode } from "@hirakumi/core";
+import { ACTIVE_BASE_INDEX, checkListingBase, newId, newVerifyCode, VERIFY_PASS_TTL_MINUTES } from "@hirakumi/core";
 import type { Sql } from "../db";
 import { queryOn } from "./apis";
 
 /** A passing DNS check counts for this long; after that the seller checks again before signing. */
-export const VERIFY_PASS_TTL_MINUTES = 30;
+export { VERIFY_PASS_TTL_MINUTES };
 
 /**
  * The API's verification code (challenges.kind = 'dns'), added by the seller as a TXT record at _hirakumi.<host>.

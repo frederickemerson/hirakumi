@@ -75,6 +75,21 @@ describe("/setup and the Sokosumi link", () => {
     expect(screen.queryByLabelText("OpenAPI link")).toBeNull();
   });
 
+  it("signed out: the wallet sign-in is on this page (no separate login page), and comes back to the same link", async () => {
+    jar.token = null;
+    await page({ t: "tok_1", link: "1" });
+    expect(screen.getByRole("heading", { name: "Link your Sokosumi account" })).toBeInTheDocument();
+    expect(screen.getByText("Sign in with your Cardano wallet. It costs nothing and moves no funds.")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Looking for wallets" })).toBeInTheDocument();
+    expect(screen.queryByTestId("sokosumi-move")).toBeNull();
+  });
+
+  it("&link=1, already linked here: says the tab can close, the rest is in Sokosumi", async () => {
+    await linkTo("usr_soko_1", me.id);
+    await page({ t: "tok_1", link: "1" });
+    expect(screen.getByTestId("sokosumi-linked-here")).toHaveTextContent("Done. You can close this tab; the rest continues in Sokosumi.");
+  });
+
   it("an unknown setup token says so", async () => {
     await page({ t: "nope", link: "1" });
     expect(screen.getByText(/isn't valid any more/)).toBeInTheDocument();

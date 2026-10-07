@@ -4,7 +4,8 @@ import { getSql } from "@/lib/db";
 import { samplesIntakeOpen } from "@/lib/repo/schema";
 import { sokosumiLinkForToken } from "@/lib/repo/sokosumi-link";
 import { InlineError } from "@/components/states";
-import { requireSellerPage } from "@/lib/page-auth";
+import { WalletLogin } from "@/components/wallet-login";
+import { readPageSession } from "@/lib/page-auth";
 
 const BAD_LINK = "This setup link isn't valid any more. Open the latest link from your Sokosumi task.";
 
@@ -16,7 +17,16 @@ export default async function SokosumiSetupPage({ searchParams }: { searchParams
   const { t, link } = await searchParams;
   const token = typeof t === "string" ? t : "";
   const linkOnly = link === "1";
-  const session = await requireSellerPage(`/setup?t=${encodeURIComponent(token)}${linkOnly ? "&link=1" : ""}`);
+  const session = await readPageSession();
+  if (!session) {
+    // Signing in is part of this page (no separate login page): one signature, then the page shows its step.
+    return (
+      <Shell linkOnly={linkOnly}>
+        <p className="text-body">Sign in with your Cardano wallet. It costs nothing and moves no funds.</p>
+        <WalletLogin next={`/setup?t=${encodeURIComponent(token)}${linkOnly ? "&link=1" : ""}`} />
+      </Shell>
+    );
+  }
   if (!token) {
     return (
       <Shell linkOnly={linkOnly}>
@@ -34,7 +44,7 @@ export default async function SokosumiSetupPage({ searchParams }: { searchParams
     return (
       <Shell linkOnly>
         {state.status === "here"
-          ? <SokosumiLinkedHere address={session.addr} />
+          ? <SokosumiLinkedHere address={session.addr} done />
           : <MoveSokosumiPanel setupToken={token} from={null} to={session.addr} />}
       </Shell>
     );
@@ -49,7 +59,7 @@ export default async function SokosumiSetupPage({ searchParams }: { searchParams
 
 function Shell({ linkOnly, children }: { linkOnly: boolean; children: React.ReactNode }) {
   return (
-    <section className="max-w-xl space-y-6">
+    <section className="mx-auto max-w-xl space-y-6">
       {linkOnly ? (
         <h1 className="text-h font-medium uppercase">Link your Sokosumi account</h1>
       ) : (
