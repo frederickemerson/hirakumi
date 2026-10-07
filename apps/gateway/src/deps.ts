@@ -7,6 +7,7 @@ import type { HealthTracker } from "./health";
 import type { EscrowChain } from "./escrowChain";
 import type { MasumiPort } from "./masumi-port";
 import type { ApiRegistry } from "./registry";
+import type { AddressResolver, DomainRegistry, FrontDoorProbe } from "./domains";
 
 export type AppDeps = {
   sql: Sql;
@@ -21,6 +22,12 @@ export type AppDeps = {
   escrowChain?: EscrowChain | null;
   /** TXT lookups for the ownership proof. Unset: the resolvers in config.dnsResolvers. Injected by tests. */
   txtLookup?: TxtLookup;
+  /** The front door's hosts (frontDoor.ts). Unset: every custom host answers 421. */
+  domains?: DomainRegistry;
+  /** A, AAAA and CNAME lookups for the front door's routed check. Unset: the resolvers in config.dnsResolvers. */
+  addressResolver?: AddressResolver;
+  /** The routed check's live request through the front door. Unset: HTTPS to the first EDGE_IPS address. */
+  frontDoorProbe?: FrontDoorProbe;
   /** "Try it live" purchases from Hirakumi's demo buyer wallet. Unset or null: the demo buy route answers 503. */
   demoBuyer?: DemoBuyer | null;
 };

@@ -11,7 +11,7 @@ const ANY_API = "0014_any_api_samples.sql";
 const HEADER_VERIFY = "0015_header_verify.sql";
 const DNS_VERIFY = "0018_dns_verify.sql";
 /** Later migrations replay after these; they don't change what this file checks. */
-const LATER = ["0016_seller_self_test.sql", "0017_auth_sessions.sql", "0018_dns_verify.sql", "0019_exposure.sql"];
+const LATER = ["0016_seller_self_test.sql", "0017_auth_sessions.sql", "0018_dns_verify.sql", "0019_exposure.sql", "0020_front_door.sql"];
 /** sha256 of 0014 as PR #5 shipped it. A database may already have run that file, so it never changes again. */
 const ANY_API_SHA256 = "e5e3525fded53467041b8bc0191b57409e3d319bea607484c324d741303df3b7";
 

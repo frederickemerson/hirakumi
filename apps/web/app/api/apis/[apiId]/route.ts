@@ -1,4 +1,4 @@
-import { reloadQuietly } from "@/lib/gateway";
+import { reloadDomainQuietly, reloadQuietly } from "@/lib/gateway";
 import { errorJson, json, type ApiRouteContext } from "@/lib/http";
 import { deleteApi } from "@/lib/repo/delete-api";
 import { loadOwnedApi } from "@/lib/route-helpers";
@@ -12,5 +12,6 @@ export async function DELETE(req: Request, ctx: ApiRouteContext): Promise<Respon
   if (!result.ok) return errorJson(result.status, result.error);
   // The gateway stops selling it now instead of on its next reload.
   if (result.wasServing) await reloadQuietly(api.id);
-  return json({ deleted: api.id, name: result.name, recordsKept: result.recordsKept });
+  if (result.frontDoorHost) await reloadDomainQuietly(result.frontDoorHost);
+  return json({ deleted: api.id, name: result.name, recordsKept: result.recordsKept, ...(result.undo.length ? { undo: result.undo } : {}) });
 }

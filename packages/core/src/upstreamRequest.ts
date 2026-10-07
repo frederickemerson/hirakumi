@@ -6,6 +6,12 @@ import type { UpstreamCredential } from "./upstreamAuth";
  * The API as an upstream call needs it: its proven origin and path prefix, and optionally the seller's key (the
  * gateway opens it; the leak check calls without one). credentialError is set when a stored key could not be opened.
  */
+/**
+ * Sent on every upstream call. If an origin ever routes back to Hirakumi's front door, the front door answers 508
+ * to a request carrying it instead of calling out again (apps/gateway frontDoor.ts). A reserved header.
+ */
+export const HOP_HEADER = "x-hirakumi-hop";
+
 export type UpstreamTarget = {
   origin: string;
   path_prefix: string;
@@ -61,7 +67,7 @@ export function buildUpstreamRequest(
   }
   if (api.credentialError) throw new Error(`blocked: ${api.credentialError}`);
   const method = op.method.toUpperCase();
-  const headers: Record<string, string> = { accept: acceptFor(ruleContentType), "user-agent": "hirakumi-gateway/0.1" };
+  const headers: Record<string, string> = { accept: acceptFor(ruleContentType), "user-agent": "hirakumi-gateway/0.1", [HOP_HEADER]: "1" };
   // Shared input convention (P3 contract addition 3): `{name}` fields fill the path, a field named
   // `body` is the JSON request body, and every other field is a query parameter, for any method.
   const { body, ...query } = rest;

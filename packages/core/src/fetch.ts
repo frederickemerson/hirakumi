@@ -63,14 +63,50 @@ export function isBlockedAddress(addr: string): boolean {
   return blocked.check(addr, family === 6 ? "ipv6" : "ipv4");
 }
 
+let selfList = new BlockList();
+let selfCount = 0;
+
+/**
+ * Hirakumi's own public addresses (the gateway's EDGE_IPS). An upstream that resolves to one would loop through the
+ * front door back into the gateway, so it is refused like a private address. Set once at start; empty by default.
+ */
+export function setSelfAddresses(ips: readonly string[]): void {
+  const list = new BlockList();
+  for (const ip of ips) {
+    const family = isIP(ip);
+    if (family === 0) throw new Error(`not an IP address: ${ip}`);
+    list.addAddress(ip, family === 6 ? "ipv6" : "ipv4");
+  }
+  selfList = list;
+  selfCount = ips.length;
+}
+
+/** True when addr is one of Hirakumi's own addresses (setSelfAddresses), also written as IPv4-mapped IPv6. */
+export function isSelfAddress(addr: string): boolean {
+  if (selfCount === 0) return false;
+  const mapped = /^(?:0{0,4}:){0,5}:?ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(addr);
+  if (mapped) return isSelfAddress(mapped[1]);
+  const mappedHex = /^(?:0{0,4}:){0,5}:?ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(addr);
+  if (mappedHex) return isSelfAddress(hexToIPv4(mappedHex[1], mappedHex[2]));
+  const family = isIP(addr);
+  return family !== 0 && selfList.check(addr, family === 6 ? "ipv6" : "ipv4");
+}
+
+/** Why these resolved addresses of `hostname` may not be called, or null when all are fine. */
+export function resolvedAddressProblem(hostname: string, addrs: readonly { address: string }[]): string | null {
+  if (addrs.length === 0) return `${hostname} resolves to a blocked address (none)`;
+  const self = addrs.find((a) => isSelfAddress(a.address));
+  if (self) return `${hostname} resolves to Hirakumi's own address ${self.address}, which would loop back through Hirakumi`;
+  const bad = addrs.find((a) => isBlockedAddress(a.address));
+  return bad ? `${hostname} resolves to a blocked address ${bad.address}` : null;
+}
+
 type LookupCallback = (err: Error | null, address?: string | LookupAddress[], family?: number) => void;
 function pinnedLookup(hostname: string, options: { all?: boolean; family?: number }, cb: LookupCallback): void {
   dnsLookup(hostname, { all: true, family: options.family ?? 0 }, (err, addrs) => {
     if (err) return cb(err);
-    const bad = addrs.find((a) => isBlockedAddress(a.address));
-    if (bad || addrs.length === 0) {
-      return cb(new UpstreamBlockedError(`${hostname} resolves to a blocked address ${bad?.address ?? "(none)"}`));
-    }
+    const problem = resolvedAddressProblem(hostname, addrs);
+    if (problem) return cb(new UpstreamBlockedError(problem));
     if (options.all) return cb(null, addrs);
     cb(null, addrs[0].address, addrs[0].family);
   });
@@ -161,6 +197,8 @@ async function fetchGuarded(
   if (u.username || u.password) throw new UpstreamBlockedError("credentials in the URL are not allowed");
   const host = u.hostname.replace(/^\[|\]$/g, "");
   if (!insecureOk && isIP(host) !== 0 && isBlockedAddress(host)) throw new UpstreamBlockedError(`blocked address ${host}`);
+  // Checked in local test mode too, so tests can stand in a local address for Hirakumi's own.
+  if (isIP(host) !== 0 && isSelfAddress(host)) throw new UpstreamBlockedError(`${host} is Hirakumi's own address, which would loop back through Hirakumi`);
   if (init.body !== undefined && Buffer.byteLength(init.body) > MAX_REQUEST_BYTES) {
     throw new UpstreamTooLargeError("request body is over 256 KB");
   }

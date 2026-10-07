@@ -68,7 +68,7 @@ describe("buildUpstreamRequest without a key (the leak check)", () => {
     const req = buildUpstreamRequest(api, { method: "get", path: "/price/{symbol}" }, { symbol: "ADA", currency: "usd" }, "application/json");
     expect(req).toEqual({
       url: "https://api.example.com/v1/price/ADA?currency=usd",
-      init: { method: "GET", headers: { accept: "application/json", "user-agent": "hirakumi-gateway/0.1" } },
+      init: { method: "GET", headers: { accept: "application/json", "user-agent": "hirakumi-gateway/0.1", "x-hirakumi-hop": "1" } },
     });
     const keyed = buildUpstreamRequest({ ...api, credential: { in: "header", name: "X-Key", value: "secret-value-1" } }, { method: "GET", path: "/p" }, {});
     expect(keyed.init.headers["x-key"]).toBe("secret-value-1");

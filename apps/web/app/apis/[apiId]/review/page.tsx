@@ -3,12 +3,14 @@ import { redirect } from "next/navigation";
 import { ExposureCard, KEY_FORM_ID } from "@/components/exposure-card";
 import { ReviewPanel } from "@/components/review-panel";
 import { LiveProgress } from "@/components/live-progress";
+import { ProtectLink } from "@/components/protect-link";
 import { UpstreamAuthForm } from "@/components/upstream-auth-form";
 import { ErrorState, NoticeList, WaitingState } from "@/components/states";
 import { getSql } from "@/lib/db";
 import { stepForState } from "@/lib/flow";
 import { loadApiPage } from "@/lib/page-auth";
 import { listingBaseNotes } from "@/lib/repo/apis";
+import { getFrontDoorSummary } from "@/lib/repo/front-door";
 import { getStoredExposure } from "@/lib/repo/exposure";
 import { loadProgress } from "@/lib/repo/progress";
 import { getPack } from "@/lib/repo/packs";
@@ -56,6 +58,7 @@ export default async function ReviewPage({ params }: { params: Promise<{ apiId: 
   const [promises, pack, upstreamAuth, suggestedPhrases, exposure] = await Promise.all([
     listLatestRules(sql, apiId), getPack(sql, apiId), getUpstreamAuth(sql, apiId), getSuggestedPhrases(sql, apiId), getStoredExposure(sql, apiId),
   ]);
+  const frontDoor = await getFrontDoorSummary(sql, apiId);
   return (
     <section className="space-y-6">
       {heading}
@@ -76,6 +79,7 @@ export default async function ReviewPage({ params }: { params: Promise<{ apiId: 
           <UpstreamAuthForm apiId={apiId} initial={upstreamAuth} hint={null} title="Your API's key" />
         </div>
       )}
+      <ProtectLink apiId={apiId} frontDoor={frontDoor} />
     </section>
   );
 }

@@ -83,7 +83,7 @@ describe("migration 0014_any_api_samples.sql", () => {
     const { sql } = await schemaBefore("0014_any_api_samples.sql");
     await seedApi(sql, { id: "api_plain", seller: "sel_a", origin: "https://h.com", prefix: "/t", state: "live", createdAt: "2026-10-01T00:00:00Z" });
     await seedApi(sql, { id: "api_dot", seller: "sel_b", origin: "https://h.com.", prefix: "/t", state: "live", createdAt: "2026-10-02T00:00:00Z" });
-    expect(await migrate(sql)).toEqual(["0014_any_api_samples.sql", "0015_header_verify.sql", "0016_seller_self_test.sql", "0017_auth_sessions.sql", "0018_dns_verify.sql", "0019_exposure.sql"]);
+    expect(await migrate(sql)).toEqual(["0014_any_api_samples.sql", "0015_header_verify.sql", "0016_seller_self_test.sql", "0017_auth_sessions.sql", "0018_dns_verify.sql", "0019_exposure.sql", "0020_front_door.sql"]);
     const rows = await sql<{ id: string; base_origin: string; base_legacy_duplicate: boolean }[]>`
       select id, base_origin, base_legacy_duplicate from apis order by id`;
     expect(rows).toEqual([

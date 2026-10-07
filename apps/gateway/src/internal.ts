@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { Router, type RequestHandler } from "express";
 import { getOpenVerifyCode, getOwnershipTarget, insertCall } from "@hirakumi/db";
 import { demoBuyPack } from "./demoBuy";
+import { frontDoorAdminRoutes } from "./frontDoorAdmin";
 import { SELLER_BODY_HEADERS } from "./http";
 import type { AppDeps } from "./deps";
 import { probeVerifyDns, txtLookupVia, type DnsCheck } from "./ownership";
@@ -93,6 +94,8 @@ export function internalRouter(d: AppDeps): Router {
       res.json({ packMode: mode, packs });
     } catch (e) { next(e); }
   });
+
+  frontDoorAdminRoutes(d, r);
 
   r.get("/internal/apis/:apiId/health", async (req, res, next) => {
     try {

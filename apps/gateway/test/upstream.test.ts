@@ -19,7 +19,7 @@ describe("buildUpstreamRequest", () => {
   it("fills path params, sends the rest as query for GET", () => {
     const r = buildUpstreamRequest({ origin: "https://a.example/", path_prefix: "/v1/" }, { method: "get", path: "/price/{symbol}" }, { symbol: "ADA", fiat: "usd" });
     expect(r.url).toBe("https://a.example/v1/price/ADA?fiat=usd");
-    expect(r.init).toEqual({ method: "GET", headers: { accept: "application/json", "user-agent": "hirakumi-gateway/0.1" } });
+    expect(r.init).toEqual({ method: "GET", headers: { accept: "application/json", "user-agent": "hirakumi-gateway/0.1", "x-hirakumi-hop": "1" } });
   });
   it("asks for exactly application/json for a JSON promise or none yet, and a text promise's own type without */*", () => {
     const accept = (ct?: string | null) => buildUpstreamRequest({ origin: "https://a.example", path_prefix: "/" }, { method: "GET", path: "/p" }, {}, ct).init.headers.accept;

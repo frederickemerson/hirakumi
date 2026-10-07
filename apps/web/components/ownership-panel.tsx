@@ -98,7 +98,7 @@ function StepNumber({ n, done }: { n: number; done?: boolean }) {
   );
 }
 
-function StepHead({ n, done, id, children }: { n: number; done?: boolean; id: string; children: ReactNode }) {
+export function StepHead({ n, done, id, children }: { n: number; done?: boolean; id: string; children: ReactNode }) {
   return (
     <div className="flex items-center gap-4">
       <StepNumber n={n} done={done} />
@@ -108,7 +108,7 @@ function StepHead({ n, done, id, children }: { n: number; done?: boolean; id: st
 }
 
 /** A labelled code block with one Copy button. Long lines scroll inside the box, never the page. */
-function Snippet({ label, text, copyLabel }: { label: string; text: string; copyLabel?: string }) {
+export function Snippet({ label, text, copyLabel }: { label: string; text: string; copyLabel?: string }) {
   return (
     <div className="min-w-0 rounded-[2px] border-2 border-ink bg-frost">
       <div className="flex items-center justify-between gap-3 border-b-2 border-ink py-1 pr-1 pl-3">
@@ -130,7 +130,7 @@ function SubHeading({ id, kicker, children }: { id: string; kicker: string; chil
 }
 
 /** One field of the record, the way DNS dashboards lay it out: its label, the value, and a Copy button. */
-function RecordField({ label, value, note, copy = true }: { label: string; value: string; note?: ReactNode; copy?: boolean }) {
+export function RecordField({ label, value, note, copy = true }: { label: string; value: string; note?: ReactNode; copy?: boolean }) {
   return (
     <div className="grid min-w-0 gap-1 border-b-2 border-ink px-3 py-2 last:border-b-0 sm:grid-cols-[6rem_1fr_auto] sm:items-center sm:gap-3">
       <dt className="text-caption font-semibold uppercase tracking-[0.04em] text-graphite">{label}</dt>
@@ -144,7 +144,7 @@ function RecordField({ label, value, note, copy = true }: { label: string; value
 }
 
 /** Resolves the DNS hint once; undefined while the lookup is still running, null when none was asked for. */
-function useDnsSetup(dns: Promise<DnsSetup> | undefined): DnsSetup | null | undefined {
+export function useDnsSetup(dns: Promise<DnsSetup> | undefined): DnsSetup | null | undefined {
   const [setup, setSetup] = useState<DnsSetup | null | undefined>(dns ? undefined : null);
   useEffect(() => {
     if (!dns) return;
@@ -158,7 +158,7 @@ function useDnsSetup(dns: Promise<DnsSetup> | undefined): DnsSetup | null | unde
 }
 
 /** Where to add the record: the provider's own steps when its nameservers name it, else the general ones. */
-function WhereToAdd({ setup, host }: { setup: DnsSetup | null | undefined; host: string }) {
+export function WhereToAdd({ setup, host }: { setup: DnsSetup | null | undefined; host: string }) {
   if (setup === undefined) {
     return (
       <p role="status" aria-live="polite" className="flex min-h-6 items-center gap-2 text-caption text-graphite">
@@ -184,7 +184,7 @@ function WhereToAdd({ setup, host }: { setup: DnsSetup | null | undefined; host:
 }
 
 /** The check's answer: a tag naming the outcome, then what was found and what to do. Ink text, colour on the rule only. */
-function ResultCard({ tone, tag, alert, children }: { tone: "pass" | "wait" | "fail"; tag: string; alert?: boolean; children: ReactNode }) {
+export function ResultCard({ tone, tag, alert, children }: { tone: "pass" | "wait" | "fail"; tag: string; alert?: boolean; children: ReactNode }) {
   return (
     <div role={alert ? "alert" : "status"} aria-live={alert ? undefined : "polite"}
       className={cn("space-y-2 rounded-[2px] border-2 border-ink border-l-8 bg-frost p-4 text-body",

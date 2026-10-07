@@ -1,3 +1,12 @@
+# The Hirakumi front door: Caddy gets a certificate for a seller's own hostname (api.seller.com pointed here by
+# DNS) on its first request, but only when the gateway's ask endpoint says yes (a front-door host whose _hirakumi
+# TXT record was verified). Port 4022 is reachable only inside the compose network.
+{
+	on_demand_tls {
+		ask http://gateway:4022/tls-ask
+	}
+}
+
 {$PUBLIC_DOMAIN} {
 	encode zstd gzip
 
@@ -31,4 +40,27 @@ price.{$PUBLIC_DOMAIN} {
 mika.{$PUBLIC_DOMAIN} {
 	encode zstd gzip
 	reverse_proxy mika-api:4100
+}
+
+# Every other hostname: a seller's front door. The gateway answers it by Host (apps/gateway/src/frontDoor.ts) and
+# never serves its own routes there. Sites above match first, so this only sees front-door hosts.
+https:// {
+	tls {
+		on_demand
+	}
+	encode zstd gzip
+	reverse_proxy gateway:4021
+
+	log {
+		output stdout
+		format filter {
+			wrap console
+			fields {
+				request>headers>X-Hirakumi-Recovery-Secret delete
+				request>headers>Payment-Signature delete
+				request>headers>X-Payment delete
+				request>headers>X-Hirakumi-Close-Auth delete
+			}
+		}
+	}
 }

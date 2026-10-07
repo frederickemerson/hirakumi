@@ -1,5 +1,5 @@
 import {
-  acceptFor, buildUpstreamRequest, redactUpstreamSecret, safeFetch, textLeaksSecret, upstreamSecretForms, UpstreamBlockedError, UpstreamTimeoutError, type UpstreamCredential, type UpstreamResult,
+  acceptFor, buildUpstreamRequest, HOP_HEADER, redactUpstreamSecret, safeFetch, textLeaksSecret, upstreamSecretForms, UpstreamBlockedError, UpstreamTimeoutError, type UpstreamCredential, type UpstreamResult,
 } from "@hirakumi/core";
 import type { ApiRow, OperationRow } from "@hirakumi/db";
 import type { LoadedOp, UpstreamAccess } from "./registry";
@@ -37,7 +37,7 @@ export function redactSecret(text: string, credential: UpstreamCredential | null
  * buildUpstreamRequest, which the web app's leak check shares: the URL is checked to be under the proven base and
  * the seller's key is added last.
  */
-export { acceptFor, buildUpstreamRequest };
+export { acceptFor, buildUpstreamRequest, HOP_HEADER };
 
 /** MIP-003 input_data arrives as an object (Sokosumi) or as [{key, value}] (MIP-003 examples). */
 export function normalizeMip003Input(inputData: unknown): Record<string, unknown> | null {

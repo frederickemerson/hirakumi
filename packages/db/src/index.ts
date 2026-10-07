@@ -4,3 +4,4 @@ export * from "./gateway";
 export * from "./channels";
 export * from "./tryTokens";
 export * from "./settlement";
+export * from "./frontDoor";

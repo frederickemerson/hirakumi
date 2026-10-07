@@ -13,5 +13,6 @@ export * from "./settlement";
 export * from "./samples";
 export * from "./secrets";
 export * from "./upstreamAuth";
+export * from "./routeMatch";
 export * from "./upstreamRequest";
 export * from "./exposure";

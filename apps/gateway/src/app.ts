@@ -4,6 +4,7 @@ import { getRuleByHash } from "@hirakumi/db";
 import { channelsRouter } from "./channels";
 import { creditsRouter } from "./credits";
 import type { AppDeps } from "./deps";
+import { frontDoor } from "./frontDoor";
 import { errorHandler } from "./http";
 import { internalRouter } from "./internal";
 import { mip003Router } from "./mip003";
@@ -17,6 +18,8 @@ export function createApp(d: AppDeps): Express {
   app.disable("x-powered-by");
   app.use(limitUrl);
   app.use(express.json({ limit: "256kb" }));
+  // First of the routes: a seller's own hostname is answered here and never reaches the routes below.
+  app.use(frontDoor(d));
   app.get("/healthz", (_req, res) => { res.json({ ok: true }); });
   app.use(internalRouter(d));
   app.use(packRouter(d));
