@@ -11,7 +11,8 @@ import type { Api } from "./types";
  * checked (the page shows its error state): an unchecked session is never trusted.
  */
 export async function readPageSession(): Promise<SessionInfo | null> {
-  return liveSession(getSql(), (await cookies()).get(SESSION_COOKIE)?.value);
+  const token = (await cookies()).get(SESSION_COOKIE)?.value; // first, so a prerender stops here
+  return token ? liveSession(getSql(), token) : null;
 }
 
 export async function requireSellerPage(nextPath: string): Promise<SessionInfo> {
