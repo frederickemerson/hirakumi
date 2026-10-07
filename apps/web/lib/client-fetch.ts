@@ -1,14 +1,16 @@
 /** Thrown with a message that is safe to show the seller verbatim. */
 export class RequestError extends Error {
-  /** The HTTP status, when the server answered. */
-  constructor(message: string, readonly status?: number) {
+  /** The HTTP status, when the server answered; `code` names a known refusal (such as KEY_REFUSED). */
+  constructor(message: string, readonly status?: number, readonly code?: string) {
     super(message);
   }
 }
 
 async function handle<T>(res: Response): Promise<T> {
-  const data = (await res.json().catch(() => ({}))) as T & { error?: string };
-  if (!res.ok) throw new RequestError(data.error ?? "Something went wrong. Try again.", res.status);
+  const data = (await res.json().catch(() => ({}))) as T & { error?: string; code?: unknown };
+  if (!res.ok) {
+    throw new RequestError(data.error ?? "Something went wrong. Try again.", res.status, typeof data.code === "string" ? data.code : undefined);
+  }
   return data;
 }
 

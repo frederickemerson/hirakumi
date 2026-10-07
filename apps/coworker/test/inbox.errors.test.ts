@@ -6,6 +6,7 @@ import { createTestDb, type TestDb } from "./helpers/db.js";
 vi.mock("../src/sokosumi/conversation.js", () => ({
   handleBrief: vi.fn().mockRejectedValue(new Error("boom")),
   handleReply: vi.fn().mockRejectedValue(new Error("boom")),
+  resumeLinkedIntakes: vi.fn().mockResolvedValue(0),
 }));
 const { createInbox } = await import("../src/sokosumi/inbox.js");
 

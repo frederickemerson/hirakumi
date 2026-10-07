@@ -21,11 +21,15 @@ export function SokosumiLinkNotice({ address }: { address: string }) {
   );
 }
 
-/** The Sokosumi account is already linked to this wallet. */
-export function SokosumiLinkedHere({ address }: { address: string }) {
+/** Said once the setup link's step is done: everything else happens in the Sokosumi task. */
+export const SETUP_DONE = "Done. You can close this tab; the rest continues in Sokosumi.";
+
+/** The Sokosumi account is already linked to this wallet. `done`: the link only links, so say the tab can close. */
+export function SokosumiLinkedHere({ address, done = false }: { address: string; done?: boolean }) {
   return (
     <div data-testid="sokosumi-linked-here" className={panel}>
       <p>Your Sokosumi account is already linked to this wallet (<code>{shortAddress(address)}</code>).</p>
+      {done && <p className="font-semibold">{SETUP_DONE}</p>}
     </div>
   );
 }
@@ -67,6 +71,7 @@ export function MoveSokosumiPanel({ setupToken, from, to }: { setupToken: string
     return (
       <div role="status" data-testid="sokosumi-moved" className={panel}>
         <p>Your Sokosumi account now uses this wallet (<code>{shortAddress(to)}</code>).</p>
+        <p className="font-semibold">{SETUP_DONE}</p>
       </div>
     );
   }

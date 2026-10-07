@@ -1,4 +1,4 @@
-import { isStatusOnlyRule, newId, ruleHash, type RuleDefinition } from "@hirakumi/core";
+import { actPlaceholder, isStatusOnlyRule, newId, ruleHash, type RuleDefinition } from "@hirakumi/core";
 import type pg from "pg";
 import { withTx } from "../db.js";
 import { PermanentError } from "../errors.js";
@@ -132,7 +132,10 @@ export async function qaStep(deps: QaDeps, apiId: string): Promise<StepOutcome> 
       }
       const r = await qaOperation(counted.gateway, apiId, op, samples[op.op_id] ?? []).catch((e: unknown) => {
         // The failure message is all the seller gets (also on a Sokosumi task), so it links the key form.
-        throw e instanceof NeedsKeyError ? new PermanentError(`${e.message} Review page: ${reviewLink(deps.webBaseUrl, apiId)}`) : e;
+        if (!(e instanceof NeedsKeyError)) throw e;
+        throw new PermanentError(api.sokosumi_task_id
+          ? `${e.message} Add your API's key here (sealed so only the Hirakumi gateway can read it) and the test calls run again: ${actPlaceholder("key")}`
+          : `${e.message} Review page: ${reviewLink(deps.webBaseUrl, apiId)}`);
       });
       await withTx(deps.pool, async (c) => {
         await c.query(
@@ -157,7 +160,7 @@ export async function qaStep(deps: QaDeps, apiId: string): Promise<StepOutcome> 
 
     await counted.flush();
     const text = await writeRuleText(deps.llm, { apiName: api.name, ops: forText });
-    const phrases = phraseLines(forText, suggestedPhrases);
+    const phrases = phraseLines(forText, suggestedPhrases, !!api.sokosumi_task_id);
     await withTx(deps.pool, async (c) => {
       for (const op of ops) {
         await c.query(`update rules set plain_english = $2 where operation_id = $1 and version = 1 and plain_english is null`, [op.id, text.texts.get(op.op_id)]);
@@ -177,7 +180,7 @@ export async function qaStep(deps: QaDeps, apiId: string): Promise<StepOutcome> 
         body: `${qaSummaryLine(summaries)} Your promise to buyers: ${[...text.texts.values()].join(" ")}${phrases.map((l) => ` ${l}`).join("")}` +
           (api.sokosumi_task_id
             ? ` Suggested price: ${formatTusdm(SUGGESTED_PACK.priceMicros)} tUSDM for ${SUGGESTED_PACK.calls} calls. Reply \`price ${formatTusdm(SUGGESTED_PACK.priceMicros)}\` to accept it, or another amount (like \`price 3.5 for 200 calls\`). ` +
-              `Then approve publishing with your wallet (one signature): ${reviewLink(deps.webBaseUrl, apiId)}`
+              "Then I check that your API refuses calls without its key and send you the link to approve publishing (one signature)."
             : ` Review the price and publish: ${apiLink(deps.webBaseUrl, apiId)}`),
         taskStatus: "INPUT_REQUIRED",
         dedupeKey: `rule_built:${apiId}`,
@@ -205,16 +208,22 @@ export function qaSummaryLine(summaries: OpQaSummary[]): string {
  * until each has a phrase. A suggestion is never saved on its own: answers gathered within seconds can't show that
  * it stays the same, the seller can.
  */
-export function phraseLines(ops: { opId: string; rule: RuleDefinition }[], suggested: SuggestedPhrases): string[] {
-  const statusOnly = ops.filter((o) => isStatusOnlyRule(o.rule));
+export function phraseLines(ops: { opId: string; rule: RuleDefinition }[], suggested: SuggestedPhrases, byReply = false): string[] {
   const one = ops.length === 1;
-  return statusOnly.map(({ opId }) => {
-    const phrase = suggested[opId];
-    if (phrase) {
-      return `${one ? "Before you publish, confirm" : `For ${opId}, confirm`} the phrase ${JSON.stringify(phrase)} on the review page or type another. ` +
-        "Every good answer must contain it, so it can't be a date, a version or a count.";
-    }
-    return `${one ? "This promise" : `The promise for ${opId}`} only checks the status, so it needs a phrase before you can publish. ` +
-      "Add one on the review page: a word or label every good answer contains, like Price or Symbol. Capital letters don't matter.";
-  });
+  return ops.filter((o) => isStatusOnlyRule(o.rule)).map(({ opId }) => phraseAsk(opId, suggested[opId], one, byReply));
+}
+
+/**
+ * One status-only promise's ask. byReply: a Sokosumi task, where the seller answers `phrase <text>` (`phrase <op>
+ * <text>` when several endpoints are on sale) instead of using the review page.
+ */
+export function phraseAsk(opId: string, phrase: string | undefined, one: boolean, byReply: boolean): string {
+  const cmd = (p: string) => `\`phrase ${one ? "" : `${opId} `}${p}\``;
+  if (phrase) {
+    const how = byReply ? `: reply ${cmd(phrase)}, or the same with another word` : " on the review page or type another";
+    return `${one ? "Before you publish, confirm" : `For ${opId}, confirm`} the phrase ${JSON.stringify(phrase)}${how}. ` +
+      "Every good answer must contain it, so it can't be a date, a version or a count.";
+  }
+  return `${one ? "This promise" : `The promise for ${opId}`} only checks the status, so it needs a phrase before you can publish. ` +
+    `${byReply ? `Reply ${cmd("Price")} with` : "Add one on the review page:"} a word or label every good answer contains, like Price or Symbol. Capital letters don't matter.`;
 }

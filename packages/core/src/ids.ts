@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 
 const BASE32 = "abcdefghijklmnopqrstuvwxyz234567";
-export type IdPrefix = "sel" | "api" | "op" | "pk" | "ct" | "call" | "job" | "rule" | "ch" | "ti" | "try";
+export type IdPrefix = "sel" | "api" | "op" | "pk" | "ct" | "call" | "job" | "rule" | "ch" | "ti" | "try" | "act";
 
 export function newId(prefix: IdPrefix): string {
   let out = "";
