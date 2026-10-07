@@ -102,7 +102,7 @@ describe("Try it live on every live-API surface", () => {
     const { default: Home } = await import("./page");
     const { SiteFooter } = await import("@/components/site-footer");
     render(<><Home /><SiteFooter /></>);
-    const links = screen.getAllByRole("link", { name: "Try a live API" });
+    const links = screen.getAllByRole("link", { name: "Buy a real pack in your browser" });
     expect(links.length).toBeGreaterThanOrEqual(3);
     for (const l of links) expect(l).toHaveAttribute("href", `/p/${DEMO_API_ID}/try`);
   });

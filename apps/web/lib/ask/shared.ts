@@ -22,6 +22,8 @@ export const EXTRA_QUESTIONS = ["What does a promise look like?", "Do I need a w
 
 /** The landing page FAQ, answered word for word offline too. */
 export const LANDING_QUESTIONS = [
+  "Do I have to change my API?",
+  "Can I do it from Sokosumi?",
   "Who decides pass or fail?",
   "What happens when my API goes down?",
   "Is this on mainnet?",

@@ -8,7 +8,7 @@ import { type EXTRA_QUESTIONS, type LANDING_QUESTIONS, type SUGGESTED_QUESTIONS,
  * Every fact is taken from the repo's own docs and code, so it stays true:
  * - README.md (payment modes table, Sokosumi coworker, preprod only)
  * - docs/submission/writeup.md (credits only on pass, 422/503 behaviour, escrow channel, measured numbers, production path)
- * - app/page.tsx landing FAQ (who decides pass or fail, Down, mainnet, cost and business model, wallets)
+ * - app/page.tsx landing FAQ (code changes, wallets, Sokosumi, who decides pass or fail, Down, mainnet, cost and business model)
  * - lib/session.ts login message ("costs nothing and moves no funds"), components/ownership-panel.tsx, lib/dns-provider.ts
  *   and app/api/apis/[apiId]/ownership/verify/route.ts (the _hirakumi DNS TXT record, a passing check counts for 30 minutes)
  * - app/api/apis/[apiId]/pricing/route.ts and lib/money.ts (1 tUSDM minimum, 1 to 100,000 calls per pack)
@@ -99,8 +99,8 @@ WHERE THE MONEY SITS (is my money safe?)
 - Direct packs: an older mode where the pack payment settles straight to the seller's wallet. It is only a fallback now.
 
 COST AND BUSINESS MODEL
-- Using Hirakumi costs nothing on preprod.
-- The plan is an onboarding fee and a small take rate on sales. The escrow contract already supports a fee output. The production path is the escrow channel as the default, mainnet USDM and a contract audit. None of that is live today.
+- Hirakumi earns a 3% fee, an output of the escrow contract, paid only on good answers, plus a small listing fee per API (planned). On preprod everything is paid with test tokens.
+- Next: mainnet USDM and an independent contract audit. Neither is live today.
 
 USEFUL PAGES
 - / home page with a short FAQ. /login to sign in. /apis/new to list an API. /apis for your APIs.
@@ -148,20 +148,24 @@ const SUGGESTED_ANSWERS: Record<(typeof SUGGESTED_QUESTIONS)[number] | (typeof E
   "How do I add the _hirakumi TXT record for my API?":
     "Open your API's ownership step: it shows the record's Name and Value with copy buttons, and names your DNS provider when it can. In your DNS provider (often your registrar or Cloudflare), add a TXT record. In Name (or Host), type the part before your domain, like _hirakumi.api. Paste the hkv_ code as the Value. Save, then wait on the ownership step: it looks every 10 s and new records usually show within minutes.",
   "Do I need a wallet?":
-    "To sell, yes: any CIP-30 wallet on Cardano preprod, such as Lace or Eternl. It is your account and where buyers pay, and you only sign messages, which costs nothing. To look around or try the live demo API, no wallet is needed.",
+    "No. Sign in with Google or email: UTXOS opens a non-custodial Cardano wallet that you own. A CIP-30 browser wallet such as Lace or Eternl works too. Signing costs nothing and moves no funds.",
   "What does an agent pay?":
     "The pack price the seller sets, paid once in USDM with x402. A pack costs at least 1 tUSDM, and the agent spends one credit per answer that keeps the promise. Stale, empty or failed answers cost nothing. Each API's public page shows its current pack.",
 };
 
 const LANDING_ANSWERS: Record<(typeof LANDING_QUESTIONS)[number], string> = {
+  "Do I have to change my API?":
+    "No. One DNS TXT record proves the API is yours, and the API itself stays as it is. If it needs a key, the key is sealed so only our gateway can use it.",
+  "Can I do it from Sokosumi?":
+    "Yes. Assign a task to the Hirakumi coworker with your API's link, and every step happens in the task's comments. Only a signature or your API's key opens one short browser page. The coworker also tells you when your API breaks.",
   "Who decides pass or fail?":
-    "Our gateway, against the rule your API published before the sale. Every paid call is logged with its verdict, and the buyer can read the log at /receipts.",
+    "Our gateway, against the promise your API published before the sale. Every paid call is logged with its verdict, and the buyer can read the log at /receipts. In escrow the agent also signs only for good answers.",
   "What happens when my API goes down?":
     "Nobody is charged. The gateway answers 503, credits stay where they are, and the public status page shows the outage.",
   "Is this on mainnet?":
     "No. Everything runs on Cardano preprod, a test network, with test USDM. Nothing here moves real money.",
   "What does it cost?":
-    "Nothing on preprod. The plan is an onboarding fee and a small take rate on sales. Pack money waits in a Cardano escrow contract, never with Hirakumi, and pays you per kept promise.",
+    "Hirakumi earns a 3% fee, paid by the escrow contract only on good answers, plus a small listing fee per API (planned). On preprod everything is paid with test tokens.",
 };
 
 export const OFFLINE_FAQ: Record<string, string> = { ...SUGGESTED_ANSWERS, ...LANDING_ANSWERS };

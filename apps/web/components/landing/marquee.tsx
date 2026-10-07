@@ -1,11 +1,11 @@
 import { SparkleDoodle } from "@/components/brand/doodles";
 
 const ITEMS = [
-  "Stale or empty answers are free",
-  "Pack prices in USDM",
-  "Paid on Cardano",
-  "Listed on Masumi and Sokosumi",
-  "Settles in 9.4 s",
+  "No change to your code",
+  "One DNS record",
+  "Registered on Masumi",
+  "Packs paid in USDM on Cardano",
+  "Bad answers are free",
   "A receipt for every call",
   "Public status page",
 ];
