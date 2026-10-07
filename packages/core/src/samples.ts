@@ -58,7 +58,7 @@ export function normalizeSamplesBase(raw: unknown, allowInsecure = false): { bas
   if (u.hash !== "" || /#/.test(s)) throw new SampleError("Remove the #fragment from the base URL.");
   // The ownership check calls this exact host, and a trailing dot would make it a second name for the same API.
   if (u.hostname.endsWith(".")) throw new SampleError("Remove the dot at the end of the host name in the base URL.");
-  if (AMBIGUOUS_PATH.test(u.pathname) || u.pathname.includes("\\")) throw new SampleError("The base URL has an encoded slash, dot or a ';' in its path. Use a plain path.");
+  if (AMBIGUOUS_PATH.test(u.pathname) || u.pathname.includes("\\")) throw new SampleError("The base URL has an encoded slash, dot or percent sign, a ';', a space or a character outside plain ASCII in its path. Use a plain path.");
   // An empty segment is a path some servers read as another folder, so the base would not name one folder.
   if (u.pathname.includes("//")) throw new SampleError("The base URL has two slashes in a row in its path. Use a plain path.");
   const dir = u.pathname.endsWith("/") ? u.pathname : `${u.pathname}/`;
