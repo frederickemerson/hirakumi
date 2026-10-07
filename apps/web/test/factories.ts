@@ -96,6 +96,11 @@ export async function seedPack(
   return row;
 }
 
+/** A test input the test calls saved for an operation (test_inputs), which the leak check calls with. */
+export async function seedTestInput(operationId: string, input: Record<string, unknown>): Promise<void> {
+  await getSql()`insert into test_inputs (id, operation_id, input) values (${newId("ti")}, ${operationId}, ${getSql().json(input as postgres.JSONValue)})`;
+}
+
 export async function seedOnboardStep(
   apiId: string,
   step: string,
