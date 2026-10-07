@@ -12,7 +12,7 @@ import { POST as dnsCheck } from "./dns-check/route";
 import { POST as verify } from "./verify/route";
 import { POST as walletChallenge } from "./wallet-challenge/route";
 
-const TAKEN = "This API is already listed by another account. If it's yours, retire that listing first.";
+const TAKEN = "This API is already registered on Hirakumi by another account, so it can't be listed again. If it's yours, retire that listing first.";
 const PASS: ChallengeCheck = { ok: true, reason: "verified", record: "_hirakumi.price.example.dev", detail: "ok" };
 
 type Owner = { wallet: TestWallet; seller: Seller; cookie: string };

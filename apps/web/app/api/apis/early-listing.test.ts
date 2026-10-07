@@ -5,7 +5,7 @@ import { seedApi, seedSeller } from "@/test/factories";
 import { cookieFor, jsonRequest } from "@/test/requests";
 import { POST } from "./route";
 
-const TAKEN = "This API is already listed by another account. If it's yours, retire that listing first.";
+const TAKEN = "This API is already registered on Hirakumi by another account, so it can't be listed again. If it's yours, retire that listing first.";
 
 const submit = (cookie: string, openapiUrl: string, extra: Record<string, unknown> = {}) =>
   POST(jsonRequest("/api/apis", { cookie, body: { openapiUrl, name: "Price API", ...extra } }));

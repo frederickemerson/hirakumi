@@ -5,7 +5,7 @@ import { getStep } from "../src/steps.js";
 import { PRICE_SPEC } from "./fixtures.js";
 import { createTestDb, messagesFor, seedApi, type TestDb } from "./helpers/db.js";
 
-const TAKEN = "This API is already listed by another account. If it's yours, retire that listing first.";
+const TAKEN = "This API is already registered on Hirakumi by another account, so it can't be listed again. If it's yours, retire that listing first.";
 
 let db: TestDb;
 beforeEach(async () => (db = await createTestDb()));

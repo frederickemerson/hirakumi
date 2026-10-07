@@ -54,7 +54,7 @@ export async function POST(req: Request): Promise<Response> {
     }
     if ("takenByOther" in result) return errorJson(409, LISTED_BY_OTHER);
     const { api, created } = result;
-    return json({ apiId: api.id, state: api.state, created, keyWarnings }, created ? 201 : 200);
+    return json({ apiId: api.id, state: api.state, name: api.name, created, keyWarnings }, created ? 201 : 200);
   } catch (e) {
     if (e instanceof ValidationError || e instanceof SampleError) return errorJson(400, e.message);
     throw e;
