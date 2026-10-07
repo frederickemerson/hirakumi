@@ -21,8 +21,18 @@ export type UsableTryPack = {
 export const OPEN_TRY_CHANNEL = `(t.channel_id is null or (not t.disputed and exists (
   select 1 from pack_channels p where p.channel_id = t.channel_id and p.status in ('pending', 'locked'))))`;
 
+/**
+ * Whose purchases a step looks at. The public showcase (TRY_LIVE_APIS) and a seller's free self test
+ * (migration 0016) never share a pack, a recovery or a cooldown; the global limits count both.
+ */
+export type TryScope = { selfTestSellerId: string | null };
+export const SHOWCASE: TryScope = { selfTestSellerId: null };
+
+const scopeSql = (sql: Q, s: TryScope) =>
+  s.selfTestSellerId === null ? sql`t.self_test_seller_id is null` : sql`t.self_test_seller_id = ${s.selfTestSellerId}`;
+
 /** The newest live-demo pack for this API whose credit token still has credits (and, if escrow, is open). */
-export async function findUsableTryPack(sql: Q, apiId: string): Promise<UsableTryPack | null> {
+export async function findUsableTryPack(sql: Q, apiId: string, scope: TryScope = SHOWCASE): Promise<UsableTryPack | null> {
   const [row] = await sql<{
     id: string; token: string; credit_token_id: string; pack_id: string | null; tx_hash: string | null;
     remaining: number; status: string; created_at: Date; channel_id: string | null;
@@ -31,7 +41,7 @@ export async function findUsableTryPack(sql: Q, apiId: string): Promise<UsableTr
            c.remaining, c.status, t.created_at, t.channel_id
     from try_tokens t join credit_tokens c on c.token_hash = t.token_hash and c.api_id = t.api_id
     where t.api_id = ${apiId} and t.status = 'active' and c.status in ('active', 'pending') and c.remaining > 0
-      and ${sql.unsafe(OPEN_TRY_CHANNEL)}
+      and ${scopeSql(sql, scope)} and ${sql.unsafe(OPEN_TRY_CHANNEL)}
     order by t.created_at desc limit 1`;
   if (!row) return null;
   return {
@@ -54,21 +64,26 @@ export async function saveTryChannel(sql: Q, id: string, r: { channelId: string;
 export type UnsettledTryPurchase = { id: string; packId: string; paymentSignature: string; recoverySecret: string; createdAt: Date };
 
 /** The newest purchase whose payment was signed but whose answer was lost: /recover can still re-key it. */
-export async function findUnsettledTryPurchase(sql: Q, apiId: string): Promise<UnsettledTryPurchase | null> {
+export async function findUnsettledTryPurchase(sql: Q, apiId: string, scope: TryScope = SHOWCASE): Promise<UnsettledTryPurchase | null> {
   const [row] = await sql<{ id: string; pack_id: string; payment_signature: string; recovery_secret: string; created_at: Date }[]>`
-    select id, pack_id, payment_signature, recovery_secret, created_at from try_tokens
-    where api_id = ${apiId} and status = 'unsettled' and pack_id is not null
-      and payment_signature is not null and recovery_secret is not null
-    order by created_at desc limit 1`;
+    select t.id, t.pack_id, t.payment_signature, t.recovery_secret, t.created_at from try_tokens t
+    where t.api_id = ${apiId} and t.status = 'unsettled' and t.pack_id is not null
+      and t.payment_signature is not null and t.recovery_secret is not null and ${scopeSql(sql, scope)}
+    order by t.created_at desc limit 1`;
   return row
     ? { id: row.id, packId: row.pack_id, paymentSignature: row.payment_signature, recoverySecret: row.recovery_secret, createdAt: row.created_at }
     : null;
 }
 
-export type TryPurchaseLimits = { perApiWindowSeconds: number; globalPerHour: number; globalPerDay: number };
+export type TryPurchaseLimits = {
+  perApiWindowSeconds: number; globalPerHour: number; globalPerDay: number;
+  /** Free self tests one seller may get across all their listings (one per listing is the unique index). */
+  freeTestsPerSeller?: number;
+};
 export type TryPurchaseSlot =
   | { ok: true }
-  | { ok: false; reason: "api_cooldown" | "global_hourly" | "global_daily"; retryAfterSeconds: number };
+  | { ok: false; reason: "api_cooldown" | "global_hourly" | "global_daily"; retryAfterSeconds: number }
+  | { ok: false; reason: "free_test_used" | "free_test_seller_cap"; retryAfterSeconds?: undefined };
 
 const TRY_LOCK_KEY = 727275; // serialises the limit check and the insert across gateway instances
 const TRY_API_LOCK_NS = 727276; // with hashtext(api_id): one purchase sequence per API at a time
@@ -101,7 +116,7 @@ export async function expireStaleTryPurchases(sql: Q, apiId: string, staleMinute
     where api_id = ${apiId} and status = 'buying' and created_at < now() - make_interval(mins => ${staleMinutes})`;
 }
 
-type ReserveInput = { id: string; apiId: string; packId: string; priceMicros: string; limits: TryPurchaseLimits };
+type ReserveInput = { id: string; apiId: string; packId: string; priceMicros: string; limits: TryPurchaseLimits; scope?: TryScope };
 
 /**
  * Claims a purchase slot, or says which limit refuses it. Every attempt that may have spent counts: only
@@ -115,9 +130,21 @@ export async function reserveTryPurchase(sql: Q, p: ReserveInput): Promise<TryPu
 
 async function reserveIn(tx: postgres.TransactionSql, p: ReserveInput): Promise<TryPurchaseSlot> {
   await tx.unsafe(`select pg_advisory_xact_lock(${TRY_LOCK_KEY})`);
-  const [api] = await tx<{ last: Date | null }[]>`
+  const seller = p.scope?.selfTestSellerId ?? null;
+  if (seller !== null) {
+    // A free self test: once per listing (the unique index try_tokens_one_free_test backs this up) and a few per
+    // seller. Both are checked under the advisory lock above, so two clicks can never both pass.
+    const [used] = await tx<{ listing: boolean; seller: number }[]>`
+      select exists (select 1 from try_tokens where api_id = ${p.apiId} and self_test_seller_id is not null and status <> 'void') as listing,
+             (select count(*)::int from try_tokens where self_test_seller_id = ${seller} and status <> 'void') as seller`;
+    if (used.listing) return { ok: false, reason: "free_test_used" };
+    if (p.limits.freeTestsPerSeller !== undefined && used.seller >= p.limits.freeTestsPerSeller) return { ok: false, reason: "free_test_seller_cap" };
+  }
+  // The showcase cooldown is per API; a free test is once per listing, so it has none of its own.
+  const [api] = seller !== null ? [{ last: null }] : await tx<{ last: Date | null }[]>`
     select max(created_at) as last from try_tokens
-    where api_id = ${p.apiId} and status <> 'void' and created_at > now() - make_interval(secs => ${p.limits.perApiWindowSeconds})`;
+    where api_id = ${p.apiId} and status <> 'void' and self_test_seller_id is null
+      and created_at > now() - make_interval(secs => ${p.limits.perApiWindowSeconds})`;
   if (api.last) {
     const left = p.limits.perApiWindowSeconds - Math.floor((Date.now() - api.last.getTime()) / 1000);
     return { ok: false, reason: "api_cooldown", retryAfterSeconds: Math.max(1, left) };
@@ -139,8 +166,8 @@ async function reserveIn(tx: postgres.TransactionSql, p: ReserveInput): Promise<
     }
   }
   await tx`
-    insert into try_tokens (id, api_id, status, pack_id, price_micros)
-    values (${p.id}, ${p.apiId}, 'buying', ${p.packId}, ${p.priceMicros})`;
+    insert into try_tokens (id, api_id, status, pack_id, price_micros, self_test_seller_id)
+    values (${p.id}, ${p.apiId}, 'buying', ${p.packId}, ${p.priceMicros}, ${seller})`;
   return { ok: true };
 }
 

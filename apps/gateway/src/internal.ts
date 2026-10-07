@@ -65,6 +65,8 @@ export function internalRouter(d: AppDeps): Router {
   });
 
   r.post("/internal/demo/buy-pack/:apiId", demoBuyPack(d));
+  // A seller's one free test of their own live API (any API, not only TRY_LIVE_APIS); the web checks the seller.
+  r.post("/internal/demo/self-test/:apiId", demoBuyPack(d, "self_test"));
 
   r.post("/internal/apis/:apiId/reload", (req, res) => {
     d.registry.invalidate(req.params.apiId);

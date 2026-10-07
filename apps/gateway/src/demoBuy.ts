@@ -7,14 +7,14 @@ import { newReceiptKey } from "@hirakumi/escrow";
 import { newId } from "@hirakumi/core";
 import {
   expireStaleTryPurchases, findUnsettledTryPurchase, findUsableTryPack, markTryActive, markTryEnded, markTryUnsettled,
-  reserveTryPurchase, saveTryChannel, saveTrySignature, withTryApiLock, type TryPurchaseLimits, type UsableTryPack,
+  reserveTryPurchase, saveTryChannel, saveTrySignature, withTryApiLock, type TryPurchaseLimits, type TryScope, type UsableTryPack,
 } from "@hirakumi/db";
 import type { AppDeps, DemoBuyer } from "./deps";
 import { creditsRequiredBody } from "./http";
 import { primaryRule } from "./registry";
 
 /** Hard limits on live purchases from the demo wallet. Enforced here, in the database, across instances. */
-export const TRY_LIMITS: TryPurchaseLimits = { perApiWindowSeconds: 10 * 60, globalPerHour: 6, globalPerDay: 24 };
+export const TRY_LIMITS: TryPurchaseLimits = { perApiWindowSeconds: 10 * 60, globalPerHour: 6, globalPerDay: 24, freeTestsPerSeller: 3 };
 /** Never pay more than this for one pack (5 tUSDM). Also the buyer library's spend cap. */
 export const MAX_PACK_MICROS = 5_000_000n;
 /** Below this the wallet can't be trusted to cover fees and the min-ADA of the payment output. */
@@ -70,16 +70,18 @@ type Plan =
  * Order, under one per-API lock: reuse a pack with credits, recover an unsettled payment, price cap, limits.
  * Then, outside the lock: wallet funds and the payment.
  */
-export function demoBuyPack(d: AppDeps): RequestHandler {
+export function demoBuyPack(d: AppDeps, kind: "showcase" | "self_test" = "showcase"): RequestHandler {
   return async (req, res, next) => {
     try {
       const apiId = req.params.apiId;
-      if (!d.config.tryLiveApis.includes(apiId)) {
+      if (kind === "showcase" && !d.config.tryLiveApis.includes(apiId)) {
         refuse(res, 403, "not_featured", "Live purchases are funded by Hirakumi's demo wallet, so they're on featured APIs only.");
         return;
       }
       const loaded = await d.registry.get(apiId, { fresh: true });
       if (!loaded || loaded.api.state !== "live") { refuse(res, 404, "api_not_found", "This API is not live."); return; }
+      // A free self test is bought for the API's own seller; the web checked that the caller is that seller.
+      const scope: TryScope = { selfTestSellerId: kind === "self_test" ? loaded.api.seller_id : null };
       if (d.health.get(loaded.api.id)?.health === "down") {
         refuse(res, 503, "api_down", "This API is Down right now, so nothing is bought."); return;
       }
@@ -88,17 +90,17 @@ export function demoBuyPack(d: AppDeps): RequestHandler {
 
       const plan = await withTryApiLock<Plan>(d.sql, apiId, async (tx) => {
         await expireStaleTryPurchases(tx, apiId, BUYING_STALE_MINUTES);
-        const usable = await findUsableTryPack(tx, apiId);
+        const usable = await findUsableTryPack(tx, apiId, scope);
         if (usable) return { kind: "ready", pack: usable };
 
-        const unsettled = await findUnsettledTryPurchase(tx, apiId);
+        const unsettled = await findUnsettledTryPurchase(tx, apiId, scope);
         if (unsettled) {
           const timedFetch = (u: string, init?: RequestInit) => buyer.fetch(u, { ...init, signal: AbortSignal.timeout(RECOVER_TIMEOUT_MS) });
           const r = await recoverPack(timedFetch, d.config.publicBaseUrl, apiId, unsettled);
           if (r.kind === "recovered") {
             // A DB error here rolls back and leaves the row unsettled: the next try re-keys it again.
             await markTryActive(tx, unsettled.id, "unsettled", { token: r.token, txHash: null, credits: r.credits });
-            const pack = await findUsableTryPack(tx, apiId);
+            const pack = await findUsableTryPack(tx, apiId, scope);
             return { kind: "recovered", credits: r.credits, txHash: pack?.txHash ?? null };
           }
           if (r.kind === "failed") {
@@ -122,16 +124,23 @@ export function demoBuyPack(d: AppDeps): RequestHandler {
           throw e;
         }
         const id = newId("try");
-        const slot = await reserveTryPurchase(tx, { id, apiId, packId: pack.packId, priceMicros: pack.price, limits: TRY_LIMITS });
+        const slot = await reserveTryPurchase(tx, { id, apiId, packId: pack.packId, priceMicros: pack.price, limits: TRY_LIMITS, scope });
+        if (!slot.ok && (slot.reason === "free_test_used" || slot.reason === "free_test_seller_cap")) {
+          const message = slot.reason === "free_test_used"
+            ? "You already used the free test for this API. Pay with your own wallet to test again."
+            : `You used all ${TRY_LIMITS.freeTestsPerSeller} free tests on your account. Pay with your own wallet to test again.`;
+          return { kind: "refuse", refusal: { status: 409, error: slot.reason, message } };
+        }
         if (!slot.ok) {
+          const wait = slot.retryAfterSeconds ?? 60;
           const message = slot.reason === "api_cooldown"
-            ? `This API had a live purchase in the last 10 minutes. Try again in ${minutes(slot.retryAfterSeconds)}.`
+            ? `This API had a live purchase in the last 10 minutes. Try again in ${minutes(wait)}.`
             : slot.reason === "global_hourly"
-              ? `The live demo made ${TRY_LIMITS.globalPerHour} purchases this hour. Try again in ${minutes(slot.retryAfterSeconds)}.`
-              : `The live demo made ${TRY_LIMITS.globalPerDay} purchases today. Try again in ${minutes(slot.retryAfterSeconds)}.`;
+              ? `The live demo made ${TRY_LIMITS.globalPerHour} purchases this hour. Try again in ${minutes(wait)}.`
+              : `The live demo made ${TRY_LIMITS.globalPerDay} purchases today. Try again in ${minutes(wait)}.`;
           return {
             kind: "refuse",
-            refusal: { status: 429, error: slot.reason, message, extra: { retryAfterSeconds: slot.retryAfterSeconds }, retryAfter: slot.retryAfterSeconds },
+            refusal: { status: 429, error: slot.reason, message, extra: { retryAfterSeconds: wait }, retryAfter: wait },
           };
         }
         return { kind: "reserved", id, pack, ruleHash: offer.ruleHash };
