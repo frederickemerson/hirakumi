@@ -102,7 +102,7 @@ export function keyNote(parsed: Pick<ParseResult, "operations" | "authHint">): s
   const n = parsed.operations.filter((o) => o.needsKey).length;
   if (!parsed.authHint || n === 0) return "";
   const which = n === parsed.operations.length ? "Your API needs a key" : `${n} of these endpoints need a key`;
-  return ` ${which} (${describeAuthHint(parsed.authHint)}). Add it on the ownership page before you prove ownership. Never paste it in a comment.`;
+  return ` ${which} (${describeAuthHint(parsed.authHint)}). You add it on the page where you sign. Never paste it in a comment.`;
 }
 
 export async function parseStep(deps: ParseDeps, apiId: string): Promise<StepOutcome> {

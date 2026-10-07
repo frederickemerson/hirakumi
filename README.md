@@ -26,9 +26,11 @@ Submission material: [write-up](docs/submission/writeup.md) and [submission evid
 
 ## The problem
 
-AI agents buy live data one answer at a time, but most data sits behind ordinary APIs that can't sell to an agent.
-Selling on Masumi today means building an agent, running a payment node, handling refunds and keeping status honest, and there is still no trust layer: the seller's own code decides whether an answer was good.
-Paying on chain for every answer costs about 40 cents for an answer worth a fraction of a cent.
+Enterprises and institutions already run a lot of good APIs: prices, rates, weather, company and research data. AI agents want to buy exactly that, one answer at a time, but none of those APIs can sell to an agent.
+Selling on Masumi today means wrapping each API in an LLM agent, running a payment node, handling refunds and keeping status honest. Inside a large organization that is a real project: the code sits in siloed codebases owned by different teams, and every change to a production API needs review. So the data never gets sold.
+Even when someone builds the agent, there is no trust layer: the seller's own code decides whether an answer was good. And paying on chain for every answer costs about 40 cents for an answer worth a fraction of a cent.
+
+Hirakumi doesn't touch their code. Ownership is proven with one DNS record, the API stays exactly as it is, and the trust layer, the payments and the Masumi listing are added around it.
 
 ## How it works
 

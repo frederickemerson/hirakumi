@@ -65,7 +65,7 @@ describe("parseStep for an API that needs a key", () => {
     expect(step?.output?.authHint).toEqual({ in: "header", name: "X-API-Key" });
     const [m] = await messagesFor(db.pool, apiId);
     expect(m.body).toMatch(/found 4 endpoints\. I skipped 2/);
-    expect(m.body).toContain("Your API needs a key (the X-API-Key header). Add it on the ownership page before you prove ownership. Never paste it in a comment.");
+    expect(m.body).toContain("Your API needs a key (the X-API-Key header). You add it on the page where you sign. Never paste it in a comment.");
   });
 
   it("saves a null hint when no endpoint needs a key", async () => {
