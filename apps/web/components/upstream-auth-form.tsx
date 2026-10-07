@@ -13,8 +13,9 @@ type Placement = "header" | "query";
 export type UpstreamAuthSetting = { in: Placement; name: string; hint: string };
 /** A stored key as the seller sees it: one header or query parameter, or the parts of a key sent in several places. */
 export type UpstreamAuthView = UpstreamAuthSetting | { parts: (UpstreamAuthSetting & { fixed?: boolean })[] };
-/** What the OpenAPI file says about the key (the coworker's parse step "authHint"). */
-export type UpstreamAuthHint = { in: Placement; name: string; prefix?: string };
+/** What the OpenAPI file says about the key (the coworker's parse step "authHint"); `parts` when it needs several at once. */
+export type UpstreamAuthHintPart = { in: Placement; name: string; prefix?: string };
+export type UpstreamAuthHint = UpstreamAuthHintPart & { parts?: UpstreamAuthHintPart[] };
 /** The gateway's one test call with a key (POST /internal/apis/:apiId/check-key). Never a body. */
 export type KeyCheck = {
   opened: boolean;
@@ -107,7 +108,8 @@ const MULTI: Preset[] = ["twoHeaders", "keyPlusFixed", "headerPlusQuery"];
 /** Basic with a password is sealed as several parts too, so without UPSTREAM_AUTH_V3 only the key as user name is offered. */
 const BASIC_KEY_ONLY_LABEL = "HTTP Basic (the key as the user name)";
 
-type Row = { in: Placement; name: string; value: string; fixed: boolean };
+/** scheme: a word sent before the value ("Bearer"), from the OpenAPI file. */
+type Row = { in: Placement; name: string; value: string; fixed: boolean; scheme?: string };
 const row = (place: Placement, fixed = false): Row => ({ in: place, name: "", value: "", fixed });
 function startRows(p: Preset): Row[] {
   if (p === "keyPlusFixed") return [row("header"), row("header", true)];
@@ -118,6 +120,21 @@ function startRows(p: Preset): Row[] {
 function rowsFor(view: UpstreamAuthView | null, p: Preset): Row[] {
   return view && "parts" in view && view.parts.length >= 2 ? view.parts.map((part) => row(part.in, !!part.fixed)) : startRows(p);
 }
+/**
+ * The preset and rows for a key the OpenAPI file says comes in several parts: two headers, or headers and query
+ * parameters. Each row has its name and the word before it filled in; never a value. Null for a single key.
+ */
+export function presetForHint(hint: UpstreamAuthHint | null): { preset: Preset; rows: Row[] } | null {
+  if (!hint?.parts || hint.parts.length < 2) return null;
+  const rows = hint.parts.map((p) => ({ ...row(p.in), name: p.name, ...(p.prefix?.trim() ? { scheme: p.prefix.trim() } : {}) }));
+  return { preset: hint.parts.some((p) => p.in === "query") ? "headerPlusQuery" : "twoHeaders", rows };
+}
+
+/** "the header apikey and the header Authorization (Bearer)": where a key in several parts goes. */
+function describeHintParts(parts: UpstreamAuthHintPart[]): string {
+  return parts.map((p) => `the ${PLACE_LABEL[p.in]} ${p.name}${p.prefix?.trim() ? ` (${p.prefix.trim()})` : ""}`).join(" and ");
+}
+
 /** The preset a stored bag most likely came from, so Replace opens on it (empty: secrets are never shown again). */
 function presetFor(view: UpstreamAuthView | null): Preset {
   if (!view || !("parts" in view)) return "single";
@@ -171,13 +188,15 @@ export function UpstreamAuthForm({
   const router = useRouter();
   const [current, setCurrent] = useState<UpstreamAuthView | null>(initial);
   const [editing, setEditing] = useState(!initial && hint !== null);
-  const [preset, setPreset] = useState<Preset>("single");
+  // A key in several parts is prefilled only where it can be saved (UPSTREAM_AUTH_V3); otherwise the first part.
+  const fromHint = v3 && !initial ? presetForHint(hint) : null;
+  const [preset, setPreset] = useState<Preset>(fromHint?.preset ?? "single");
   const [place, setPlace] = useState<Placement>((initial && !("parts" in initial) ? initial.in : undefined) ?? hint?.in ?? "header");
   const [name, setName] = useState((initial && !("parts" in initial) ? initial.name : undefined) ?? hint?.name ?? "");
   const [value, setValue] = useState("");
   const [scheme, setScheme] = useState("Bearer");
   const [password, setPassword] = useState("");
-  const [rows, setRows] = useState<Row[]>(startRows("twoHeaders"));
+  const [rows, setRows] = useState<Row[]>(fromHint?.rows ?? startRows("twoHeaders"));
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [check, setCheck] = useState<KeyCheck | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -193,7 +212,7 @@ export function UpstreamAuthForm({
     setPreset(p);
     setValue("");
     setPassword("");
-    if (MULTI.includes(p)) setRows(startRows(p));
+    if (MULTI.includes(p)) setRows(fromHint?.preset === p ? fromHint.rows : startRows(p));
   }
 
   function body(): Record<string, unknown> {
@@ -205,7 +224,10 @@ export function UpstreamAuthForm({
       case "basic":
         return { preset, fields: { username: value.trim(), password: v3 ? password.trim() : "" } };
       default:
-        return { preset, fields: { rows: rows.map((r) => ({ in: r.in, name: r.name.trim(), value: r.value.trim(), fixed: r.fixed })) } };
+        return {
+          preset,
+          fields: { rows: rows.map((r) => ({ in: r.in, name: r.name.trim(), value: r.value.trim(), fixed: r.fixed, ...(r.scheme ? { scheme: r.scheme } : {}) })) },
+        };
     }
   }
 
@@ -346,7 +368,11 @@ export function UpstreamAuthForm({
       {keyInAddress && <p className="text-body" role="note" data-testid="address-key-warning">{ADDRESS_KEY_WARNING}</p>}
       {notice && status.kind !== "saved" && <InlineError>{notice}</InlineError>}
       {hint && !current && (
-        <p className="text-caption text-graphite">Your API description asks for a key in the {PLACE_LABEL[hint.in]} {hint.name}.</p>
+        <p className="text-caption text-graphite" data-testid="auth-hint">
+          {hint.parts && hint.parts.length >= 2
+            ? `Your API description asks for a key in several parts at once: ${describeHintParts(hint.parts)}.`
+            : `Your API description asks for a key in the ${PLACE_LABEL[hint.in]} ${hint.name}.`}
+        </p>
       )}
       {current && !editing && (
         <div className="flex flex-wrap items-center gap-4">
@@ -447,6 +473,9 @@ export function UpstreamAuthForm({
                       <Input id={`upstream-auth-row-value-${apiId}-${i}`} type={r.fixed ? "text" : "password"} autoComplete="off" spellCheck={false}
                         placeholder={r.fixed ? "2022-06-28" : "Paste the key, or Bearer and the key"}
                         value={r.value} onChange={(e) => setRow(i, { value: e.target.value })} disabled={busy} />)}
+                    {r.scheme && !r.fixed && (
+                      <p className="text-caption text-graphite sm:col-span-5">We send &quot;{r.scheme}&quot; and a space before this part&apos;s value. Paste the key alone.</p>
+                    )}
                     {rows.length > 2 && (
                       <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}>
                         Remove part {i + 1}

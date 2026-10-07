@@ -185,6 +185,38 @@ describe("UpstreamAuthForm checks the key before saving", () => {
     expect(document.body.textContent).not.toContain(KEY);
   });
 
+  it("prefills the matching preset when the OpenAPI file asks for two keys at once (follow-up B)", async () => {
+    const fetchMock = mockFetch(() => jsonResponse({ parts: [{ in: "header", name: "apikey", hint: "WXYZ" }, { in: "header", name: "Authorization", hint: "WXYZ" }] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    const hint = {
+      in: "header" as const, name: "apikey",
+      parts: [{ in: "header" as const, name: "apikey" }, { in: "header" as const, name: "Authorization", prefix: "Bearer " }],
+    };
+    render(<UpstreamAuthForm apiId="api_1" initial={null} hint={hint} v3 />);
+    expect(screen.getByTestId("auth-hint")).toHaveTextContent(
+      "Your API description asks for a key in several parts at once: the header apikey and the header Authorization (Bearer).",
+    );
+    expect(screen.getByLabelText("How does your API take its key?")).toHaveValue("twoHeaders");
+    expect(screen.getByLabelText("Part 1 name")).toHaveValue("apikey");
+    expect(screen.getByLabelText("Part 2 name")).toHaveValue("Authorization");
+    expect(screen.getByLabelText("Part 1 value")).toHaveValue("");
+    await user.type(screen.getByLabelText("Part 1 value"), KEY);
+    await user.type(screen.getByLabelText("Part 2 value"), KEY);
+    await user.click(screen.getByRole("button", { name: "Save key" }));
+    expect(sentBody(fetchMock)).toEqual({ preset: "twoHeaders", fields: { rows: [
+      { in: "header", name: "apikey", value: KEY, fixed: false },
+      { in: "header", name: "Authorization", value: KEY, fixed: false, scheme: "Bearer" },
+    ] } });
+  });
+
+  it("without UPSTREAM_AUTH_V3 a key in several parts prefills only its first part", () => {
+    const hint = { in: "header" as const, name: "apikey", parts: [{ in: "header" as const, name: "apikey" }, { in: "query" as const, name: "app" }] };
+    render(<UpstreamAuthForm apiId="api_1" initial={null} hint={hint} />);
+    expect(screen.getByLabelText("How does your API take its key?")).toHaveValue("single");
+    expect(screen.getByLabelText("Header name")).toHaveValue("apikey");
+  });
+
   it("lists a stored key's parts read-only, and Replace opens an empty preset form", async () => {
     const user = userEvent.setup();
     render(<UpstreamAuthForm apiId="api_1" hint={null} v3

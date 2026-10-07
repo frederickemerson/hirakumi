@@ -10,7 +10,8 @@ import { describeAuthHint, parseOpenApi, type ParseResult } from "../openapi/par
 import { finishStep, runStep, type StepOutcome } from "../steps.js";
 
 /** allowInsecure: an http://localhost base is accepted (local development only, ALLOW_INSECURE_UPSTREAM=1). */
-export type ParseDeps = { pool: pg.Pool; fetchSpec: (url: string) => Promise<string>; now?: () => Date; allowInsecure?: boolean };
+/** multiPartKeys: endpoints that need several keys at once are sold too (UPSTREAM_AUTH_V3, see parseOpenApi). */
+export type ParseDeps = { pool: pg.Pool; fetchSpec: (url: string) => Promise<string>; now?: () => Date; allowInsecure?: boolean; multiPartKeys?: boolean };
 
 /**
  * Hosts that serve files, never the seller's API. An OpenAPI file there needs a full servers[0] URL: a relative one
@@ -113,7 +114,7 @@ export async function parseStep(deps: ParseDeps, apiId: string): Promise<StepOut
     if (!samples && !openapiUrl) throw new PermanentError(`API ${apiId} has neither an OpenAPI link nor example requests.`);
     const fromSamples = samples !== null;
     const text = samples ? specTextFromSamples(samples, rows[0].name) : await deps.fetchSpec(openapiUrl!);
-    const parsed = await parseOpenApi(text);
+    const parsed = await parseOpenApi(text, { multiPartKeys: deps.multiPartKeys ?? false });
     // apis.origin was only a placeholder (the link's origin) until now: the base comes from servers[0].
     const { origin, pathPrefix } = apiBase(parsed.serverUrl, samples ? samples.base : openapiUrl!, deps.allowInsecure);
     await refuseIfListedByOther(deps.pool, apiId, origin, pathPrefix);

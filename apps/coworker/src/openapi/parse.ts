@@ -1,7 +1,7 @@
 import SwaggerParser from "@apidevtools/swagger-parser";
 import type { OpenAPI } from "openapi-types";
 import YAML, { YAMLParseError } from "yaml";
-import { firstServerUrl, unsafePathReason, UpstreamAuthError, validateUpstreamAuth } from "@hirakumi/core";
+import { firstServerUrl, MAX_UPSTREAM_PARTS, unsafePathReason, UpstreamAuthError, validateUpstreamAuth } from "@hirakumi/core";
 import { PermanentError } from "../errors.js";
 
 export class OpenApiError extends PermanentError {}
@@ -24,12 +24,18 @@ export type OpForLlm = {
 /** needsKey: the operation is only callable with the API's key (the gateway adds it, see AuthHint). */
 export type ParsedOperation = { opId: string; method: HttpMethod; path: string; inputSchema: InputSchema; llm: OpForLlm; needsKey: boolean };
 export type SkippedOperation = { method: HttpMethod; path: string; reason: string };
+/** One place the API reads (part of) its key. prefix goes before the key in the value, e.g. "Bearer " for http bearer. */
+export type AuthPart = { in: "header" | "query"; name: string; prefix?: string };
 /**
  * Where the API reads its key, from the file's security schemes, for the seller's key form (onboard_steps
- * parse output `authHint`). prefix goes before the key in the value, e.g. "Bearer " for http bearer.
- * Hirakumi keeps one key per API, so this is the scheme most operations use.
+ * parse output `authHint`). Hirakumi keeps one key per API, so this is the requirement most operations use.
+ * A requirement of several schemes at once (an app id and a key, say) has `parts`, 2 to 4 of them, sent together as a
+ * key in several parts (hks3); in, name and prefix are then the first part's, so a reader that only knows one part
+ * still points the seller at a real one.
  */
-export type AuthHint = { in: "header" | "query"; name: string; prefix?: string };
+export type AuthHint = AuthPart & { parts?: AuthPart[] };
+/** parseOpenApi options. multiPartKeys: endpoints that need several keys at once can be sold (UPSTREAM_AUTH_V3). */
+export type ParseOptions = { multiPartKeys?: boolean };
 /** serverUrl = servers[0].url with {variables} filled from their defaults, or null when the file has no servers. */
 export type ParseResult = {
   title: string;
@@ -96,10 +102,16 @@ function mergeParams(pathLevel: unknown, opLevel: unknown): Param[] {
   return [...byKey.values()];
 }
 
-/** True when a declared parameter is where the gateway puts the API's key: it is not a buyer input. */
+/** The parts of a key: one, or the several a requirement of schemes at once needs. */
+export const partsOf = (hint: AuthHint): AuthPart[] => hint.parts ?? [hint];
+
+/** True when a parameter is at this part's place: same placement, and the same name (any case for a header). */
+const atPart = (p: { name: string; in: string }, part: AuthPart): boolean =>
+  p.in === part.in && (part.in === "header" ? p.name.toLowerCase() === part.name.toLowerCase() : p.name === part.name);
+
+/** True when a declared parameter is where the gateway puts (a part of) the API's key: it is not a buyer input. */
 export function isAuthParam(p: { name: string; in: string }, hint: AuthHint | null): boolean {
-  if (!hint || p.in !== hint.in) return false;
-  return hint.in === "header" ? p.name.toLowerCase() === hint.name.toLowerCase() : p.name === hint.name;
+  return !!hint && partsOf(hint).some((part) => atPart(p, part));
 }
 
 function buildInputSchema(params: Param[], requestBody: unknown, hint: AuthHint | null): { schema: InputSchema } | { reason: string } {
@@ -157,8 +169,23 @@ function schemeHint(scheme: unknown): AuthHint | string {
   return "uses a security scheme Hirakumi doesn't know (not supported yet)";
 }
 
+/**
+ * Several schemes required at once, as one key in several parts, or why it can't be one: the parts must be distinct
+ * and fit a preset of the seller's key form (two headers, or headers and query parameters, at most 4).
+ */
+function multiPartHint(parts: AuthPart[]): AuthHint | string {
+  if (parts.length > MAX_UPSTREAM_PARTS) return `needs ${parts.length} keys at once, and Hirakumi sends at most ${MAX_UPSTREAM_PARTS}`;
+  if (new Set(parts.map((p) => (p.in === "header" ? `h:${p.name.toLowerCase()}` : `q:${p.name}`))).size !== parts.length) {
+    return "needs two keys in the same place at once (not supported yet)";
+  }
+  const headers = parts.filter((p) => p.in === "header").length;
+  const fits = (headers === 2 && parts.length === 2) || (headers > 0 && headers < parts.length);
+  if (!fits) return `needs ${parts.length} ${headers ? "header keys" : "query keys"} at once (not supported yet)`;
+  return { ...parts[0]!, parts };
+}
+
 /** An operation's security: none (or optional), one key Hirakumi can add (any of `options`), or unsupported. */
-function authNeed(op: Json, doc: Json): AuthNeed {
+function authNeed(op: Json, doc: Json, opts: ParseOptions): AuthNeed {
   const security = op.security ?? doc.security;
   if (!Array.isArray(security) || security.length === 0) return { kind: "none" };
   if (security.some((s) => isRecord(s) && Object.keys(s).length === 0)) return { kind: "none" };
@@ -169,11 +196,17 @@ function authNeed(op: Json, doc: Json): AuthNeed {
   for (const req of security) {
     if (!isRecord(req)) continue;
     const names = Object.keys(req);
-    if (names.length > 1) {
+    if (names.length > 1 && !opts.multiPartKeys) {
       reasons.push("needs two or more keys at once (not supported yet)");
       continue;
     }
-    const h = schemeHint(schemes[names[0]]);
+    const hints = names.map((n) => schemeHint(schemes[n]));
+    const bad = hints.find((h): h is string => typeof h === "string");
+    if (bad) {
+      reasons.push(bad);
+      continue;
+    }
+    const h = hints.length === 1 ? (hints[0] as AuthPart) : multiPartHint(hints as AuthPart[]);
     if (typeof h === "string") reasons.push(h);
     else options.push(h);
   }
@@ -181,7 +214,13 @@ function authNeed(op: Json, doc: Json): AuthNeed {
   return { kind: "unsupported", reason: reasons[0] ?? "needs authentication (not supported yet)" };
 }
 
-const sameHint = (a: AuthHint, b: AuthHint) => isAuthParam(a, b) && (a.prefix ?? "") === (b.prefix ?? "");
+const samePart = (a: AuthPart, b: AuthPart) => atPart(a, b) && (a.prefix ?? "") === (b.prefix ?? "");
+/** The same key: the same parts, in any order (a requirement's schemes have no order). */
+const sameHint = (a: AuthHint, b: AuthHint) => {
+  const pa = partsOf(a);
+  const pb = partsOf(b);
+  return pa.length === pb.length && pa.every((x) => pb.some((y) => samePart(x, y)));
+};
 
 /** The key most operations accept (the first seen wins a tie). */
 function pickAuthHint(needs: AuthNeed[]): AuthHint | null {
@@ -197,8 +236,15 @@ function pickAuthHint(needs: AuthNeed[]): AuthHint | null {
   return votes.reduce<{ hint: AuthHint; count: number } | null>((best, v) => (!best || v.count > best.count ? v : best), null)?.hint ?? null;
 }
 
-/** "the X-API-Key header", "a bearer token in the Authorization header", "the api_key query parameter". */
+/**
+ * "the X-API-Key header", "a bearer token in the Authorization header", "the api_key query parameter"; for a key in
+ * several parts, each part joined: "the X-App-Id header and the X-API-Key header".
+ */
 export function describeAuthHint(h: AuthHint): string {
+  return partsOf(h).map(describePart).join(" and ");
+}
+
+function describePart(h: AuthPart): string {
   if (h.in === "query") return `the ${h.name} query parameter`;
   if (h.prefix?.trim().toLowerCase() === "bearer") return `a bearer token in the ${h.name} header`;
   return `the ${h.name} header`;
@@ -222,7 +268,7 @@ export function isOpenApiDocument(text: unknown): boolean {
  * Parses an OpenAPI 3.x document (JSON or YAML text). Never fetches anything: external $refs are not resolved.
  * servers[0] (the API's base) is read with @hirakumi/core firstServerUrl.
  */
-export async function parseOpenApi(text: string): Promise<ParseResult> {
+export async function parseOpenApi(text: string, opts: ParseOptions = {}): Promise<ParseResult> {
   let raw: unknown;
   try {
     raw = YAML.parse(text);
@@ -254,7 +300,7 @@ export async function parseOpenApi(text: string): Promise<ParseResult> {
     if (!isRecord(item)) continue;
     for (const m of METHODS) {
       const op = item[m];
-      if (isRecord(op)) entries.push({ path, item, method: m.toUpperCase() as HttpMethod, op, need: authNeed(op, doc) });
+      if (isRecord(op)) entries.push({ path, item, method: m.toUpperCase() as HttpMethod, op, need: authNeed(op, doc, opts) });
     }
   }
   // The proof covers one folder; a path like /../other would make the upstream URL leave it.

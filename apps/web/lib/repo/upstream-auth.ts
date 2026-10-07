@@ -13,7 +13,10 @@ export type UpstreamAuthPart = UpstreamAuthSetting & { fixed?: true };
  */
 export type UpstreamAuthView = UpstreamAuthSetting | { parts: UpstreamAuthPart[] };
 /** The coworker's guess from the OpenAPI file (parse step output "authHint"), to prefill the key form. */
-export type AuthHint = { in: UpstreamAuthPlacement; name: string; prefix?: string };
+/** One place the key goes (prefix: a word before it, "Bearer "). */
+export type AuthHintPart = { in: UpstreamAuthPlacement; name: string; prefix?: string };
+/** Where the OpenAPI file says the key goes; `parts` when it needs several at once (the first part is in, name). */
+export type AuthHint = AuthHintPart & { parts?: AuthHintPart[] };
 
 const isPlacement = (v: unknown): v is UpstreamAuthPlacement => v === "header" || v === "query";
 
@@ -103,7 +106,16 @@ export async function retryFailedQa(sql: Sql, apiId: string): Promise<boolean> {
 export async function getAuthHint(sql: Sql, apiId: string): Promise<AuthHint | null> {
   const [row] = await sql<{ hint: unknown }[]>`
     select output->'authHint' as hint from onboard_steps where api_id = ${apiId} and step = 'parse'`;
-  const h = row?.hint as { in?: unknown; name?: unknown; prefix?: unknown } | null | undefined;
+  const h = row?.hint as { in?: unknown; name?: unknown; prefix?: unknown; parts?: unknown } | null | undefined;
+  const part = hintPart(h);
+  if (!part) return null;
+  const parts = Array.isArray(h!.parts) ? h!.parts.map(hintPart) : [];
+  // Several parts (the coworker's parser, follow-up B) only when every one reads; else the first part alone.
+  return parts.length >= 2 && parts.length <= 4 && parts.every(Boolean) ? { ...part, parts: parts as AuthHintPart[] } : part;
+}
+
+function hintPart(v: unknown): AuthHintPart | null {
+  const h = v as { in?: unknown; name?: unknown; prefix?: unknown } | null | undefined;
   if (!h || typeof h !== "object" || !isPlacement(h.in) || typeof h.name !== "string" || !h.name) return null;
   return { in: h.in, name: h.name, ...(typeof h.prefix === "string" && h.prefix ? { prefix: h.prefix } : {}) };
 }

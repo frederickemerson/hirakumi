@@ -18,6 +18,8 @@ export type InboxDeps = {
   fetchSpec?: (url: string) => Promise<string>;
   llm?: StructuredCall | null;
   allowInsecure?: boolean;
+  /** Endpoints that need several keys at once are sold too (UPSTREAM_AUTH_V3). */
+  multiPartKeys?: boolean;
 };
 
 type Row = { task_id: string; sokosumi_user_id: string; setup_token: string; created_at: Date };
@@ -39,6 +41,7 @@ export function createInbox(deps: InboxDeps): { poll(): Promise<number> } {
     fetchSpec: deps.fetchSpec ?? createSpecFetcher(),
     llm: deps.llm ?? null,
     allowInsecure: deps.allowInsecure ?? false,
+    multiPartKeys: deps.multiPartKeys ?? false,
   };
   return {
     async poll() {

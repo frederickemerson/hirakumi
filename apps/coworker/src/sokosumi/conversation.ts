@@ -30,6 +30,8 @@ export type ConversationDeps = {
   /** Maps a free-text reply to an offered choice. null = typed replies only. */
   llm: StructuredCall | null;
   allowInsecure: boolean;
+  /** Endpoints that need several keys at once are sold too (UPSTREAM_AUTH_V3, parseOpenApi). */
+  multiPartKeys?: boolean;
 };
 export type TaskRef = { taskId: string; sokosumiUserId: string; setupToken: string };
 
@@ -414,7 +416,7 @@ async function startIntake(deps: ConversationDeps, task: TaskRef, key: string, i
   // First time: read it now, and ask for the one sign-in that ties the task to a wallet.
   let summary: string;
   try {
-    const parsed = await parseOpenApi(await intake.specText());
+    const parsed = await parseOpenApi(await intake.specText(), { multiPartKeys: deps.multiPartKeys ?? false });
     const what = intake.samples ? "Your example requests have" : "Your OpenAPI file has";
     // The same base rules as the parse step, so a file host with no full servers URL is told now, not after sign-in.
     apiBase(parsed.serverUrl, intake.openapiUrl ?? intake.samples!.base, deps.allowInsecure);
