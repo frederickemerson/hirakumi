@@ -30,8 +30,10 @@ export function HeaderAuth() {
         <Link href="/login" className={cn(navLink, "hidden sm:inline")}>
           Log in
         </Link>
-        <Link href="/login" className={cn(buttonVariants({ variant: "nav", size: "sm" }), "min-h-9")}>
-          List your API
+        <Link href="/login" aria-label="List your API" className={cn(buttonVariants({ variant: "nav", size: "sm" }), "min-h-9")}>
+          {/* The full label pushes the menu button past a 390px screen. */}
+          <span aria-hidden className="sm:hidden">List API</span>
+          <span aria-hidden className="hidden sm:inline">List your API</span>
         </Link>
       </div>
       <div data-auth-layer="in" aria-hidden={view !== "in" || undefined} inert={view !== "in"} className={cn(layer, view !== "in" && hidden)}>
