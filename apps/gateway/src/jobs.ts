@@ -62,27 +62,37 @@ export class JobRunner {
     }
     if (!(await claimJob(this.d.sql, job.id))) return;
 
-    const loaded = await this.d.registry.get(job.api_id);
-    const op = loaded ? escrowOperation(loaded) : undefined;
-    const normalized = normalizeMip003Input(job.input);
-    if (!loaded || !op?.rule || !normalized) {
-      await failJob(this.d.sql, job.id, ["the escrow operation is no longer available"]);
-      return;
+    // Once claimed, the job must end in a final state: an error before the output is stored (an answer the database
+    // can't hold, a lost connection) would otherwise leave it 'running' forever. Failing it submits nothing, so the
+    // buyer is refunded after the submit-result deadline, and /status says so.
+    let output: { body: string; hash: string };
+    try {
+      const loaded = await this.d.registry.get(job.api_id);
+      const op = loaded ? escrowOperation(loaded) : undefined;
+      const normalized = normalizeMip003Input(job.input);
+      if (!loaded || !op?.rule || !normalized) {
+        await failJob(this.d.sql, job.id, ["the escrow operation is no longer available"]);
+        return;
+      }
+      const checked = op.validateInput(normalized);
+      const outcome = await runOperation(loaded.api, op, checked.ok ? checked.value : normalized, { timeoutMs: this.d.config.upstreamTimeoutMs });
+      const outHash = outcome.result ? outputHash(job.identifier_from_purchaser, outcome.result.body) : null;
+      await insertCall(this.d.sql, {
+        kind: "escrow", jobId: job.id, blockchainId: job.blockchain_identifier, apiId: loaded.api.id, opId: op.row.op_id,
+        ruleId: op.ruleRow?.id ?? null, execution: outcome.execution, verdict: outcome.verdict, reasons: outcome.reasons,
+        latencyMs: outcome.latencyMs, inputHash: job.input_hash, outputHash: outHash,
+      });
+      if (!(outcome.execution === "upstream_ok" && outcome.verdict === "pass" && outcome.result && outHash)) {
+        await failJob(this.d.sql, job.id, outcome.reasons.length ? outcome.reasons : [`upstream ${outcome.execution}`]);
+        return; // no result submitted → Masumi refunds after submitResultTime
+      }
+      await storeJobOutput(this.d.sql, job.id, outcome.result.body, outHash);
+      output = { body: outcome.result.body, hash: outHash };
+    } catch (e) {
+      await failJob(this.d.sql, job.id, ["the answer could not be recorded, so no result was submitted"]).catch(() => {});
+      throw e;
     }
-    const checked = op.validateInput(normalized);
-    const outcome = await runOperation(loaded.api, op, checked.ok ? checked.value : normalized, { timeoutMs: this.d.config.upstreamTimeoutMs });
-    const outHash = outcome.result ? outputHash(job.identifier_from_purchaser, outcome.result.body) : null;
-    await insertCall(this.d.sql, {
-      kind: "escrow", jobId: job.id, blockchainId: job.blockchain_identifier, apiId: loaded.api.id, opId: op.row.op_id,
-      ruleId: op.ruleRow?.id ?? null, execution: outcome.execution, verdict: outcome.verdict, reasons: outcome.reasons,
-      latencyMs: outcome.latencyMs, inputHash: job.input_hash, outputHash: outHash,
-    });
-    if (!(outcome.execution === "upstream_ok" && outcome.verdict === "pass" && outcome.result && outHash)) {
-      await failJob(this.d.sql, job.id, outcome.reasons.length ? outcome.reasons : [`upstream ${outcome.execution}`]);
-      return; // no result submitted → Masumi refunds after submitResultTime
-    }
-    await storeJobOutput(this.d.sql, job.id, outcome.result.body, outHash);
-    await this.submit({ ...job, status: "running", output: outcome.result.body, output_hash: outHash });
+    await this.submit({ ...job, status: "running", output: output.body, output_hash: output.hash });
   }
 
   private async submit(job: JobRow): Promise<void> {

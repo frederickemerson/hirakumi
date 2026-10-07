@@ -222,12 +222,17 @@ const NAMED_ENTITIES: Record<string, string> = {
 };
 const codePoint = (n: number, whole: string) => (n >= 0 && n <= 0x10ffff ? String.fromCodePoint(n) : whole);
 
-/** One round of unescaping: JSON \uXXXX and \/ \" \\, HTML entities (named, decimal, hex), and %XX for ASCII. */
+const JSON_CONTROL: Record<string, string> = { b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" };
+
+/** One round of unescaping: JSON backslash escapes (\uXXXX, \/ \" \\, \n and the like), \xXX, HTML entities (named, decimal, hex), and %XX for ASCII. */
 function decodeOnce(t: string): string {
   return t
-    .replace(/\\u([0-9a-fA-F]{4})/g, (w, h: string) => codePoint(parseInt(h, 16), w))
-    .replace(/\\x([0-9a-fA-F]{2})/g, (w, h: string) => codePoint(parseInt(h, 16), w))
-    .replace(/\\([/"'\\])/g, "$1")
+    // Backslash escapes in one left-to-right pass, like a JSON parser: the raw text \\u0073 (a \u escape escaped
+    // once more) is the escape \\ then "u0073", so it reads \u0073 here and "s" in the next round. One pass per escape
+    // kind read it as "\" + "\u0073" and lost the key. \n, \t and the like become their characters, so a base64 token
+    // after them starts where it really starts.
+    .replace(/\\(?:u([0-9a-fA-F]{4})|x([0-9a-fA-F]{2})|([/"'\\])|([bfnrt]))/g, (w, u?: string, x?: string, c?: string, ctl?: string) =>
+      c ?? (ctl ? JSON_CONTROL[ctl]! : codePoint(parseInt((u ?? x)!, 16), w)))
     .replace(/&#(\d{1,7});?/g, (w, d: string) => codePoint(parseInt(d, 10), w))
     .replace(/&#[xX]([0-9a-fA-F]{1,6});?/g, (w, h: string) => codePoint(parseInt(h, 16), w))
     .replace(/&([A-Za-z]{2,8});/g, (w, n: string) => NAMED_ENTITIES[n.toLowerCase()] ?? w)

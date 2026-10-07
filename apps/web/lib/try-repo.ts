@@ -61,6 +61,8 @@ export async function findTryPack(
   envToken: string | undefined,
   opts: { withCredits?: boolean } = {},
 ): Promise<TryPack | null> {
+  // Postgres text can't hold a NUL byte, so no row has such an id; asking would fail the query (a 500).
+  if (apiId.includes("\u0000")) return null;
   const withCredits = opts.withCredits ?? true;
   // An escrow pack can pay only while its channel takes calls (lock pending or verified, never disputed); the
   // same rule as the gateway's findUsableTryPack (packages/db/src/tryTokens.ts, OPEN_TRY_CHANNEL).

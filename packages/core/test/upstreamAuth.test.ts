@@ -113,6 +113,15 @@ describe("answerLeaksSecret and hint", () => {
     expect(textLeaksSecret("k=SK_ABC123DEF456", "sk_AbC123dEf456")).toBe(true);
   });
 
+  it("finds the key \\u-escaped inside a JSON string (stress finding: the escape is JSON-escaped once more)", () => {
+    const key = "hkfake_Zx9Qw8Er7Ty6Ui5Op4As3Df2Gh1Jk0L";
+    const u = [...key].map((ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`).join("");
+    expect(textLeaksSecret(JSON.stringify({ debug: u }), key)).toBe(true);
+    expect(textLeaksSecret(JSON.stringify({ a: JSON.stringify({ debug: u }) }), key)).toBe(true);
+    // A base64 of that text right after a JSON "\n" escape.
+    expect(textLeaksSecret(JSON.stringify({ d: `\n${Buffer.from(u).toString("base64")}` }), key)).toBe(true);
+  });
+
   it("finds the key base64 or base64url encoded", () => {
     const value = "sk_live>?>?0123";
     const c = { in: "header" as const, name: "X-Key", value };

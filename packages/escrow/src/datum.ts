@@ -68,9 +68,61 @@ function int(name: string, v: Data.Data | undefined): bigint {
   return v;
 }
 
+/** A transaction is at most 16 KB, so no datum on-chain is larger. */
+const MAX_DATUM_BYTES = 16_384;
+const MAX_DATUM_DEPTH = 64;
+
+/**
+ * Throws unless `b` is one well-formed Plutus Data CBOR item: majors 0, 1, 2, 4, 5 and 6 only, every declared length
+ * or count within the bytes that are left, bounded nesting, nothing after the item. Datums come from anyone's
+ * outputs at the escrow address, and the decoder allocates what a header declares: "9a7fffffff" (an array of
+ * 2^31 - 1 items, 5 bytes) ran the process out of memory before this check.
+ */
+function checkDataCbor(b: Uint8Array): void {
+  if (b.length > MAX_DATUM_BYTES) throw new Error("datum: too large");
+  const bad = (why: string): never => { throw new Error(`datum: malformed CBOR (${why})`); };
+  const item = (p: number, depth: number): number => {
+    if (depth > MAX_DATUM_DEPTH) bad("nested too deep");
+    if (p >= b.length) bad("truncated");
+    const ib = b[p++]!;
+    const major = ib >> 5;
+    const ai = ib & 31;
+    if (major === 3 || major === 7) bad("not Plutus Data");
+    if (ai === 31) {
+      if (major !== 2 && major !== 4 && major !== 5) bad("indefinite length");
+      while (true) {
+        if (p >= b.length) bad("truncated");
+        if (b[p] === 0xff) return p + 1;
+        if (major === 2 && (b[p]! >> 5 !== 2 || (b[p]! & 31) === 31)) bad("bytes chunk");
+        p = item(p, depth + 1);
+        if (major === 5) p = item(p, depth + 1);
+      }
+    }
+    if (ai >= 28) bad("reserved length");
+    const size = ai < 24 ? 0 : 1 << (ai - 24);
+    if (p + size > b.length) bad("truncated");
+    let n = BigInt(ai);
+    if (size) n = BigInt(`0x${Buffer.from(b.subarray(p, p + size)).toString("hex")}`);
+    p += size;
+    const left = BigInt(b.length - p);
+    if (major === 2) { if (n > left) bad("length"); return p + Number(n); }
+    if (major === 4 || major === 5) {
+      const items = major === 5 ? 2n * n : n;
+      if (items > left) bad("count");
+      for (let i = 0n; i < items; i++) p = item(p, depth + 1);
+      return p;
+    }
+    if (major === 6) return item(p, depth + 1);
+    return p; // ints
+  };
+  if (item(0, 0) !== b.length) bad("trailing bytes");
+}
+
 /** Decodes an inline datum. Addresses are rebuilt for `networkId` (0 = preprod). Throws on any shape mismatch. */
 export function decodePackDatum(cborHex: string, networkId = PREPROD): PackDatum {
-  const d = Data.fromCBORHex(hexOf("datum", cborHex));
+  const hex = hexOf("datum", cborHex);
+  checkDataCbor(Buffer.from(hex, "hex"));
+  const d = Data.fromCBORHex(hex);
   if (!Data.isConstr(d) || d.index !== 0n || d.fields.length !== 15) {
     throw new Error("datum: expected Constr 0 with 15 fields");
   }

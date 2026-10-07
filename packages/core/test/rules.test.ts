@@ -124,3 +124,22 @@ describe("inferRule", () => {
     expect(() => inferRule([])).toThrow(/at least one/);
   });
 });
+
+describe("stress findings: inference never builds a promise its own answers break", () => {
+  const res = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body), latencyMs: 1 });
+  it("a timestamp 2 minutes ahead (a fast clock) keeps the promise built from it", () => {
+    const sample = { at: new Date(Date.now() + 120_000).toISOString() };
+    expect(compileRule(inferRule([sample])).check(res(sample)).pass).toBe(true);
+  });
+  it("a field named __proto__ is really required, and an error key named constructor or '' does not refuse good answers", () => {
+    const sample = JSON.parse('{"__proto__":1,"v":2}');
+    const rule = compileRule(inferRule([sample]));
+    expect(rule.check(res(sample)).pass).toBe(true);
+    expect(rule.check(res({ v: 2 })).pass).toBe(false);
+    for (const err of [{ constructor: "boom" }, JSON.parse('{"":"boom","x":1}')]) {
+      const def = inferRule([{ v: 2 }], err);
+      expect(compileRule(def).check(res({ v: 2 })).pass).toBe(true);
+      expect(compileRule(def).check(res(err)).pass).toBe(false);
+    }
+  });
+});

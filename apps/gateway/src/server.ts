@@ -9,6 +9,9 @@ export const MAX_URL_BYTES = 8 * 1024;
 
 export const limitUrl: RequestHandler = (req, res, next) => {
   if (req.originalUrl.length > MAX_URL_BYTES) { res.status(414).json({ error: "uri_too_long" }); return; }
+  // Postgres text can't hold U+0000, so an id or query value carrying one fails in the database (a 500). The HTTP
+  // parser refuses a raw NUL, so in a URL it can only arrive as %00; a double-encoded %2500 decodes to the text "%00".
+  if (/%00/.test(req.originalUrl)) { res.status(400).json({ error: "invalid_url", message: "The URL contains a NUL character (%00)." }); return; }
   next();
 };
 

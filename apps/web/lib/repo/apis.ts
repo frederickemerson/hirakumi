@@ -171,6 +171,8 @@ export async function createApiForTask(
 }
 
 export async function getApiForSeller(sql: Sql, apiId: string, sellerId: string): Promise<Api | null> {
+  // Postgres text can't hold a NUL byte, so no row has such an id; asking would fail the query (a 500).
+  if (apiId.includes("\u0000")) return null;
   const [row] = await sql<Api[]>`select ${apiColumns(sql, await hasAnyApiSchema(sql))} from apis where id = ${apiId} and seller_id = ${sellerId} and deleted_at is null`;
   return row ?? null;
 }

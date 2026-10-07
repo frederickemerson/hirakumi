@@ -6,7 +6,7 @@ import { estimatedDowntimeSeconds } from "./config";
 import type { AppDeps } from "./deps";
 import { downBody, SELLER_BODY_HEADERS, sellingPausedBody } from "./http";
 import { escrowOperation } from "./registry";
-import { normalizeMip003Input } from "./upstream";
+import { containsNul, normalizeMip003Input } from "./upstream";
 
 export type Mip003Field = {
   id: string; type: "string" | "number" | "boolean" | "option"; name: string;
@@ -77,14 +77,24 @@ export function clientKey(ip: string | undefined): string {
   return `${groups.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, "")).join(":")}::/64`;
 }
 
+/**
+ * Sliding-window limiter per key. The map is kept in last-request order (a key is moved to the end on every request),
+ * so addresses whose newest request left the window sit at the front and are dropped there: O(1) amortised per
+ * request however many addresses are live. (A full scan once the map passed 10 000 keys made every request cost
+ * O(addresses): a sweep over many IPv6 /64s slowed every caller down.)
+ */
 function createWindowLimiter(max: number, windowMs: number): (key: string, now?: number) => boolean {
   const hits = new Map<string, number[]>();
   return (key, now = Date.now()) => {
+    for (const [k, v] of hits) {
+      if (now - v[v.length - 1]! < windowMs) break;
+      hits.delete(k);
+    }
     const recent = (hits.get(key) ?? []).filter((t) => now - t < windowMs);
+    hits.delete(key);
     if (recent.length >= max) { hits.set(key, recent); return false; }
     recent.push(now);
     hits.set(key, recent);
-    if (hits.size > 10_000) for (const [k, v] of hits) if (!v.some((t) => now - t < windowMs)) hits.delete(k);
     return true;
   };
 }
@@ -167,6 +177,7 @@ export function mip003Router(d: AppDeps): Router {
       const normalized = normalizeMip003Input(input_data);
       const checked = normalized ? op.validateInput(normalized) : { ok: false as const, reasons: ["input_data must be an object or a list of {key, value}"] };
       if (!checked.ok) { res.status(400).json({ error: "INVALID_INPUT", reasons: checked.reasons }); return; }
+      if (containsNul(input_data)) { res.status(400).json({ error: "INVALID_INPUT", reasons: ["input_data contains a NUL character (\\u0000)"] }); return; }
       const snap = d.health.get(loaded.api.id);
       if (snap?.health === "down") { res.status(503).json(downBody(d.config, snap)); return; }
       const paused = sellingPausedBody(loaded.api);

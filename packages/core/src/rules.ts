@@ -32,7 +32,9 @@ export function ageSeconds(value: string | number, nowMs: number): number | null
   return Number.isFinite(ms) ? (nowMs - ms) / 1000 : null;
 }
 
-const ajv = new Ajv2020({ allErrors: true, strict: false, verbose: true });
+// ownProperties: a JSON answer's fields are its own properties. Without it ajv reads "required": ["__proto__"] as met
+// by every object (the prototype), and "not": {"required": ["constructor"]} as failed by every object.
+const ajv = new Ajv2020({ allErrors: true, strict: false, verbose: true, ownProperties: true });
 ajv.addKeyword({
   keyword: "maxAgeSeconds",
   type: ["string", "number"],
@@ -139,7 +141,8 @@ export function inferSchema(values: unknown[]): Record<string, unknown> {
     const freshStamp = strings.every((s) => {
       if (!ISO_DATE_TIME.test(s)) return false;
       const age = ageSeconds(s, now);
-      return age !== null && Math.abs(age) <= DEFAULT_MAX_AGE_SECONDS;
+      // The same window the check allows (maxAgeSeconds above): a stamp further ahead would break its own promise.
+      return age !== null && age >= -MAX_CLOCK_SKEW_SECONDS && age <= DEFAULT_MAX_AGE_SECONDS;
     });
     return freshStamp ? { type: "string", maxAgeSeconds: DEFAULT_MAX_AGE_SECONDS } : { type: "string" };
   }
@@ -163,7 +166,8 @@ export function inferRule(samples: unknown[], errorSample?: unknown): RuleDefini
   if (errorSample === undefined || !acceptsBody(base, errorSample)) return base;
   if (isObject(errorSample) && samples.every(isObject)) {
     const seen = new Set(samples.flatMap((s) => Object.keys(s)));
-    const distinctive = Object.keys(errorSample).filter((k) => !seen.has(k)).sort();
+    // "" is left out: ajv reads "not": {"required": [""]} as failed by every object, so it would refuse good answers.
+    const distinctive = Object.keys(errorSample).filter((k) => k !== "" && !seen.has(k)).sort();
     if (distinctive.length) {
       const tightened: RuleDefinition = {
         ...base,

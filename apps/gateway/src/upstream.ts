@@ -100,12 +100,24 @@ export function normalizeMip003Input(inputData: unknown): Record<string, unknown
     const out: Record<string, unknown> = {};
     for (const item of inputData) {
       if (!item || typeof item !== "object" || typeof (item as { key?: unknown }).key !== "string") return null;
-      out[(item as { key: string }).key] = (item as { value?: unknown }).value;
+      // defineProperty, not out[key] = value: a key "__proto__" must be a field, never the object's prototype.
+      Object.defineProperty(out, (item as { key: string }).key, { value: (item as { value?: unknown }).value, enumerable: true, writable: true, configurable: true });
     }
     return out;
   }
   if (inputData && typeof inputData === "object") return { ...(inputData as Record<string, unknown>) };
   return null;
+}
+
+/**
+ * True when any string or key in a JSON value holds U+0000. Postgres jsonb refuses it ("unsupported Unicode escape
+ * sequence"), so such an input can't be stored and must be refused before anything is created for it.
+ */
+export function containsNul(v: unknown): boolean {
+  if (typeof v === "string") return v.includes("\u0000");
+  if (Array.isArray(v)) return v.some(containsNul);
+  if (v && typeof v === "object") return Object.entries(v).some(([k, x]) => k.includes("\u0000") || containsNul(x));
+  return false;
 }
 
 export type Execution = "upstream_ok" | "upstream_error" | "timeout" | "blocked";

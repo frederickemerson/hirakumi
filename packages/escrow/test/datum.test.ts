@@ -51,6 +51,17 @@ describe("decodePackDatum", () => {
   });
 });
 
+describe("decodePackDatum on hostile CBOR (anyone can put a datum at the escrow address)", () => {
+  it("refuses huge declared lengths, bad indefinite items, deep nesting and trailing bytes without allocating them", () => {
+    for (const h of ["9a7fffffff", "ba2666a6d1d117c7b8901b62976267f4bf909a28", "bf553ad74749b264136db2c4ddba9063c15e3be582233f5ad635ebb3",
+      "5a7fffffff00", "9f".repeat(5000), GOLDEN_OPEN_CBOR + "00", "ab".repeat(20_000)]) {
+      const t = Date.now();
+      expect(() => decodePackDatum(h)).toThrow();
+      expect(Date.now() - t).toBeLessThan(1000);
+    }
+  });
+});
+
 describe("encodePackDatum input checks", () => {
   it("rejects malformed hex / addresses / negative-looking stage values", () => {
     expect(() => encodePackDatum({ ...goldenDatum(), channelId: "xyz" })).toThrow();
