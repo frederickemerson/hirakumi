@@ -11,7 +11,10 @@ import type { Api } from "./types";
  * checked (the page shows its error state): an unchecked session is never trusted.
  */
 export async function readPageSession(): Promise<SessionInfo | null> {
-  return liveSession(getSql(), (await cookies()).get(SESSION_COOKIE)?.value);
+  // Cookies first: that marks the page dynamic, and no cookie needs no database.
+  const token = (await cookies()).get(SESSION_COOKIE)?.value;
+  if (!token) return null;
+  return liveSession(getSql(), token);
 }
 
 export async function requireSellerPage(nextPath: string): Promise<SessionInfo> {
