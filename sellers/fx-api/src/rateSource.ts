@@ -39,6 +39,7 @@ export function createRateSource(opts: {
   // Last real table per base currency, and when we last asked (success or failure) for rate limiting.
   const lastGood = new Map<Currency, RateTable>();
   const askedAt = new Map<Currency, number>();
+  const refreshing = new Map<Currency, Promise<void>>();
   const getJson = async (url: string) => {
     const res = await opts.fetch(url, { headers: { accept: "application/json", "user-agent": "hirakumi-fx-api" }, signal: AbortSignal.timeout(opts.timeoutMs ?? 3_000) });
     if (!res.ok) throw new Error(`${new URL(url).host} answered HTTP ${res.status}`);
@@ -74,15 +75,20 @@ export function createRateSource(opts: {
       const asked = askedAt.get(base);
       if (asked === undefined || now - asked >= ttlMs) {
         askedAt.set(base, now);
-        for (const source of [coinbase, exchangerateApi]) {
-          try {
-            lastGood.set(base, await source(base));
-            break;
-          } catch (err) {
-            opts.onError?.(err);
+        const run = (async () => {
+          for (const source of [coinbase, exchangerateApi]) {
+            try {
+              lastGood.set(base, await source(base));
+              break;
+            } catch (err) {
+              opts.onError?.(err);
+            }
           }
-        }
+        })().finally(() => refreshing.delete(base));
+        refreshing.set(base, run);
       }
+      // A caller that arrives during a refresh waits for it, so a cold start doesn't answer 503 to all but one.
+      await refreshing.get(base);
       const table = lastGood.get(base);
       if (!table) throw new RateUnavailableError(base);
       return table;

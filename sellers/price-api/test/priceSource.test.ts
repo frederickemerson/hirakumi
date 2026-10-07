@@ -18,6 +18,14 @@ describe("priceSource", () => {
     expect(url).toContain("include_last_updated_at=true");
   });
 
+  it("callers that arrive while the first fetch runs wait for it instead of failing (cold start)", async () => {
+    const fetch = okFetch();
+    const src = createPriceSource({ fetch, now: () => NOW });
+    const quotes = await Promise.all([src.get("ADA"), src.get("ADA"), src.get("ADA")]);
+    expect(quotes.map((q) => q.usd)).toEqual([0.269505, 0.269505, 0.269505]);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("caches for 30 seconds", async () => {
     let now = NOW;
     const fetch = okFetch();

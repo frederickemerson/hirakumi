@@ -9,6 +9,14 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 const okFetch = () => vi.fn<FetchLike>(async () => json(coinbaseBody()));
 
 describe("rateSource", () => {
+  it("callers that arrive while the first fetch runs wait for it instead of failing (cold start)", async () => {
+    const fetch = okFetch();
+    const src = createRateSource({ fetch, now: () => NOW });
+    const tables = await Promise.all([src.get("USD"), src.get("USD"), src.get("USD")]);
+    expect(new Set(tables.map((t) => t.asOf)).size).toBe(1);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("maps Coinbase's exchange rates for the base, dated when they were fetched", async () => {
     const fetch = okFetch();
     const t = await createRateSource({ fetch, now: () => NOW }).get("USD");

@@ -39,6 +39,7 @@ export function createPriceSource(opts: {
   // Last real quote per symbol, and when we last asked CoinGecko (success or failure) for rate limiting.
   const lastGood = new Map<SupportedSymbol, Quote>();
   const askedAt = new Map<SupportedSymbol, number>();
+  const refreshing = new Map<SupportedSymbol, Promise<void>>();
 
   /** Coinbase Exchange public ticker: last trade price and its trade time, 24h change from the stats open. */
   async function coinbase(symbol: SupportedSymbol): Promise<Quote> {
@@ -91,15 +92,20 @@ export function createPriceSource(opts: {
       const asked = askedAt.get(symbol);
       if (asked === undefined || now - asked >= ttlMs) {
         askedAt.set(symbol, now);
-        for (const source of [coingecko, coinbase]) {
-          try {
-            lastGood.set(symbol, await source(symbol));
-            break;
-          } catch (err) {
-            opts.onError?.(err);
+        const run = (async () => {
+          for (const source of [coingecko, coinbase]) {
+            try {
+              lastGood.set(symbol, await source(symbol));
+              break;
+            } catch (err) {
+              opts.onError?.(err);
+            }
           }
-        }
+        })().finally(() => refreshing.delete(symbol));
+        refreshing.set(symbol, run);
       }
+      // A caller that arrives during a refresh waits for it, so a cold start doesn't answer 503 to all but one.
+      await refreshing.get(symbol);
       const quote = lastGood.get(symbol);
       if (!quote) throw new PriceUnavailableError(symbol);
       return quote;
