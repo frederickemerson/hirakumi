@@ -118,7 +118,7 @@ describe("buildUpstreamRequest", () => {
           expect(r.init.headers[name.toLowerCase()]).toBe("SELLER_SECRET_123456");
         }
         // Buyer input becomes query only: never a header, never raw CR/LF or spaces in the URL.
-        expect(Object.keys(r.init.headers).sort()).toEqual(["accept", "user-agent", ...(where === "header" ? [name.toLowerCase()] : [])].sort());
+        expect(Object.keys(r.init.headers).sort()).toEqual(["accept", "user-agent", "x-hirakumi-hop", ...(where === "header" ? [name.toLowerCase()] : [])].sort());
         expect(r.url).not.toMatch(/[\r\n\s]/);
         for (const v of Object.values(r.init.headers)) expect(v).not.toMatch(/[\r\n]/);
       }), runs(2000));
