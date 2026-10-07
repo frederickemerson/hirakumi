@@ -3,6 +3,7 @@ import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { jsonResponse } from "@/test/http";
+import type { PlatformHint } from "@/lib/header-platform";
 import { agentPrompt, AUTO_CHECK_MS, claudeUrl, curlCheck, headerSnippets, OwnershipPanel } from "./ownership-panel";
 
 const nav = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
@@ -39,7 +40,8 @@ function setVisibility(state: "visible" | "hidden") {
   document.dispatchEvent(new Event("visibilitychange"));
 }
 
-const panel = (passed = false) => <OwnershipPanel apiId="api_1" baseUrl={BASE_URL} code={CODE} initiallyPassed={passed} />;
+const panel = (passed = false, platforms?: Promise<PlatformHint[]>) =>
+  <OwnershipPanel apiId="api_1" baseUrl={BASE_URL} code={CODE} initiallyPassed={passed} platforms={platforms} />;
 const checkCalls = (m: ReturnType<typeof vi.fn>) => m.mock.calls.filter((c) => String(c[0]).endsWith("/ownership/spec-check")).length;
 
 afterEach(() => {
@@ -56,7 +58,7 @@ describe("OwnershipPanel: what, where, why", () => {
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(MISSING)));
     render(panel());
     expect(screen.getByText(BASE_URL)).toBeInTheDocument();
-    expect(screen.getByText("So nobody can sell an API they don't own.")).toBeInTheDocument();
+    expect(screen.getByText(/^So nobody can sell an API they don't own\./)).toBeInTheDocument();
     expect(screen.getByText(`X-Hirakumi-Verify: ${CODE}`)).toBeInTheDocument();
     expect(screen.getByText(/Any status is fine, a 404 page counts\. The code proves the folder of this URL/)).toBeInTheDocument();
     expect(screen.getByText(`curl -s -o /dev/null -D - '${BASE_URL}' | grep -i x-hirakumi-verify`)).toBeInTheDocument();
@@ -65,14 +67,19 @@ describe("OwnershipPanel: what, where, why", () => {
     expect(document.body.textContent).not.toMatch(/[–—]/);
   });
 
-  it("shows one snippet per server or host as tabs", async () => {
+  it("with no hint from the server, lists every recipe as a tab, none picked, and asks", async () => {
     installWallet();
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(MISSING)));
     const user = userEvent.setup();
-    render(panel());
+    render(panel(false, Promise.resolve([])));
+    expect(await screen.findByText("Pick where your API runs.")).toBeInTheDocument();
     const tabs = screen.getAllByRole("tab").map((t) => t.textContent);
-    expect(tabs).toEqual(["Express", "nginx", "vercel.json", "Netlify _headers", "Cloudflare", "Next.js", "FastAPI", "Flask", "Go", "Anything else"]);
-    expect(screen.getByRole("tab", { name: "Express" })).toHaveAttribute("aria-selected", "true");
+    expect(tabs).toEqual(["Express", "FastAPI", "Flask", "Next.js", "nginx", "vercel.json", "Netlify _headers", "Cloudflare", "Go", "Any server"]);
+    for (const t of screen.getAllByRole("tab")) expect(t).toHaveAttribute("aria-selected", "false");
+    expect(screen.queryByRole("tabpanel")).toBeNull();
+    // The first tab is the one keyboard users land on.
+    expect(screen.getByRole("tab", { name: "Express" })).toHaveAttribute("tabindex", "0");
+    await user.click(screen.getByRole("tab", { name: "Express" }));
     expect(screen.getByRole("tabpanel")).toHaveTextContent(`res.set("X-Hirakumi-Verify", "${CODE}");`);
     await user.click(screen.getByRole("tab", { name: "nginx" }));
     expect(screen.getByRole("tab", { name: "nginx" })).toHaveAttribute("aria-selected", "true");
@@ -122,28 +129,34 @@ describe("OwnershipPanel: what, where, why", () => {
   it("builds a coding-agent prompt with the code, the base URL, the rules and the curl check", () => {
     const p = agentPrompt(CODE, BASE_URL);
     expect(p).toContain(`X-Hirakumi-Verify with the value ${CODE}`);
-    expect(p).toContain(`every response at ${BASE_URL} and every path below it, errors and 404 pages included`);
+    expect(p).toContain(`every response at ${BASE_URL} and every path below it, errors included (401, 404, 500)`);
     expect(p).toContain("without redirecting somewhere else");
+    expect(p).toContain("Keep the header in place, at least until Hirakumi confirms ownership.");
     expect(p).toContain("Change nothing else.");
+    expect(p).not.toContain("likely runs on");
+    const withPlatform = agentPrompt(CODE, BASE_URL, { name: "nginx", evidence: "server: nginx/1.25.3" });
+    expect(withPlatform).toContain(`The server answers with "server: nginx/1.25.3", so it likely runs on nginx.`);
     expect(p.endsWith(curlCheck(BASE_URL))).toBe(true);
     expect(p).not.toMatch(/[–—]/);
     expect(claudeUrl(p)).toBe(`https://claude.ai/new?q=${encodeURIComponent(p)}`);
   });
 
-  it("offers the prompt to copy or open in Claude, before the do-it-yourself snippets", async () => {
+  it("offers the prompt to copy or open in Claude, before the do-it-yourself recipes", async () => {
     installWallet();
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(MISSING)));
     const user = userEvent.setup();
     const writeText = vi.spyOn(navigator.clipboard, "writeText");
     render(panel());
-    const card = screen.getByRole("region", { name: "Ask your coding agent" });
+    const card = screen.getByRole("region", { name: "Let your AI do it" });
+    expect(card).toHaveTextContent("Paste it into your coding agent");
     expect(card).toHaveTextContent(`X-Hirakumi-Verify with the value ${CODE}`);
-    const open = within(card).getByRole("link", { name: "Open in Claude" });
+    const open = within(card).getByRole("link", { name: /^Open in Claude/ });
     expect(open).toHaveAttribute("href", claudeUrl(agentPrompt(CODE, BASE_URL)));
     expect(open).toHaveAttribute("target", "_blank");
     expect(open).toHaveAttribute("rel", "noopener noreferrer");
     await user.click(within(card).getByRole("button", { name: "Copy prompt" }));
     expect(writeText).toHaveBeenCalledWith(agentPrompt(CODE, BASE_URL));
+    expect(within(card).getByRole("button", { name: "Copied" })).toBeInTheDocument();
     expect(card.compareDocumentPosition(screen.getByRole("tablist")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
@@ -159,9 +172,96 @@ describe("OwnershipPanel: what, where, why", () => {
     const user = userEvent.setup();
     const writeText = vi.spyOn(navigator.clipboard, "writeText");
     render(panel());
-    await user.click(screen.getByRole("button", { name: "Copy Header" }));
+    const copy = screen.getByRole("button", { name: "Copy header" });
+    await user.click(copy);
     expect(writeText).toHaveBeenCalledWith(`X-Hirakumi-Verify: ${CODE}`);
-    expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();
+    await vi.waitFor(() => expect(copy).toHaveTextContent("Copied"));
+    await user.click(screen.getByRole("button", { name: "Copy curl command" }));
+    expect(writeText).toHaveBeenLastCalledWith(curlCheck(BASE_URL));
+    await user.click(screen.getByRole("tab", { name: "nginx" }));
+    await user.click(screen.getByRole("button", { name: "Copy nginx snippet" }));
+    expect(writeText).toHaveBeenLastCalledWith(expect.stringContaining(`add_header X-Hirakumi-Verify "${CODE}" always;`));
+  });
+});
+
+describe("OwnershipPanel: picks the recipe from the server's headers", () => {
+  const NGINX: PlatformHint[] = [{ id: "nginx", evidence: "server: nginx/1.25.3" }];
+
+  it("preselects the recipe the headers point to, says why, and marks it detected", async () => {
+    installWallet();
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(MISSING)));
+    render(panel(false, Promise.resolve([{ id: "express", evidence: "x-powered-by: Express" }, { id: "cloudflare", evidence: "cf-ray: 8f1d2c" }])));
+    const tab = await screen.findByRole("tab", { name: "Express (detected)" });
+    expect(tab).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Cloudflare (detected)" })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("tab", { name: "nginx" })).toBeInTheDocument();
+    expect(screen.getByText("x-powered-by: Express")).toBeInTheDocument();
+    expect(screen.getByText(/so we picked Express\. Not right\? Pick yours\./)).toBeInTheDocument();
+    expect(screen.getByRole("tabpanel")).toHaveTextContent(`res.set("X-Hirakumi-Verify", "${CODE}");`);
+  });
+
+  it("says it is reading the headers until the hint arrives, then preselects", async () => {
+    installWallet();
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(MISSING)));
+    let resolve!: (h: PlatformHint[]) => void;
+    render(panel(false, new Promise<PlatformHint[]>((r) => { resolve = r; })));
+    expect(screen.getByText(/Reading your server's response headers/)).toBeInTheDocument();
+    expect(screen.queryByRole("tabpanel")).toBeNull();
+    await act(async () => resolve(NGINX));
+    expect(screen.getByRole("tab", { name: "nginx (detected)" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel")).toHaveTextContent(`add_header X-Hirakumi-Verify "${CODE}" always;`);
+  });
+
+  it("keeps the seller's own pick when the hint arrives later", async () => {
+    installWallet();
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(MISSING)));
+    const user = userEvent.setup();
+    let resolve!: (h: PlatformHint[]) => void;
+    render(panel(false, new Promise<PlatformHint[]>((r) => { resolve = r; })));
+    await user.click(screen.getByRole("tab", { name: "Flask" }));
+    await act(async () => resolve(NGINX));
+    expect(screen.getByRole("tab", { name: "Flask" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("falls back to the list when the probe fails", async () => {
+    installWallet();
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(MISSING)));
+    render(panel(false, Promise.reject(new Error("boom"))));
+    expect(await screen.findByText("Pick where your API runs.")).toBeInTheDocument();
+    expect(screen.queryByRole("tabpanel")).toBeNull();
+  });
+
+  it("puts the detected platform in the prompt and the Claude link", async () => {
+    installWallet();
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(MISSING)));
+    render(panel(false, Promise.resolve(NGINX)));
+    await screen.findByRole("tab", { name: "nginx (detected)" });
+    const expected = agentPrompt(CODE, BASE_URL, { name: "nginx", evidence: "server: nginx/1.25.3" });
+    const card = screen.getByRole("region", { name: "Let your AI do it" });
+    expect(card).toHaveTextContent("so it likely runs on nginx.");
+    const href = within(card).getByRole("link", { name: /^Open in Claude/ }).getAttribute("href")!;
+    expect(href).toBe(`https://claude.ai/new?q=${encodeURIComponent(expected)}`);
+    expect(decodeURIComponent(new URL(href).searchParams.get("q")!)).toBe(expected);
+    // The URL carries the public code and base URL, nothing else: no API id, no session.
+    expect(href).not.toContain("api_1");
+  });
+
+  it("moves between tabs with the arrow keys, Home and End", async () => {
+    installWallet();
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(MISSING)));
+    const user = userEvent.setup();
+    render(panel(false, Promise.resolve(NGINX)));
+    const nginx = await screen.findByRole("tab", { name: "nginx (detected)" });
+    nginx.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getByRole("tab", { name: "vercel.json" })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: "vercel.json" })).toHaveAttribute("aria-selected", "true");
+    await user.keyboard("{End}");
+    expect(screen.getByRole("tab", { name: "Any server" })).toHaveAttribute("aria-selected", "true");
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getByRole("tab", { name: "Express" })).toHaveFocus();
+    await user.keyboard("{ArrowLeft}");
+    expect(screen.getByRole("tab", { name: "Any server" })).toHaveFocus();
   });
 });
 
@@ -200,7 +300,7 @@ describe("OwnershipPanel: auto-check", () => {
     render(panel());
     expect(await screen.findByText(/^Checking https:\/\/price\.example\.dev\/v1…/)).toBeInTheDocument();
     await act(async () => { await vi.advanceTimersByTimeAsync(4_000); });
-    expect(await screen.findByText(/last checked 4 s ago/)).toBeInTheDocument();
+    expect(await screen.findByText(/^Last checked 4 s ago\./)).toBeInTheDocument();
   });
 
   it("stops checking once the code is found", async () => {
@@ -226,24 +326,23 @@ describe("OwnershipPanel: auto-check", () => {
 
 describe("OwnershipPanel: failures say exactly what was found", () => {
   it.each([
-    [MISSING, "Your API answered 404, but without the X-Hirakumi-Verify header.", false],
-    [MISSING_NO_STATUS, "Your API answered, but without the X-Hirakumi-Verify header.", false],
+    [MISSING, "Missing", "Your API answered 404, but without the X-Hirakumi-Verify header.", false, "Deploy the change if you haven't yet."],
+    [MISSING_NO_STATUS, "Missing", "Your API answered, but without the X-Hirakumi-Verify header.", false, "A CDN or proxy in front of your API must pass the header on."],
     // A platform redirect (/v1 to /v1/) runs before the seller's code, so say what to do about it.
-    [MISSING_REDIRECT, "Your API answered 301, a redirect, without the X-Hirakumi-Verify header. We only follow a redirect that adds a slash at the end of this URL. Add the header to the redirect too, or answer at this exact URL without redirecting.", false],
-    [MISMATCH, "We found X-Hirakumi-Verify, but the code doesn't match this API's code.", false],
-    [TIMEOUT, "We couldn't reach your API at this URL.", true],
-    [BAD_URL, "We can't check this base URL.", true],
-  ])("%#: %s", async (result, headline, showsDetail) => {
+    [MISSING_REDIRECT, "Missing", "Your API answered 301, a redirect, without the X-Hirakumi-Verify header. We only follow a redirect that adds a slash at the end of this URL. Add the header to the redirect too, or answer at this exact URL without redirecting.", false, "Run the curl command above."],
+    [MISMATCH, "Wrong value", "We found X-Hirakumi-Verify, but the code doesn't match this API's code.", false, "Copy the header again from the top of this step."],
+    [TIMEOUT, "Unreachable", "We couldn't reach your API at this URL.", true, "Make sure this URL answers over https from the public internet"],
+    [BAD_URL, "Can't check", "We can't check this base URL.", true, "Fix the base URL in your API's setup"],
+  ])("%#: %s", async (result, tag, headline, showsDetail, next) => {
     installWallet();
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(result)));
     render(panel());
     const alert = await screen.findByRole("alert");
+    expect(within(alert).getByText(tag)).toBeInTheDocument();
     expect(alert).toHaveTextContent(headline);
     if (showsDetail) expect(alert).toHaveTextContent(result.detail);
     else expect(alert).not.toHaveTextContent(result.detail);
-    expect(alert).toHaveTextContent("Send the header on responses at this exact URL. Redirects are not followed, except one that only adds a slash at the end.");
-    expect(alert).toHaveTextContent("Any status counts, a 404 page too.");
-    expect(alert).toHaveTextContent("Deploy the change.");
+    expect(alert).toHaveTextContent(next);
     expect(alert.textContent).not.toMatch(/[–—]/);
     expect(await screen.findByRole("button", { name: "Sign with eternl" })).toBeDisabled();
   });
@@ -253,6 +352,23 @@ describe("OwnershipPanel: failures say exactly what was found", () => {
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ error: "We couldn't reach the Hirakumi checker. Try again in a minute." }, 502)));
     render(panel());
     expect(await screen.findByRole("alert")).toHaveTextContent("We couldn't reach the Hirakumi checker.");
+  });
+});
+
+describe("OwnershipPanel: test it", () => {
+  it("shows progress while a check runs, then a Found card with the next step", async () => {
+    installWallet();
+    let answer!: (r: Response) => void;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((r) => { answer = r; })));
+    render(panel());
+    const button = await screen.findByRole("button", { name: /Checking/ });
+    expect(button).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByText(/^Checking https:\/\/price\.example\.dev\/v1…/)).toBeInTheDocument();
+    await act(async () => answer(jsonResponse(PASS)));
+    const found = await screen.findByText("Found your code.");
+    expect(found.parentElement).toHaveTextContent("Sign with your wallet below to finish.");
+    expect(within(found.parentElement!).getByText("Found")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Check now" })).toBeNull();
   });
 });
 

@@ -11,6 +11,7 @@ import { listingBaseNotes } from "@/lib/repo/apis";
 import { getOrCreateVerifyCode, hasFreshVerifyPass } from "@/lib/repo/challenges";
 import { hasAnyApiSchema, UPDATING } from "@/lib/repo/schema";
 import { getAuthHint, getUpstreamAuth } from "@/lib/repo/upstream-auth";
+import { probePlatform } from "./probe-platform";
 
 export const metadata: Metadata = { title: "Ownership" };
 
@@ -41,12 +42,15 @@ export default async function OwnershipPage({ params }: { params: Promise<{ apiI
   const [passed, notes, upstreamAuth, authHint] = await Promise.all([
     hasFreshVerifyPass(sql, apiId), listingBaseNotes(sql, apiId), getUpstreamAuth(sql, apiId), getAuthHint(sql, apiId),
   ]);
+  // Not awaited: the page renders now and the hint streams in. It only picks the recipe shown first.
+  const platforms = passed ? undefined : probePlatform(api, code);
   return (
     <section className="space-y-6">
       {heading}
       {notes.blocked && <ErrorState title="You can't list this API yet" detail={notes.blocked} />}
       <NoticeList items={notes.warnings} />
       <OwnershipPanel apiId={apiId} baseUrl={apiBaseUrl(api)} code={code} initiallyPassed={passed}
+        platforms={platforms}
         beforeSigning={<UpstreamAuthForm apiId={apiId} initial={upstreamAuth} hint={authHint} />} />
     </section>
   );
