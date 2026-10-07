@@ -496,6 +496,7 @@ describe("describeStep on a Sokosumi task", () => {
       "1. POST /alerts (createAlert): Creates an alert. [may change data]",
       "2. GET /history/{symbol} (get_history_symbol): Daily price history.",
       "3. GET /price (getPrice): Latest price for a ticker.",
+      "",
       "Next, choose the endpoints to sell: reply `sell 1` with their numbers (for example `sell 1 2`). Endpoints marked [may change data] also need `readonly` at the end, to confirm they change nothing on your server.",
     ].join("\n"));
   });
