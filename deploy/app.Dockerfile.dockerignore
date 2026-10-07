@@ -15,3 +15,7 @@ docs
 **/.vercel
 **/coverage
 contracts/pack-escrow/build
+**/.escrow-keys.json*
+deploy/masumi.env*
+!deploy/masumi.env.example
+**/*.log

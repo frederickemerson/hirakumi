@@ -77,6 +77,11 @@ services:
       # .env is shared with the gateway: only the gateway may hold the key that opens sellers' API keys.
       UPSTREAM_AUTH_PRIVATE_KEY: ""
       UPSTREAM_AUTH_PUBLIC_KEY: ""
+      # Wallet keys and demo tokens are for the gateway and the buyer CLI; the coworker reads untrusted specs and
+      # LLM output, so it gets none of them.
+      OPERATOR_MNEMONIC: ""
+      BUYER_MNEMONIC: ""
+      TRY_CREDIT_TOKENS: ""
     depends_on:
       postgres:
         condition: service_healthy
