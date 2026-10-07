@@ -1,4 +1,5 @@
-import { apiBaseUrl, normalizeSamplesBase, parseSampleLinesWithWarnings, SampleError, specFromSamples, UpstreamTimeoutError, UpstreamTooLargeError } from "@hirakumi/core";
+import { parse } from "tldts";
+import { apiBaseUrl, normalizeSamplesBase, verifyRecordFor, parseSampleLinesWithWarnings, SampleError, specFromSamples, UpstreamTimeoutError, UpstreamTooLargeError } from "@hirakumi/core";
 import type pg from "pg";
 import type { Db } from "../db.js";
 import { PermanentError } from "../errors.js";
@@ -15,7 +16,7 @@ import {
   parseCommand, SUGGESTED_PACK, validateOpenApiUrl, type Command, type SamplesIntake,
 } from "./replies.js";
 import {
-  apiAuthHint, apiForTask, confirmSell, createTaskApi, linkedSeller, listOps, opLine, opsNeedingPhrase, savePrice, type ListedOp, type TaskApi,
+  apiAuthHint, apiForTask, confirmSell, createTaskApi, ensureVerifyCode, linkedSeller, listOps, opLine, opsNeedingPhrase, savePrice, type ListedOp, type TaskApi,
 } from "./sellerActions.js";
 
 /**
@@ -36,19 +37,30 @@ export type TaskRef = { taskId: string; sokosumiUserId: string; setupToken: stri
 const SUGGESTED_PRICE = `${formatTusdm(SUGGESTED_PACK.priceMicros)} tUSDM for ${SUGGESTED_PACK.calls} calls, and ${formatTusdm(SUGGESTED_PACK.escrowPriceMicros)} tUSDM per escrow job`;
 
 /**
- * How ownership is proven: the seller adds a DNS TXT record named _hirakumi.<host> with the API's own code (shown on
- * the ownership page), then signs once with their wallet. The API itself doesn't change. The same for an OpenAPI
- * link and for example requests.
+ * How ownership is proven, with the exact record: a DNS TXT record named _hirakumi.<host> holding the API's own code,
+ * then one wallet signature. The API itself doesn't change. The code is not a secret (anyone can read DNS), so it is
+ * safe in a task comment. Name is given the way DNS dashboards ask for it (the part before the domain) and in full.
  */
-export const OWNERSHIP_HOW =
-  "add one DNS TXT record with the name and code from this page (your API itself doesn't change), then sign once with your Cardano wallet (no payment):";
+export function ownershipMessage(api: Pick<TaskApi, "origin" | "pathPrefix">, code: string, link: string): string {
+  const rec = verifyRecordFor(api.origin);
+  if (!rec.ok) return `Prove you own ${baseUrlOf(api)}: ${rec.detail} Change your API's address, then open ${link}`;
+  const domain = parse(rec.host).domain;
+  const short = domain && rec.name.endsWith(`.${domain}`) ? rec.name.slice(0, -(domain.length + 1)) : rec.name;
+  return [
+    `Prove you own ${rec.host}: add this DNS TXT record where your domain's DNS is managed (your API itself doesn't change), then sign once with your Cardano wallet (no payment): ${link}`,
+    "- Type: TXT",
+    short === rec.name ? `- Name: ${rec.name}` : `- Name: ${short} (the full name is ${rec.name})`,
+    `- Value: ${code}`,
+    "The page checks every 10 seconds and unlocks signing once the record is live.",
+  ].join("\n");
+}
 
 /** The API's address as the seller gave it: origin + path_prefix, origin + "/" for the root. */
 export const baseUrlOf = (api: Pick<TaskApi, "origin" | "pathPrefix">) => apiBaseUrl(api);
 
 /** Keys are added on the ownership page (sealed so only the gateway reads them), never in a comment. */
 const keyLine = (hint: AuthHint | null) =>
-  hint ? ` Your API needs a key (${describeAuthHint(hint)}): add it on the same page. Never paste it in a comment.` : "";
+  hint ? `\nYour API needs a key (${describeAuthHint(hint)}): add it on the same page. Never paste it in a comment.` : "";
 
 const NO_OPENAPI_HINT = "No OpenAPI file? Reply with your API's base URL and a few example requests, one per line, like GET /price?symbol=ADA";
 
@@ -164,7 +176,7 @@ export async function handleReply(deps: ConversationDeps, task: TaskRef, eventId
     }
     await say(deps.pool, task, key, `${understood}${r.message}`, { apiId: api.id, step: "Choose endpoints", status: "RUNNING" });
     await say(deps.pool, task, `${key}:ownership`,
-      `Prove you own ${baseUrlOf(api)}: ${OWNERSHIP_HOW} ${ownershipLink(deps.webBaseUrl, api.id)}${keyLine(await apiAuthHint(deps.pool, api.id))}`,
+      `${ownershipMessage(api, await ensureVerifyCode(deps.pool, api.id), ownershipLink(deps.webBaseUrl, api.id))}${keyLine(await apiAuthHint(deps.pool, api.id))}`,
       { apiId: api.id, step: "Prove ownership", status: "INPUT_REQUIRED" });
     return;
   }
@@ -181,7 +193,8 @@ export async function handleReply(deps: ConversationDeps, task: TaskRef, eventId
     return;
   }
   const hint = api.state === "endpoints_confirmed" ? await apiAuthHint(deps.pool, api.id) : null;
-  await say(deps.pool, task, key, helpFor(api, deps.webBaseUrl, hint), { apiId: api.id });
+  const code = api.state === "endpoints_confirmed" ? await ensureVerifyCode(deps.pool, api.id) : null;
+  await say(deps.pool, task, key, helpFor(api, deps.webBaseUrl, hint, code), { apiId: api.id });
 }
 
 /** What a reply may choose at this point (for the LLM mapping), or null when the coworker asked for nothing. */
@@ -193,7 +206,7 @@ function offeredFor(api: TaskApi, ops: ListedOp[]): Offered | null {
   return null;
 }
 
-function helpFor(api: TaskApi, web: string, hint: AuthHint | null): string {
+function helpFor(api: TaskApi, web: string, hint: AuthHint | null, code: string | null): string {
   switch (api.state) {
     case "intake":
     case "parsed":
@@ -201,7 +214,7 @@ function helpFor(api: TaskApi, web: string, hint: AuthHint | null): string {
     case "described":
       return "Choose the endpoints to sell: reply `sell 1` with the numbers from my list (for example `sell 1 2`).";
     case "endpoints_confirmed":
-      return `Next, prove you own ${baseUrlOf(api)}: ${OWNERSHIP_HOW} ${ownershipLink(web, api.id)}${keyLine(hint)} (To change the endpoints first, reply \`sell\` with new numbers.)`;
+      return `Next: ${ownershipMessage(api, code ?? "", ownershipLink(web, api.id))}${keyLine(hint)} (To change the endpoints first, reply \`sell\` with new numbers.)`;
     case "ownership_verified":
       return "Test calls are running. I'll post the promise and a suggested price here when they're done.";
     case "rule_built":

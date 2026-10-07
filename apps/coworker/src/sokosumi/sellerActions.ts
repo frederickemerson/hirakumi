@@ -1,4 +1,4 @@
-import { isStatusOnlyRule, newId, type RuleDefinition } from "@hirakumi/core";
+import { isStatusOnlyRule, newId, newVerifyCode, type RuleDefinition } from "@hirakumi/core";
 import type pg from "pg";
 import type { Db } from "../db.js";
 import type { AuthHint } from "../openapi/parse.js";
@@ -170,4 +170,23 @@ export async function apiAuthHint(db: Db, apiId: string): Promise<AuthHint | nul
     `select output->'authHint' as hint from onboard_steps where api_id = $1 and step = 'parse'`, [apiId]);
   const h = rows[0]?.hint;
   return h && typeof h === "object" && (h.in === "header" || h.in === "query") && typeof h.name === "string" ? h : null;
+}
+
+/**
+ * This API's open ownership code (challenges kind 'dns'), created when the seller hasn't opened the ownership page
+ * yet, so the task comment can give the exact DNS record. Same rows, lock key and uniqueness as the web app
+ * (apps/web/lib/repo/challenges.ts getOrCreateVerifyCode), so the comment and the page always show one code.
+ */
+export async function ensureVerifyCode(db: pg.Pool, apiId: string): Promise<string> {
+  return withTx(db, async (c) => {
+    await c.query("select pg_advisory_xact_lock(hashtext($1))", [`dns-verify|${apiId}`]);
+    const { rows } = await c.query<{ token: string }>(
+      "select token from challenges where api_id = $1 and kind = 'dns' and consumed_at is null limit 1", [apiId]);
+    if (rows[0]) return rows[0].token;
+    const token = newVerifyCode();
+    await c.query(
+      "insert into challenges (id, api_id, kind, token, expires_at) values ($1, $2, 'dns', $3, now() + interval '10 years')",
+      [newId("ch"), apiId, token]);
+    return token;
+  });
 }
