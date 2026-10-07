@@ -25,6 +25,11 @@ describe("openapi.json", () => {
     expect(op.responses["400"]).toBeDefined();
   });
 
+  it("names the API from its title, so a second copy can be listed under its own name", () => {
+    expect((buildOpenApi("https://x") as { info: { title: string } }).info.title).toBe("Hirakumi Demo Price API");
+    expect((buildOpenApi("https://x", "Mika's Crypto Prices") as { info: { title: string } }).info.title).toBe("Mika's Crypto Prices");
+  });
+
   it("declares no side effects (GET only, no requestBody)", () => {
     const doc = buildOpenApi("https://x") as { paths: Record<string, Record<string, unknown>> };
     expect(Object.keys(doc.paths)).toEqual(["/price"]);

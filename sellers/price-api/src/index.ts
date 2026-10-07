@@ -20,6 +20,7 @@ const app = createApp({
   adminToken: process.env.ADMIN_TOKEN,
   verifyCodes: parseChallenges(process.env.HIRAKUMI_CHALLENGE, log),
   publicUrl,
+  title: process.env.API_TITLE || undefined,
   log,
 });
 

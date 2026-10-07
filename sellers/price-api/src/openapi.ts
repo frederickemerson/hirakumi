@@ -1,10 +1,12 @@
 import { SUPPORTED_SYMBOLS } from "./priceSource.js";
 
-export function buildOpenApi(serverUrl: string): Record<string, unknown> {
+export const DEFAULT_TITLE = "Hirakumi Demo Price API";
+
+export function buildOpenApi(serverUrl: string, title = DEFAULT_TITLE): Record<string, unknown> {
   return {
     openapi: "3.1.0",
     info: {
-      title: "Hirakumi Demo Price API",
+      title,
       version: "1.0.0",
       description: "Read-only spot price in US dollars and 24-hour change for a few crypto assets. Data from CoinGecko, cached for 30 seconds.",
     },

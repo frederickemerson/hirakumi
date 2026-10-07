@@ -15,6 +15,8 @@ export type AppDeps = {
   /** Hirakumi ownership codes by API id; the latest one set is sent as the X-Hirakumi-Verify header (see challenge.ts). */
   verifyCodes: Record<string, string>;
   publicUrl: string;
+  /** The OpenAPI info.title, which becomes the listing's name (API_TITLE). */
+  title?: string;
   log: (msg: string, err?: unknown) => void;
 };
 
@@ -55,7 +57,7 @@ export function createApp(deps: AppDeps): Express {
 
   app.get("/openapi.json", (_req, res) => {
     // no-store: a cache must not keep an answer with an old X-Hirakumi-Verify code.
-    res.set("Cache-Control", "no-store").json(buildOpenApi(deps.publicUrl));
+    res.set("Cache-Control", "no-store").json(buildOpenApi(deps.publicUrl, deps.title));
   });
 
   app.get("/price", async (req, res) => {

@@ -16,3 +16,9 @@ price.{$PUBLIC_DOMAIN} {
 	encode zstd gzip
 	reverse_proxy price-api:4100
 }
+
+# A second copy of the demo seller, for onboarding a fresh listing on camera.
+mika.{$PUBLIC_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy mika-api:4100
+}
