@@ -6,7 +6,7 @@ import {
 import { newReceiptKey } from "@hirakumi/escrow";
 import { newId } from "@hirakumi/core";
 import {
-  expireStaleTryPurchases, findUnsettledTryPurchase, findUsableTryPack, markTryActive, markTryEnded, markTryUnsettled,
+  expireStaleTryPurchases, findTryPurchase, findUnsettledTryPurchase, findUsableTryPack, markTryActive, markTryEnded, markTryUnsettled,
   reserveTryPurchase, saveTryChannel, saveTrySignature, withTryApiLock, type TryPurchaseLimits, type TryScope, type UsableTryPack,
 } from "@hirakumi/db";
 import type { AppDeps, DemoBuyer } from "./deps";
@@ -25,15 +25,27 @@ export const BUYING_STALE_MINUTES = 10;
 const RECOVER_TIMEOUT_MS = 20_000;
 
 /**
- * One line of the NDJSON progress stream:
- * paying, settling (the payment is signed and sent), then settled or failed. `ready` = an existing pack is reused.
+ * One line of the NDJSON progress stream: paying, settling (the payment is signed and sent), then one outcome.
+ * settled and failed are final. pending is not: the payment may have left and Cardano has not confirmed it yet,
+ * so the caller asks again with ?resume=<purchaseId> until it is settled or failed. failed is sent only when that
+ * is certain (never signed, or Hirakumi never received it). `ready` = an existing pack is reused.
  */
 export type BuyEvent =
-  | { phase: "paying"; packId: string; calls: number; priceMicros: string; wallet: string; escrow: boolean }
+  | { phase: "paying"; purchaseId: string; packId: string; calls: number; priceMicros: string; wallet: string; escrow: boolean }
   | { phase: "settling"; settlement?: { mode: "direct" | "escrow"; reasons: string[] } }
   | { phase: "settled"; txHash: string | null; credits: number; ms: number; recovered: boolean }
   | { phase: "ready"; txHash: string | null; credits: number; pending: boolean; boughtAt: string }
+  | { phase: "pending"; purchaseId: string; message: string }
   | { phase: "failed"; message: string; spent: boolean };
+
+export const PENDING_MESSAGE = "The payment is sent and waiting for Cardano to confirm it. It is saved, so it is never paid twice.";
+export const NOT_PAID_MESSAGE = "The payment did not go through. Nothing was paid.";
+const NOT_RECEIVED_MESSAGE = "Hirakumi never received the payment, so nothing was paid.";
+const NOT_STARTED_MESSAGE = "No purchase was started, so nothing was paid.";
+const ENDED_MESSAGE = "The purchase did not complete.";
+/** ?resume=<purchaseId> asks for that purchase; ?resume=latest for the newest one within this many minutes. */
+const RESUME_WINDOW_MINUTES = 2 * 10;
+const PURCHASE_ID = /^try_[A-Za-z0-9_-]{1,64}$/;
 
 function refuse(res: Response, status: number, error: string, message: string, extra: Record<string, unknown> = {}) {
   res.status(status).json({ error, message, ...extra });
@@ -54,9 +66,64 @@ function stream(res: Response): (e: BuyEvent) => void {
 type Refusal = { status: number; error: string; message: string; extra?: Record<string, unknown>; retryAfter?: number };
 type Plan =
   | { kind: "ready"; pack: UsableTryPack }
-  | { kind: "recovered"; credits: number; txHash: string | null }
+  | { kind: "recovered"; credits: number; txHash: string | null; recovered: boolean }
+  | { kind: "pending"; id: string }
+  | { kind: "failed"; spent: boolean; message: string }
   | { kind: "refuse"; refusal: Refusal }
   | { kind: "reserved"; id: string; pack: PackOffer; ruleHash: string };
+
+/** The transaction withTryApiLock runs its step in. */
+type Tx = Parameters<Parameters<typeof withTryApiLock>[2]>[0];
+type Unsettled = { id: string; packId: string; paymentSignature: string; recoverySecret: string };
+
+/**
+ * Asks /recover for a signed payment whose answer was lost. recovered: the row is active. pending: not
+ * confirmed yet. not_received / refused: final, the row is ended.
+ */
+async function recoverUnsettled(
+  d: AppDeps, tx: Tx, buyer: DemoBuyer, apiId: string, u: Unsettled,
+): Promise<{ kind: "recovered"; credits: number } | { kind: "pending" } | { kind: "not_received" | "refused" }> {
+  const timedFetch = (url: string, init?: RequestInit) => buyer.fetch(url, { ...init, signal: AbortSignal.timeout(RECOVER_TIMEOUT_MS) });
+  let r: Awaited<ReturnType<typeof recoverPack>>;
+  try {
+    r = await recoverPack(timedFetch, d.config.publicBaseUrl, apiId, u);
+  } catch {
+    return { kind: "pending" }; // /recover did not answer: nothing is known yet
+  }
+  if (r.kind === "recovered") {
+    // A DB error here rolls back and leaves the row unsettled: the next ask re-keys it again.
+    await markTryActive(tx, u.id, "unsettled", { token: r.token, txHash: null, credits: r.credits });
+    return { kind: "recovered", credits: r.credits };
+  }
+  if (r.kind === "failed") return { kind: "pending" };
+  // 404: never received, nothing paid. 403: final. Either way that attempt is over.
+  await markTryEnded(tx, u.id, "unsettled", r.kind === "not_received" ? "void" : "failed", `recovery: ${r.kind}`);
+  return { kind: r.kind };
+}
+
+/** Where one purchase stands, for ?resume. Never buys. */
+type Outcome = Exclude<Plan, { kind: "reserved" }>;
+
+async function resumePlan(d: AppDeps, tx: Tx, buyer: DemoBuyer, apiId: string, scope: TryScope, id: string | null): Promise<Outcome> {
+  await expireStaleTryPurchases(tx, apiId, BUYING_STALE_MINUTES);
+  const p = await findTryPurchase(tx, apiId, scope, id, RESUME_WINDOW_MINUTES);
+  if (!p) return { kind: "failed", spent: false, message: NOT_STARTED_MESSAGE };
+  switch (p.status) {
+    case "buying": return { kind: "pending", id: p.id };
+    case "active": return { kind: "recovered", credits: p.credits ?? 0, txHash: p.txHash, recovered: false };
+    case "void": return { kind: "failed", spent: false, message: NOT_PAID_MESSAGE };
+    case "failed": return { kind: "failed", spent: true, message: ENDED_MESSAGE };
+    case "unsettled": {
+      if (!p.packId || !p.paymentSignature || !p.recoverySecret) return { kind: "pending", id: p.id };
+      const r = await recoverUnsettled(d, tx, buyer, apiId, { id: p.id, packId: p.packId, paymentSignature: p.paymentSignature, recoverySecret: p.recoverySecret });
+      if (r.kind === "recovered") return { kind: "recovered", credits: r.credits, txHash: p.txHash, recovered: true };
+      if (r.kind === "pending") return { kind: "pending", id: p.id };
+      return r.kind === "not_received"
+        ? { kind: "failed", spent: false, message: NOT_RECEIVED_MESSAGE }
+        : { kind: "failed", spent: true, message: ENDED_MESSAGE };
+    }
+  }
+}
 
 /**
  * POST /internal/demo/buy-pack/:apiId: a real x402 pack purchase on Cardano preprod from Hirakumi's demo
@@ -69,24 +136,37 @@ type Plan =
  * as above, or direct (the key is then unused). The `settling` event says which, and why.
  * Order, under one per-API lock: reuse a pack with credits, recover an unsettled payment, price cap, limits.
  * Then, outside the lock: wallet funds and the payment.
+ * ?resume=<purchaseId> (or latest) never buys: it streams where that purchase stands (resumePlan).
  */
 export function demoBuyPack(d: AppDeps, kind: "showcase" | "self_test" = "showcase"): RequestHandler {
   return async (req, res, next) => {
     try {
       const apiId = req.params.apiId;
+      const resumeParam = typeof req.query.resume === "string" ? req.query.resume : null;
+      if (resumeParam !== null && resumeParam !== "latest" && !PURCHASE_ID.test(resumeParam)) {
+        refuse(res, 400, "bad_resume", "resume must be a purchase id or latest."); return;
+      }
       if (kind === "showcase" && !d.config.tryLiveApis.includes(apiId)) {
         refuse(res, 403, "not_featured", "Live purchases are funded by Hirakumi's demo wallet, so they're on featured APIs only.");
         return;
       }
       const loaded = await d.registry.get(apiId, { fresh: true });
-      if (!loaded || loaded.api.state !== "live") { refuse(res, 404, "api_not_found", "This API is not live."); return; }
+      // A payment already in flight is followed to its outcome whatever the API's state is now.
+      if (!loaded || (resumeParam === null && loaded.api.state !== "live")) { refuse(res, 404, "api_not_found", "This API is not live."); return; }
       // A free self test is bought for the API's own seller; the web checked that the caller is that seller.
       const scope: TryScope = { selfTestSellerId: kind === "self_test" ? loaded.api.seller_id : null };
-      if (d.health.get(loaded.api.id)?.health === "down") {
+      if (resumeParam === null && d.health.get(loaded.api.id)?.health === "down") {
         refuse(res, 503, "api_down", "This API is Down right now, so nothing is bought."); return;
       }
       const buyer = d.demoBuyer;
       if (!buyer) { refuse(res, 503, "buyer_not_configured", "The demo wallet is not set up on this gateway."); return; }
+
+      if (resumeParam !== null) {
+        const resumeId = resumeParam === "latest" ? null : resumeParam;
+        const plan = await withTryApiLock<Outcome>(d.sql, apiId, (tx) => resumePlan(d, tx, buyer, apiId, scope, resumeId));
+        sendOutcome(res, plan);
+        return;
+      }
 
       const plan = await withTryApiLock<Plan>(d.sql, apiId, async (tx) => {
         await expireStaleTryPurchases(tx, apiId, BUYING_STALE_MINUTES);
@@ -95,19 +175,14 @@ export function demoBuyPack(d: AppDeps, kind: "showcase" | "self_test" = "showca
 
         const unsettled = await findUnsettledTryPurchase(tx, apiId, scope);
         if (unsettled) {
-          const timedFetch = (u: string, init?: RequestInit) => buyer.fetch(u, { ...init, signal: AbortSignal.timeout(RECOVER_TIMEOUT_MS) });
-          const r = await recoverPack(timedFetch, d.config.publicBaseUrl, apiId, unsettled);
+          const r = await recoverUnsettled(d, tx, buyer, apiId, unsettled);
           if (r.kind === "recovered") {
-            // A DB error here rolls back and leaves the row unsettled: the next try re-keys it again.
-            await markTryActive(tx, unsettled.id, "unsettled", { token: r.token, txHash: null, credits: r.credits });
             const pack = await findUsableTryPack(tx, apiId, scope);
-            return { kind: "recovered", credits: r.credits, txHash: pack?.txHash ?? null };
+            return { kind: "recovered", credits: r.credits, txHash: pack?.txHash ?? null, recovered: true };
           }
-          if (r.kind === "failed") {
-            return { kind: "refuse", refusal: { status: 503, error: "recovery_pending", message: "An earlier payment is still settling. Try again in a minute." } };
-          }
-          // 404: never received, nothing paid. 403: final. Either way that attempt is over.
-          await markTryEnded(tx, unsettled.id, "unsettled", r.kind === "not_received" ? "void" : "failed", `recovery: ${r.kind}`);
+          // An earlier payment is still settling: follow it, never pay a second time.
+          if (r.kind === "pending") return { kind: "pending", id: unsettled.id };
+          // not_received / refused: that attempt is over, so a new one may start.
         }
 
         const rule = primaryRule(loaded);
@@ -146,29 +221,36 @@ export function demoBuyPack(d: AppDeps, kind: "showcase" | "self_test" = "showca
         return { kind: "reserved", id, pack, ruleHash: offer.ruleHash };
       });
 
-      if (plan.kind === "ready") {
-        const send = stream(res);
-        send({ phase: "ready", txHash: plan.pack.txHash, credits: plan.pack.remaining, pending: plan.pack.pending, boughtAt: plan.pack.boughtAt.toISOString() });
-        res.end();
+      if (plan.kind === "reserved") {
+        await pay(d, res, buyer, apiId, plan.id, plan.pack, plan.ruleHash);
         return;
       }
-      if (plan.kind === "recovered") {
-        const send = stream(res);
-        send({ phase: "settled", txHash: plan.txHash, credits: plan.credits, ms: 0, recovered: true });
-        res.end();
-        return;
-      }
-      if (plan.kind === "refuse") {
-        if (plan.refusal.retryAfter !== undefined) res.set("retry-after", String(plan.refusal.retryAfter));
-        refuse(res, plan.refusal.status, plan.refusal.error, plan.refusal.message, plan.refusal.extra);
-        return;
-      }
-      await pay(d, res, buyer, apiId, plan.id, plan.pack, plan.ruleHash);
+      sendOutcome(res, plan);
     } catch (e) {
       if (res.headersSent) { res.end(); return; }
       next(e);
     }
   };
+}
+
+/** Any plan but a new payment: one outcome event, or a refusal. */
+function sendOutcome(res: Response, plan: Outcome): void {
+  if (plan.kind === "refuse") {
+    if (plan.refusal.retryAfter !== undefined) res.set("retry-after", String(plan.refusal.retryAfter));
+    refuse(res, plan.refusal.status, plan.refusal.error, plan.refusal.message, plan.refusal.extra);
+    return;
+  }
+  const send = stream(res);
+  if (plan.kind === "ready") {
+    send({ phase: "ready", txHash: plan.pack.txHash, credits: plan.pack.remaining, pending: plan.pack.pending, boughtAt: plan.pack.boughtAt.toISOString() });
+  } else if (plan.kind === "recovered") {
+    send({ phase: "settled", txHash: plan.txHash, credits: plan.credits, ms: 0, recovered: plan.recovered });
+  } else if (plan.kind === "pending") {
+    send({ phase: "pending", purchaseId: plan.id, message: PENDING_MESSAGE });
+  } else {
+    send({ phase: "failed", spent: plan.spent, message: plan.message });
+  }
+  res.end();
 }
 
 async function pay(d: AppDeps, res: Response, buyer: DemoBuyer, apiId: string, id: string, pack: PackOffer, ruleHash: string): Promise<void> {
@@ -197,7 +279,7 @@ async function pay(d: AppDeps, res: Response, buyer: DemoBuyer, apiId: string, i
   const started = Date.now();
   // What /recover needs, saved on the row before the payment is sent (see SignedHook).
   let saved: { paymentSignature: string; recoverySecret: string } | null = null;
-  send({ phase: "paying", packId: pack.packId, calls: pack.calls, priceMicros: pack.price, wallet: buyer.address, escrow: d.config.packMode === "escrow" });
+  send({ phase: "paying", purchaseId: id, packId: pack.packId, calls: pack.calls, priceMicros: pack.price, wallet: buyer.address, escrow: d.config.packMode === "escrow" });
   // Hybrid: what the 402 said, once our check accepted it (set before onSigned).
   let settlement: { mode: "direct" | "escrow"; reasons: string[] } | null = null;
   const onSigned = async (s: { paymentSignature: string; recoverySecret: string }) => {
@@ -221,10 +303,11 @@ async function pay(d: AppDeps, res: Response, buyer: DemoBuyer, apiId: string, i
       : saved;
     if (keep) {
       await markTryUnsettled(d.sql, id, { ...keep, error: detail });
-      send({ phase: "failed", spent: true, message: "The payment was sent but not confirmed yet. It is saved, and the next try picks it up without paying twice." });
+      send({ phase: "pending", purchaseId: id, message: PENDING_MESSAGE });
     } else {
+      // Never signed (or refused before it was sent): certain that nothing was paid.
       await markTryEnded(d.sql, id, "buying", "void", detail);
-      send({ phase: "failed", spent: false, message: "The payment did not go through. Nothing was paid." });
+      send({ phase: "failed", spent: false, message: NOT_PAID_MESSAGE });
     }
     console.error(`[demo-buy] ${apiId}: ${detail}`);
     res.end();
@@ -243,7 +326,8 @@ async function pay(d: AppDeps, res: Response, buyer: DemoBuyer, apiId: string, i
       await markTryUnsettled(d.sql, id, { ...(saved as { paymentSignature: string; recoverySecret: string }), error: detail })
         .catch((e2: unknown) => console.error(`[demo-buy] ${apiId}: ${(e2 as Error).message}`));
     }
-    send({ phase: "failed", spent: true, message: "The payment went through but saving the pack failed. It is kept, and the next try picks it up without paying twice." });
+    // The money moved; only our record of it is missing, and ?resume recovers it.
+    send({ phase: "pending", purchaseId: id, message: PENDING_MESSAGE });
   }
   res.end();
 }

@@ -120,7 +120,7 @@ describe("buildUpstreamRequest", () => {
         // Buyer input becomes query only: never a header, never raw CR/LF or spaces in the URL. A keyed request
         // also asks for an uncompressed answer, so the gateway can check it for the key.
         expect(Object.keys(r.init.headers).sort())
-          .toEqual(["accept", "accept-encoding", "user-agent", ...(where === "header" ? [name.toLowerCase()] : [])].sort());
+          .toEqual(["accept", "accept-encoding", "user-agent", "x-hirakumi-hop", ...(where === "header" ? [name.toLowerCase()] : [])].sort());
         expect(r.init.headers["accept-encoding"]).toBe("identity");
         expect(r.url).not.toMatch(/[\r\n\s]/);
         for (const v of Object.values(r.init.headers)) expect(v).not.toMatch(/[\r\n]/);

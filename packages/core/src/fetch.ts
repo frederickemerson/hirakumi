@@ -69,14 +69,19 @@ export function isBlockedAddress(addr: string): boolean {
   return blocked.check(addr, family === 6 ? "ipv6" : "ipv4");
 }
 
+/** Why these resolved addresses of `hostname` may not be called, or null when all are fine. */
+export function resolvedAddressProblem(hostname: string, addrs: readonly { address: string }[]): string | null {
+  if (addrs.length === 0) return `${hostname} resolves to a blocked address (none)`;
+  const bad = addrs.find((a) => isBlockedAddress(a.address));
+  return bad ? `${hostname} resolves to a blocked address ${bad.address}` : null;
+}
+
 type LookupCallback = (err: Error | null, address?: string | LookupAddress[], family?: number) => void;
 function pinnedLookup(hostname: string, options: { all?: boolean; family?: number }, cb: LookupCallback): void {
   dnsLookup(hostname, { all: true, family: options.family ?? 0 }, (err, addrs) => {
     if (err) return cb(err);
-    const bad = addrs.find((a) => isBlockedAddress(a.address));
-    if (bad || addrs.length === 0) {
-      return cb(new UpstreamBlockedError(`${hostname} resolves to a blocked address ${bad?.address ?? "(none)"}`));
-    }
+    const problem = resolvedAddressProblem(hostname, addrs);
+    if (problem) return cb(new UpstreamBlockedError(problem));
     if (options.all) return cb(null, addrs);
     cb(null, addrs[0].address, addrs[0].family);
   });

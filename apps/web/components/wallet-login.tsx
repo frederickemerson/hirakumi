@@ -1,32 +1,30 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { Elapsed } from "@/components/elapsed";
 import { InlineError, InlineStatus } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PhoneWalletConnect } from "@/components/phone-wallet-connect";
-import { GetAWallet, MobileNote, useIsMobile, useWallets, WalletIcon } from "@/components/wallet-picker";
+import { BROWSER_WALLET_TOO, GetAWallet, MobileNote, onlyEmailWallet, useIsMobile, useWallets, WalletIcon } from "@/components/wallet-picker";
 import { setAuth } from "@/lib/auth-client";
 import { postJson } from "@/lib/client-fetch";
 import { shortAddress } from "@/lib/copy";
 import { startRouteProgress } from "@/lib/route-progress";
 import {
-  checkPreprodFunds,
   connectWallet,
+  needsAnotherClick,
   signText,
-  walletAddresses,
+  walletAction,
   walletErrorMessage,
   type Cip30Api,
 } from "@/lib/wallet-client";
 
-export const FAUCET_URL = "https://docs.cardano.org/cardano-testnets/tools/faucet";
-
 type Phase =
   | { kind: "idle" }
   | { kind: "working"; text: string; walletId: string }
-  | { kind: "no_funds"; walletId: string }
+  | { kind: "again"; text: string }
   | { kind: "error"; text: string };
 
 export function WalletLogin({ next }: { next: string }) {
@@ -34,30 +32,17 @@ export function WalletLogin({ next }: { next: string }) {
   const wallets = useWallets();
   const mobile = useIsMobile();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
-  // The connected wallet, kept while the seller decides what to do about a wallet with no preprod funds.
-  const connected = useRef<{ api: Cip30Api; addressHex: string } | null>(null);
-
+  // Signing in only signs a message, so it needs no funds: a new wallet (an email wallet always starts empty) goes
+  // straight to the signature. Funds are checked where they are spent, when paying.
   async function signIn(walletId: string) {
+    let conn: { api: Cip30Api; addressHex: string };
     try {
       setPhase({ kind: "working", walletId, text: "Connecting to your wallet…" });
-      const conn = await connectWallet(walletId);
-      connected.current = conn;
-      setPhase({ kind: "working", walletId, text: "Checking this wallet on preprod…" });
-      // Preprod and preview both report network id 0; Blockfrost preprod tells them apart.
-      const funds = await checkPreprodFunds(await walletAddresses(conn.api, conn.addressHex));
-      if (funds === "empty") {
-        setPhase({ kind: "no_funds", walletId });
-        return;
-      }
-      await finishSignIn(walletId);
+      conn = await connectWallet(walletId);
     } catch (e) {
-      setPhase({ kind: "error", text: walletErrorMessage(e) });
+      setPhase(needsAnotherClick(e) ? { kind: "again", text: e.message } : { kind: "error", text: walletErrorMessage(e) });
+      return;
     }
-  }
-
-  async function finishSignIn(walletId: string) {
-    const conn = connected.current;
-    if (!conn) return;
     try {
       const challenge = await postJson<{ message: string; nonceToken: string }>("/api/auth/nonce", { address: conn.addressHex });
       setPhase({ kind: "working", walletId, text: "Approve the sign-in message in your wallet. It costs nothing and moves no funds." });
@@ -69,7 +54,7 @@ export function WalletLogin({ next }: { next: string }) {
       startRouteProgress();
       router.push(next);
     } catch (e) {
-      setPhase({ kind: "error", text: walletErrorMessage(e) });
+      setPhase(needsAnotherClick(e) ? { kind: "again", text: e.message } : { kind: "error", text: walletErrorMessage(e) });
     }
   }
 
@@ -105,26 +90,18 @@ export function WalletLogin({ next }: { next: string }) {
               onClick={() => signIn(w.id)}
             >
               {!(busy && phase.walletId === w.id) && <WalletIcon icon={w.icon} />}
-              <span>Log in with {w.name}</span>
+              <span>{walletAction("Log in", w)}</span>
             </Button>
           </li>
         ))}
       </ul>
       {!mobile && <PhoneWalletConnect onConnected={(id) => void signIn(id)} />}
+      {onlyEmailWallet(wallets) && <GetAWallet title={BROWSER_WALLET_TOO} />}
+      {phase.kind === "again" && <InlineStatus>{phase.text}</InlineStatus>}
       {phase.kind === "working" && (
         <InlineStatus busy>
           {phase.text} <Elapsed prefix=" " className="text-graphite" />
         </InlineStatus>
-      )}
-      {phase.kind === "no_funds" && (
-        <div role="alert" className="space-y-3 rounded-[2px] border-2 border-ink border-l-8 border-l-canary bg-frost p-4 text-body">
-          <p className="font-medium">
-            This wallet has no preprod funds. Get test ADA from the{" "}
-            <a href={FAUCET_URL} target="_blank" rel="noreferrer" className="underline underline-offset-4">Cardano faucet</a>.
-          </p>
-          <p className="text-graphite">If your wallet is on preview, switch it to preprod first. You can still log in now; signing is free.</p>
-          <Button size="sm" variant="outline" onClick={() => void finishSignIn(phase.walletId)}>Log in anyway</Button>
-        </div>
       )}
       {phase.kind === "error" && <InlineError>{phase.text}</InlineError>}
     </div>

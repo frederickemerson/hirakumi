@@ -1,13 +1,11 @@
-import {
-  jwtExpiry, keyAppearsIn, renderPreset, sealUpstreamBag, sealUpstreamSecret, textLeaksAny, upstreamSecretHint, UpstreamAuthError,
-  validateUpstreamAuth, valueLooksLikeKey, type RenderedPreset, type StoredUpstreamAuth,
-} from "@hirakumi/core";
+import { jwtExpiry, UpstreamAuthError, valueLooksLikeKey, type RenderedPreset, type StoredUpstreamAuth } from "@hirakumi/core";
 import { env } from "@/lib/env";
 import { checkKey, reloadQuietly, type KeyCheck } from "@/lib/gateway";
 import { errorJson, json, readJson, type ApiRouteContext } from "@/lib/http";
 import { updatingResponse } from "@/lib/repo/schema";
 import { clearUpstreamAuth, publicExampleTexts, retryFailedQa, setUpstreamAuth, type UpstreamAuthView } from "@/lib/repo/upstream-auth";
 import { loadOwnedApi } from "@/lib/route-helpers";
+import { keyIsPublic, renderKeyBody, sealKey, viewOf } from "@/lib/upstream-key";
 
 const RETIRED = "This API was removed from the market, so its key can't change.";
 const GONE = "This API was removed or deleted while you saved, so its key wasn't saved. Reload the page.";
@@ -44,9 +42,7 @@ export async function POST(req: Request, ctx: ApiRouteContext): Promise<Response
   if (!body) return errorJson(400, "Send where the key goes, its name and the key.");
   let rendered: RenderedPreset;
   try {
-    rendered = body.preset === undefined
-      ? { kind: "hks2", credential: validateUpstreamAuth({ in: body.in, name: body.name, value: body.value }) }
-      : renderPreset(body.preset, body.fields);
+    rendered = renderKeyBody(body);
   } catch (e) {
     if (e instanceof UpstreamAuthError) return errorJson(400, e.message);
     throw e;
@@ -56,16 +52,12 @@ export async function POST(req: Request, ctx: ApiRouteContext): Promise<Response
   // public whatever the gateway does with it. The exact key and its encodings (keyAppearsIn), not a guess by name.
   // A bag's secrets are looked for as they are, like the gateway's leak list: a Basic user name is public, so it
   // isn't guessed out of the Basic value. Fixed text (a version header) is public by choice, so it is not looked for.
-  const texts = await publicExampleTexts(sql, api.id);
-  const isPublic = rendered.kind === "hks2"
-    ? keyAppearsIn(rendered.credential.value, texts)
-    : texts.some((t) => textLeaksAny(t, secretsOf(rendered)));
-  if (isPublic) return errorJson(400, KEY_IS_PUBLIC);
+  if (keyIsPublic(rendered, await publicExampleTexts(sql, api.id))) return errorJson(400, KEY_IS_PUBLIC);
   const publicKey = env.upstreamAuthPublicKey();
   if (!publicKey) return errorJson(503, NOT_SET_UP);
   let stored: StoredUpstreamAuth;
   try {
-    stored = seal(publicKey, api, rendered);
+    stored = sealKey(publicKey, api, rendered);
   } catch (e) {
     console.error(`sealing an upstream key failed for ${api.id} (check UPSTREAM_AUTH_PUBLIC_KEY)`, e);
     return errorJson(503, NOT_SET_UP);
@@ -85,44 +77,6 @@ export async function POST(req: Request, ctx: ApiRouteContext): Promise<Response
   if (check) answer.check = check;
   if (warnings.length > 0) answer.warnings = warnings;
   return json(answer);
-}
-
-/** Every text of a bag that must stay secret: its leak list and every value that isn't fixed text. */
-function secretsOf(r: Extract<RenderedPreset, { kind: "hks3" }>): string[] {
-  return [...new Set([...r.leak, ...r.values.filter((_, i) => !r.fixed.includes(i))])];
-}
-
-/**
- * The last 4 characters of the key itself, not of what is sent: "Bearer " in front of a short key would otherwise
- * lift it past upstreamSecretHint's 16 characters and show most of it. So the hint comes from the token after the
- * scheme word, and a Basic value has none (its end is the end of the base64 password).
- */
-function secretHint(value: string): string {
-  if (/^basic\s/i.test(value.trim())) return "";
-  return upstreamSecretHint(value.trim().split(/\s+/).pop() ?? "");
-}
-
-/** The row to store: hks2 as before, or a bag whose parts carry a hint for each secret part and flag fixed text. */
-function seal(publicKey: string, api: { id: string; origin: string; pathPrefix: string }, r: RenderedPreset): StoredUpstreamAuth {
-  const where = { apiId: api.id, origin: api.origin, pathPrefix: api.pathPrefix };
-  if (r.kind === "hks2") {
-    const { credential: c } = r;
-    const sealed = sealUpstreamSecret(publicKey, { ...where, in: c.in, name: c.name }, c.value);
-    return { in: c.in, name: c.name, sealed, hint: secretHint(c.value) };
-  }
-  const sealed = sealUpstreamBag(publicKey, { ...where, parts: r.parts }, { values: r.values, fixed: r.fixed, leak: r.leak });
-  // A fixed part is flagged (display only, not sealed) and has no hint.
-  const parts = r.parts.map((p, i) =>
-    (r.fixed.includes(i) ? { in: p.in, name: p.name, hint: "", fixed: true as const } : { in: p.in, name: p.name, hint: secretHint(r.values[i]) }));
-  return { v: 3, parts, sealed };
-}
-
-/** What the seller sees of a stored key (the same shape getUpstreamAuth reads back). */
-function viewOf(stored: StoredUpstreamAuth): UpstreamAuthView {
-  if ("parts" in stored) {
-    return { parts: stored.parts.map((p) => ({ in: p.in, name: p.name, hint: p.hint, ...(p.fixed ? { fixed: true as const } : {}) })) };
-  }
-  return { in: stored.in, name: stored.name, hint: stored.hint };
 }
 
 /** Things worth knowing that don't stop a save: fixed text that looks like a key, a token that expires soon. */

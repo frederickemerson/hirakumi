@@ -275,7 +275,7 @@ describe("replies on a task", () => {
     const msgs = (await messagesForTask(t.id)).slice(1);
     expect(msgs).toEqual([
       { body: "Step 3 of 7, Choose endpoints: Selling GET /price. Per-job hires (Masumi escrow) run getPrice.", task_status: "RUNNING", api_id: apiId },
-      { body: `Step 4 of 7, Prove ownership: Prove you own https://price.example.dev/${apiId}: make your API send the header X-Hirakumi-Verify with the code from this page on responses at your base URL (any status counts, even a 404 page), then sign once with your Cardano wallet (no payment): ${WEB}/apis/${apiId}/ownership`, task_status: "INPUT_REQUIRED", api_id: apiId },
+      { body: `Step 4 of 7, Prove ownership: Prove you own https://price.example.dev/${apiId}: add one DNS TXT record with the name and code from this page (your API itself doesn't change), then sign once with your Cardano wallet (no payment): ${WEB}/apis/${apiId}/ownership`, task_status: "INPUT_REQUIRED", api_id: apiId },
     ]);
   });
 
@@ -358,13 +358,13 @@ describe("replies on a task", () => {
     expect((await messagesForTask(t.id)).at(-1)).toMatchObject({ body: "Test calls are running. I'll post the promise and a suggested price here when they're done.", api_id: apiId });
   });
 
-  it("at the ownership step it says to send the X-Hirakumi-Verify header at the base URL, never to host a file", async () => {
+  it("at the ownership step it says to add a DNS TXT record, never to host a file or change the API", async () => {
     const { t, apiId, reply } = await setup("endpoints_confirmed");
     await reply("what now?");
     const body = (await messagesForTask(t.id)).at(-1)?.body ?? "";
-    expect(body).toContain(`Next, prove you own https://price.example.dev/${apiId}: make your API send the header X-Hirakumi-Verify with the code from this page`);
-    expect(body).toContain("any status counts, even a 404 page), then sign once with your Cardano wallet");
-    expect(body).not.toMatch(/x-hirakumi-verify line|hirakumi-verify\.json|OpenAPI file/);
+    expect(body).toContain(`Next, prove you own https://price.example.dev/${apiId}: add one DNS TXT record with the name and code from this page`);
+    expect(body).toContain("(your API itself doesn't change), then sign once with your Cardano wallet");
+    expect(body).not.toMatch(/x-hirakumi-verify|hirakumi-verify\.json|OpenAPI file/i);
     expect(body).toContain(`${WEB}/apis/${apiId}/ownership`);
     expect(body).not.toMatch(/well-known|challenge|download|upload/i);
     expect(body).not.toMatch(/[–—]/);

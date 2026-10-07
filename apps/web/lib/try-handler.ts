@@ -103,7 +103,7 @@ export function createTryHandler(d: TryDeps) {
     const retryAfter = res.headers.get("retry-after");
     const result = describeTryResult(res.status, body, retryAfter !== null && /^\d+$/.test(retryAfter.trim()) ? Number(retryAfter.trim()) : null);
     const receipt: TryReceipt = {
-      verdict: result.kind === "kept" ? "kept" : result.kind === "not_kept" ? "not_kept" : "no_charge",
+      verdict: result.kind === "kept" ? "kept" : result.kind === "not_kept" ? "not_kept" : result.kind === "pending" ? "pending" : "no_charge",
       creditsLeft: creditsRemaining,
       // The gateway logs sha256(token id + ";" + body) for the answer it sent; this is the same hash over what we got.
       outputHash: res.status === 200 ? outputHash(pack.creditTokenId, text) : null,

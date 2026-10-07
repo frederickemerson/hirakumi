@@ -1,23 +1,13 @@
 import {
-  isJsonMediaType, KEY_FORBIDDEN_TEXT, KEY_REFUSED_TEXT, KEY_UNSCANNABLE_TEXT, redactUpstreamParts, redactUpstreamSecret, safeFetch, textLeaksAny,
-  textLeaksSecret, upstreamSecretForms, upstreamSecretParts, urlWithinBase, UpstreamBlockedError, UpstreamTimeoutError, type UpstreamAuth,
-  type UpstreamCredential, type UpstreamResult,
+  acceptFor, buildUpstreamRequest, HOP_HEADER, KEY_FORBIDDEN_TEXT, KEY_REFUSED_TEXT, KEY_UNSCANNABLE_TEXT, redactUpstreamParts,
+  redactUpstreamSecret, resolveAuth, safeFetch, textLeaksAny, textLeaksSecret, upstreamSecretForms, UpstreamBlockedError,
+  UpstreamTimeoutError, type UpstreamCredential, type UpstreamResult,
 } from "@hirakumi/core";
 import type { ApiRow, OperationRow } from "@hirakumi/db";
 import type { LoadedOp, UpstreamAccess } from "./registry";
 
 /** The API as an upstream call needs it. Access is optional: an API without it needs no key. */
 export type UpstreamApi = Pick<ApiRow, "origin" | "path_prefix"> & Partial<UpstreamAccess>;
-
-/**
- * The API's key, whichever way it was stored: a bag's parts and leak list, or the one credential with the parts
- * textLeaksSecret looks for (so a credential behaves exactly as before). Null when the API needs no key. Every read
- * of the key goes through here, so a bag (credential null) is never sent or checked any less than a credential.
- */
-export function resolveAuth(api: Partial<UpstreamAccess>): UpstreamAuth | null {
-  if (api.auth) return api.auth;
-  return api.credential ? { parts: [api.credential], leakParts: upstreamSecretParts(api.credential.value) } : null;
-}
 
 /**
  * The common ways the key is written in an answer or a message that redaction can cut out (@hirakumi/core
@@ -45,70 +35,11 @@ export function redactSecret(text: string, credential: UpstreamCredential | null
 }
 
 /**
- * The Accept header for an operation. A JSON promise, or no promise yet (QA and previews of a new listing), asks for
- * exactly application/json: Rails and others treat an Accept that lists the any-type wildcard as a browser and
- * answer HTML. A text promise asks for its own type first, then any text, and never for the wildcard. An API that
- * only answers CSV usually ignores Accept, so QA without a promise still sees its CSV.
+ * Every upstream request (paid calls, escrow jobs, previews, QA, monitor) is built by @hirakumi/core
+ * buildUpstreamRequest, which the web app's leak check shares: the URL is checked to be under the proven base and
+ * the seller's key is added last.
  */
-export function acceptFor(ruleContentType: string | null | undefined): string {
-  if (!ruleContentType || isJsonMediaType(ruleContentType)) return "application/json";
-  return `${ruleContentType}, text/*;q=0.9`;
-}
-
-export function buildUpstreamRequest(
-  api: UpstreamApi,
-  op: Pick<OperationRow, "method" | "path">,
-  input: Record<string, unknown>,
-  ruleContentType?: string | null,
-): { url: string; init: { method: string; headers: Record<string, string>; body?: string } } {
-  const rest: Record<string, unknown> = { ...input };
-  const path = op.path.replace(/\{([^}]+)\}/g, (_m, name: string) => {
-    const v = rest[name];
-    if (v === undefined || v === null) throw new Error(`missing path parameter ${name}`);
-    // "." / ".." (also percent-encoded) or "" would let a buyer step outside the path prefix whose ownership
-    // was verified, because URLs normalise dot segments. A "/" or a backslash is sent encoded (%2F, %5C), which the URL
-    // check below can't see through, but some servers decode it before routing: "../../other" would then reach
-    // another folder with the seller's key. One value fills one path segment, so neither is allowed (the same
-    // rule as a proven path, @hirakumi/core ownership AMBIGUOUS_PATH).
-    const raw = String(v);
-    let decoded = raw;
-    try { decoded = decodeURIComponent(raw); } catch { /* keep raw */ }
-    if (raw === "" || /^\.{1,2}$/.test(raw) || /^\.{1,2}$/.test(decoded) || /[/\\]/.test(raw) || /[/\\]/.test(decoded)) {
-      throw new Error(`invalid path parameter ${name}`);
-    }
-    delete rest[name];
-    return encodeURIComponent(String(v));
-  });
-  const prefix = api.path_prefix.replace(/\/+$/, "");
-  const url = new URL(api.origin.replace(/\/+$/, "") + prefix + path);
-  // Defence in depth (audit C1): URL parsing collapses dot segments and can even move the host, so check the
-  // result, not the parts. Every upstream call (paid calls, escrow jobs, previews, QA, monitor) is built here.
-  if (!urlWithinBase(url, api.origin, api.path_prefix)) {
-    throw new Error(`blocked: the endpoint path ${op.path} resolves outside the API's folder (${prefix || "/"}) on ${new URL(api.origin).origin}`);
-  }
-  if (api.credentialError) throw new Error(`blocked: ${api.credentialError}`);
-  const auth = resolveAuth(api);
-  const method = op.method.toUpperCase();
-  const headers: Record<string, string> = { accept: acceptFor(ruleContentType), "user-agent": "hirakumi-gateway/0.1" };
-  // A compressed answer can't be checked for the key (bodies are never decompressed), so a keyed call asks for none.
-  if (auth) headers["accept-encoding"] = "identity";
-  // Shared input convention (P3 contract addition 3): `{name}` fields fill the path, a field named
-  // `body` is the JSON request body, and every other field is a query parameter, for any method.
-  const { body, ...query } = rest;
-  for (const [k, v] of Object.entries(query)) {
-    if (v === undefined || v === null) continue;
-    if (Array.isArray(v)) for (const x of v) url.searchParams.append(k, String(x));
-    else url.searchParams.set(k, typeof v === "object" ? JSON.stringify(v) : String(v));
-  }
-  // The seller's key last, so no buyer input can replace it. The URL was checked to be under the proven base above.
-  for (const part of auth?.parts ?? []) {
-    if (part.in === "header") headers[part.name.toLowerCase()] = part.value;
-    else url.searchParams.set(part.name, part.value);
-  }
-  if (body === undefined || method === "GET" || method === "HEAD") return { url: url.toString(), init: { method, headers } };
-  headers["content-type"] = "application/json";
-  return { url: url.toString(), init: { method, headers, body: JSON.stringify(body) } };
-}
+export { acceptFor, buildUpstreamRequest, HOP_HEADER, resolveAuth };
 
 /** MIP-003 input_data arrives as an object (Sokosumi) or as [{key, value}] (MIP-003 examples). */
 export function normalizeMip003Input(inputData: unknown): Record<string, unknown> | null {

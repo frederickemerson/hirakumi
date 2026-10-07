@@ -3,9 +3,10 @@ import { render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getSql } from "@/lib/db";
 import { createSessionToken } from "@/lib/session";
+import { statusLight } from "@/lib/status-labels";
 import { resetDb } from "@/test/db";
 import { getAccount } from "@/lib/repo/account";
-import { seedApi, seedOnboardStep, seedSeller } from "@/test/factories";
+import { seedApi, seedOnboardStep, seedOperation, seedRule, seedSeller } from "@/test/factories";
 import AccountPage from "./account/page";
 import ApisPage, { metadata as apisMetadata } from "./apis/page";
 import ApiLayout, { generateMetadata as apiLayoutMetadata } from "./apis/[apiId]/layout";
@@ -93,17 +94,20 @@ describe("one status label on /apis and /account (QA 11, 12)", () => {
     await seedOnboardStep(stopped.id, "describe", "failed");
     await seedApi(sellerId, "retired", { name: "Gamma API" });
     await seedApi(sellerId, "live", { name: "Delta API" });
-    const expected = { "Alpha API": "In progress", "Beta API": "Stopped", "Gamma API": "Retired", "Delta API": "Live" };
+    const expected = {
+      "Alpha API": "Setting up: Waiting for you to choose endpoints", "Beta API": "Stopped", "Gamma API": "Retired", "Delta API": "Running",
+    };
 
     const apis = render(await ApisPage());
     for (const [name, label] of Object.entries(expected)) {
       const row = screen.getByRole("link", { name }).closest("li")!;
-      expect(within(row).getByText(label)).toBeInTheDocument();
+      expect(within(row).getByRole("img", { name: label })).toBeInTheDocument();
     }
     apis.unmount();
     const account = await getAccount(getSql(), sellerId);
     for (const [name, label] of Object.entries(expected)) {
-      expect(account!.apis.find((a) => a.name === name)!.badge.label).toBe(label);
+      const a = account!.apis.find((x) => x.name === name)!;
+      expect(statusLight(a.badge.tone, a.state).label).toBe(label);
     }
     expect(described.id).toBeTruthy();
   });
@@ -147,5 +151,29 @@ describe("key rotation before publishing", () => {
     expect(screen.getByTestId("upstream-auth-current")).toHaveTextContent("Header apikey ••••WXYZ");
     expect(screen.getByTestId("upstream-auth-current")).toHaveTextContent("Header Authorization");
     expect(document.body.textContent).not.toContain("hks3");
+  });
+});
+
+describe("the leak check on the review page", () => {
+  it("shows the stored result and points to the key form", async () => {
+    const api = await seedApi(sellerId, "priced");
+    const op = await seedOperation(api.id, { enabled: true });
+    await seedRule(op.id);
+    await getSql()`update apis set exposure = 'open', exposure_checked_at = '2026-10-07T17:20:00Z' where id = ${api.id}`;
+    render(await ReviewPage({ params: Promise.resolve({ apiId: api.id }) }));
+    expect(screen.getByTestId("exposure-card")).toHaveAttribute("data-exposure", "open");
+    expect(screen.getByTestId("exposure-text")).toHaveTextContent(/^Anyone can call your API for free without its key/);
+    expect(screen.getByText("Checked 2026-10-07 17:20 UTC")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Add your API's key" })).toHaveAttribute("href", "#api-key");
+    expect(document.getElementById("api-key")).toContainElement(screen.getByRole("heading", { name: "Your API's key" }));
+  });
+
+  it("offers the first check on an API never checked", async () => {
+    const api = await seedApi(sellerId, "rule_built");
+    const op = await seedOperation(api.id, { enabled: true });
+    await seedRule(op.id);
+    render(await ReviewPage({ params: Promise.resolve({ apiId: api.id }) }));
+    expect(screen.getByTestId("exposure-card")).toHaveAttribute("data-exposure", "unknown");
+    expect(screen.getByRole("button", { name: "Check now" })).toBeInTheDocument();
   });
 });

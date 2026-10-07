@@ -5,7 +5,10 @@ import { UPDATING } from "./repo/schema";
 import { hasSelfTestSchema } from "./repo/self-test-schema";
 import { loadOwnedApi } from "./route-helpers";
 import { findSelfTestPack, saveSelfTestPack } from "./self-test-repo";
-import { paySelfPayment, prepareSelfPayment, SelfPayError, type BuildPayment, type SelfPayTarget } from "./self-test-wallet";
+import {
+  paySelfPayment, prepareSelfPayment, resumeSelfPayment, SELF_PAY_PENDING, SelfPayError, selfPayRecoverySecret,
+  type BuildPayment, type SelfPayOutcome, type SelfPayTarget, type SignedPayment,
+} from "./self-test-wallet";
 import { createBuyHandler } from "./try-buy";
 import { createReceiptsHandler, createTryHandler } from "./try-handler";
 import { reserveTryCall, tryEscrowStore } from "./try-repo";
@@ -31,6 +34,8 @@ export type SelfTestDeps = {
   build: BuildPayment;
   allowBuy: (key: string) => boolean;
   allowCall: (key: string) => boolean;
+  /** Derives each wallet payment's recovery secret (selfPayRecoverySecret); the deployment's SESSION_SECRET. */
+  recoveryKey: string;
   fetchImpl?: typeof fetch;
 };
 
@@ -60,6 +65,31 @@ const payError = (e: unknown): Response => {
 };
 
 export function createSelfTestHandlers(d: SelfTestDeps) {
+  async function payStep(
+    req: Request, ctx: ApiRouteContext,
+    step: (d: { fetchImpl?: typeof fetch }, t: SelfPayTarget, signed: SignedPayment, recoverySecret: string) => Promise<SelfPayOutcome>,
+  ): Promise<Response> {
+    const o = await ownedLive(req, ctx);
+    if (o instanceof Response) return o;
+    const b = await readJson(req);
+    const priceMicros = b?.priceMicros;
+    if (!hex(b?.tx, 40_000) || !hex(b?.witnessSet, 20_000) || typeof b?.nonce !== "string" || !/^[0-9a-f]{64}#\d{1,5}$/i.test(b.nonce)
+      || typeof priceMicros !== "string" || !/^\d{1,15}$/.test(priceMicros)) {
+      return errorJson(400, "The signed payment is incomplete. Start again.");
+    }
+    const t = await target(o, d.gatewayBase);
+    if (t instanceof Response) return t;
+    const signed = { tx: b.tx as string, witnessSet: b.witnessSet as string, nonce: b.nonce, priceMicros };
+    try {
+      const r = await step({ fetchImpl: d.fetchImpl }, t, signed, selfPayRecoverySecret(d.recoveryKey, t, signed.nonce));
+      if (r.kind === "pending") return json({ status: "pending", message: SELF_PAY_PENDING }, 202);
+      await saveSelfTestPack(o.sql, { apiId: o.api.id, sellerId: o.sellerId, token: r.token, txHash: r.txHash, credits: r.credits });
+      return json({ credits: r.credits, txHash: r.txHash, pending: r.pending });
+    } catch (e) {
+      return payError(e);
+    }
+  }
+
   return {
     /** POST .../try/free: the free test, streamed from the gateway like the showcase's "Buy a pack live". */
     async free(req: Request, ctx: ApiRouteContext): Promise<Response> {
@@ -96,45 +126,37 @@ export function createSelfTestHandlers(d: SelfTestDeps) {
       })(o.api.id);
     },
 
-    /** POST .../try/pay/prepare { utxos, changeAddress }: the price and the unsigned payment for the wallet. */
+    /**
+     * POST .../try/pay/prepare { utxos?, changeAddress }: the price and the unsigned payment for the wallet. No utxos:
+     * the wallet can't list them (the email wallet), so the builder reads them at changeAddress.
+     */
     async prepare(req: Request, ctx: ApiRouteContext): Promise<Response> {
       const o = await ownedLive(req, ctx);
       if (o instanceof Response) return o;
       const b = await readJson(req);
       const utxos = b?.utxos;
-      if (!Array.isArray(utxos) || utxos.length === 0 || utxos.length > 300 || !utxos.every((u) => hex(u, 40_000)) || !hex(b?.changeAddress, 200)) {
+      const usableUtxos = utxos === undefined || (Array.isArray(utxos) && utxos.length > 0 && utxos.length <= 300 && utxos.every((u) => hex(u, 40_000)));
+      if (!usableUtxos || !hex(b?.changeAddress, 200)) {
         return errorJson(400, "Connect your wallet again. It sent no usable funds.");
       }
       if (!d.allowBuy(`pay:${o.sellerId}`)) return errorJson(429, "One payment at a time, please. Wait a moment and try again.");
       const t = await target(o, d.gatewayBase);
       if (t instanceof Response) return t;
       try {
-        const p = await prepareSelfPayment({ fetchImpl: d.fetchImpl, build: d.build }, t, { utxos: utxos as string[], changeAddress: b!.changeAddress as string });
+        const p = await prepareSelfPayment({ fetchImpl: d.fetchImpl, build: d.build }, t, { utxos: utxos === undefined ? null : (utxos as string[]), changeAddress: b!.changeAddress as string });
         return json({ tx: p.tx, nonce: p.nonce, feeLovelace: p.feeLovelace, priceMicros: p.priceMicros, calls: p.calls });
       } catch (e) {
         return payError(e);
       }
     },
 
-    /** POST .../try/pay { tx, witnessSet, nonce, priceMicros }: pays with the signed transaction; keeps the token. */
-    async pay(req: Request, ctx: ApiRouteContext): Promise<Response> {
-      const o = await ownedLive(req, ctx);
-      if (o instanceof Response) return o;
-      const b = await readJson(req);
-      const priceMicros = b?.priceMicros;
-      if (!hex(b?.tx, 40_000) || !hex(b?.witnessSet, 20_000) || typeof b?.nonce !== "string" || !/^[0-9a-f]{64}#\d{1,5}$/i.test(b.nonce)
-        || typeof priceMicros !== "string" || !/^\d{1,15}$/.test(priceMicros)) {
-        return errorJson(400, "The signed payment is incomplete. Start again.");
-      }
-      const t = await target(o, d.gatewayBase);
-      if (t instanceof Response) return t;
-      try {
-        const r = await paySelfPayment({ fetchImpl: d.fetchImpl }, t, { tx: b.tx as string, witnessSet: b.witnessSet as string, nonce: b.nonce, priceMicros });
-        await saveSelfTestPack(o.sql, { apiId: o.api.id, sellerId: o.sellerId, token: r.token, txHash: r.txHash, credits: r.credits });
-        return json({ credits: r.credits, txHash: r.txHash, pending: r.pending });
-      } catch (e) {
-        return payError(e);
-      }
-    },
+    /**
+     * POST .../try/pay { tx, witnessSet, nonce, priceMicros }: pays with the signed transaction; keeps the token.
+     * 200 bought (pending: still confirming on-chain), 202 pending (ask .../try/pay/resume), 4xx/5xx a certain failure.
+     */
+    pay: (req: Request, ctx: ApiRouteContext) => payStep(req, ctx, paySelfPayment),
+
+    /** POST .../try/pay/resume, the same body: where a pending payment stands. Never pays. */
+    resume: (req: Request, ctx: ApiRouteContext) => payStep(req, ctx, resumeSelfPayment),
   };
 }

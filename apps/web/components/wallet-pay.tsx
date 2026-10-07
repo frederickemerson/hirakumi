@@ -1,16 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { PhoneWalletConnect } from "@/components/phone-wallet-connect";
 import { InlineError } from "@/components/states";
 import type { TryPackView } from "@/components/try-console";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { GetAWallet, MobileNote, useIsMobile, useWallets, WalletIcon } from "@/components/wallet-picker";
-import { postJson } from "@/lib/client-fetch";
+import { BROWSER_WALLET_TOO, GetAWallet, MobileNote, onlyEmailWallet, useIsMobile, useWallets, WalletIcon } from "@/components/wallet-picker";
+import { postJson, RequestError } from "@/lib/client-fetch";
 import { formatTusdm } from "@/lib/money";
-import { connectWallet, WalletError, walletErrorMessage, type Cip30Api } from "@/lib/wallet-client";
+import { connectWallet, needsAnotherClick, walletAction, WalletError, walletErrorMessage, type Cip30Api } from "@/lib/wallet-client";
 import { useElapsed } from "@/components/elapsed";
 
 /** CIP-30 calls a payment needs on top of sign-in's. */
@@ -21,12 +21,27 @@ type PayingApi = Cip30Api & {
 
 type Prepared = { tx: string; nonce: string; feeLovelace: string; priceMicros: string; calls: number | null };
 type Paid = { credits: number; txHash: string | null; pending: boolean };
+/** 202: the payment may have left and nothing confirms it yet. Never an error: the page asks again. */
+type PayPending = { status: "pending"; message: string };
+const isPending = (r: Paid | PayPending): r is PayPending => (r as PayPending).status === "pending";
+/**
+ * No answer, or the platform's own timeout (502/504) after the wallet signed: the payment may have left, so the
+ * outcome is unknown. Every other error status is the server's certain answer.
+ */
+const unknownOutcome = (e: unknown) => e instanceof RequestError && (e.status === undefined || e.status === 502 || e.status === 504);
+
+/** While a wallet payment is pending, how often the page asks where it stands. */
+export const RESUME_EVERY_MS = 10_000;
 
 type Phase =
   | { kind: "idle" }
   | { kind: "working"; walletId: string; text: string }
   | { kind: "paying"; walletId: string; startedAt: number; text: string }
+  | { kind: "pending"; walletId: string; startedAt: number; text: string }
+  | { kind: "again"; text: string }
   | { kind: "error"; text: string };
+
+const PENDING_TEXT = "Your payment is sent and waiting for Cardano to confirm it. It goes to your own payout address either way.";
 
 export const SELF_PAY_LINE = "You pay your own API. The money comes back to you; you only pay the network fee.";
 
@@ -45,15 +60,36 @@ function signErrorMessage(e: unknown): string {
  * and builds the payment, the wallet signs it here, the server pays the gateway with it (direct settlement, to
  * the seller's own payout address). The pack's token never reaches the browser.
  */
-export function WalletPay({ apiId, packPrice, onBought }: {
+export function WalletPay({ apiId, packPrice, onBought, resumeEveryMs = RESUME_EVERY_MS }: {
   apiId: string;
   packPrice: { calls: number; priceMicros: string } | null;
   onBought: (pack: TryPackView) => void;
+  /** Tests shorten the wait between checks of a pending payment. */
+  resumeEveryMs?: number;
 }) {
   const wallets = useWallets();
   const mobile = useIsMobile();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const base = `/api/apis/${encodeURIComponent(apiId)}/try/pay`;
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+
+  /** Asks where a pending payment stands, with the same signed body, until it is bought or certainly failed. */
+  async function follow(signed: unknown): Promise<Paid | null> {
+    while (mounted.current) {
+      await new Promise((r) => setTimeout(r, resumeEveryMs));
+      if (!mounted.current) return null;
+      let r: Paid | PayPending;
+      try {
+        r = await postJson<Paid | PayPending>(`${base}/resume`, signed);
+      } catch (e) {
+        if (!unknownOutcome(e)) throw e; // a certain failure is an answer; a lost connection is not
+        continue;
+      }
+      if (!isPending(r)) return r;
+    }
+    return null;
+  }
 
   async function pay(walletId: string) {
     let stage: "wallet" | "sign" = "wallet";
@@ -61,11 +97,15 @@ export function WalletPay({ apiId, packPrice, onBought }: {
       setPhase({ kind: "working", walletId, text: "Connecting to your wallet…" });
       const { api } = await connectWallet(walletId);
       const w = api as PayingApi;
-      if (typeof w.getUtxos !== "function" || typeof w.signTx !== "function") {
+      if (typeof w.signTx !== "function") {
         throw new WalletError("This wallet can't sign payments here. Try another wallet.");
       }
-      const utxos = (await w.getUtxos()) ?? [];
-      if (utxos.length === 0) throw new WalletError("Your wallet has no funds on preprod. Get test ADA and tUSDM, then try again.");
+      // A wallet that can't list its UTxOs (the email wallet) sends only its address; the server reads them there.
+      let utxos: string[] | undefined;
+      if (typeof w.getUtxos === "function") {
+        utxos = (await w.getUtxos()) ?? [];
+        if (utxos.length === 0) throw new WalletError("Your wallet has no funds on preprod. Get test ADA and tUSDM, then try again.");
+      }
       setPhase({ kind: "working", walletId, text: "Getting the price from Hirakumi…" });
       const p = await postJson<Prepared>(`${base}/prepare`, { utxos, changeAddress: await api.getChangeAddress() });
       setPhase({
@@ -75,16 +115,31 @@ export function WalletPay({ apiId, packPrice, onBought }: {
       stage = "sign";
       const witnessSet = await w.signTx(p.tx, true);
       stage = "wallet";
-      setPhase({ kind: "paying", walletId, startedAt: Date.now(), text: "Settling on Cardano. This takes 20 to 60 s." });
-      const r = await postJson<Paid>(base, { tx: p.tx, witnessSet, nonce: p.nonce, priceMicros: p.priceMicros });
+      const startedAt = Date.now();
+      setPhase({ kind: "paying", walletId, startedAt, text: "Settling on Cardano. This takes 20 to 60 s." });
+      const signed = { tx: p.tx, witnessSet, nonce: p.nonce, priceMicros: p.priceMicros };
+      let r: Paid | PayPending | null;
+      try {
+        r = await postJson<Paid | PayPending>(base, signed);
+      } catch (e) {
+        // No answer at all after the wallet signed: the payment may have left, so it is pending, not failed.
+        if (!unknownOutcome(e)) throw e;
+        r = { status: "pending", message: PENDING_TEXT };
+      }
+      if (r && isPending(r)) {
+        setPhase({ kind: "pending", walletId, startedAt, text: r.message });
+        r = await follow(signed);
+      }
+      if (!r) return;
       setPhase({ kind: "idle" });
       onBought({ credits: r.credits, txHash: r.txHash, pending: r.pending });
     } catch (e) {
-      setPhase({ kind: "error", text: stage === "sign" ? signErrorMessage(e) : walletErrorMessage(e) });
+      if (needsAnotherClick(e)) setPhase({ kind: "again", text: e.message });
+      else setPhase({ kind: "error", text: stage === "sign" ? signErrorMessage(e) : walletErrorMessage(e) });
     }
   }
 
-  const busy = phase.kind === "working" || phase.kind === "paying";
+  const busy = phase.kind === "working" || phase.kind === "paying" || phase.kind === "pending";
   return (
     <div id="try-pack-note" role="note" className="space-y-4" data-testid="wallet-pay">
       <div className="space-y-1">
@@ -103,22 +158,25 @@ export function WalletPay({ apiId, packPrice, onBought }: {
       ) : (
         <ul className="space-y-2">
           {wallets.map((w) => {
-            const mine = (phase.kind === "working" || phase.kind === "paying") && phase.walletId === w.id;
+            const mine = (phase.kind === "working" || phase.kind === "paying" || phase.kind === "pending") && phase.walletId === w.id;
             return (
               <li key={w.id}>
                 <Button type="button" size="lg" variant={mine ? "default" : "outline"} disabled={busy} aria-busy={mine || undefined}
                   className="w-full justify-start gap-3" onClick={() => void pay(w.id)}>
                   {mine ? <Spinner className="size-3" /> : <WalletIcon icon={w.icon} />}
-                  {`Pay with ${w.name}`}
+                  {walletAction("Pay", w)}
                 </Button>
               </li>
             );
           })}
         </ul>
       )}
+      {wallets && onlyEmailWallet(wallets) && <GetAWallet title={BROWSER_WALLET_TOO} />}
       {!busy && <PhoneWalletConnect />}
+      {phase.kind === "again" && <p role="status" aria-live="polite" className="border-l-4 border-mint pl-3 text-body">{phase.text}</p>}
       {phase.kind === "working" && <p role="status" aria-live="polite" className="border-l-4 border-sky pl-3 text-body">{phase.text}</p>}
       {phase.kind === "paying" && <Paying startedAt={phase.startedAt} text={phase.text} />}
+      {phase.kind === "pending" && <Paying startedAt={phase.startedAt} text={`Pending. ${phase.text} This page checks again every few seconds.`} />}
       {phase.kind === "error" && <InlineError>{phase.text}</InlineError>}
     </div>
   );

@@ -22,7 +22,8 @@ const errorResponse = {
   },
 };
 
-export function buildOpenApi(serverUrl: string, title = DEFAULT_TITLE): Record<string, unknown> {
+/** `keyed`: the API needs API_KEY in X-API-Key, so the document declares it (and Hirakumi asks the seller for it). */
+export function buildOpenApi(serverUrl: string, title = DEFAULT_TITLE, keyed = false): Record<string, unknown> {
   return {
     openapi: "3.1.0",
     info: {
@@ -31,6 +32,7 @@ export function buildOpenApi(serverUrl: string, title = DEFAULT_TITLE): Record<s
       description: "Read-only foreign exchange rates between 12 major currencies, and conversions at those rates. Live rates from Coinbase, cached for 30 seconds.",
     },
     servers: [{ url: serverUrl }],
+    ...(keyed ? { security: [{ apiKey: [] }] } : {}),
     paths: {
       "/rate": {
         get: {
@@ -89,6 +91,7 @@ export function buildOpenApi(serverUrl: string, title = DEFAULT_TITLE): Record<s
       },
     },
     components: {
+      ...(keyed ? { securitySchemes: { apiKey: { type: "apiKey", in: "header", name: "X-API-Key" } } } : {}),
       schemas: {
         Rate: {
           type: "object",

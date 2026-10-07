@@ -42,7 +42,7 @@ describe("AccountApis", () => {
     expect(within(totals).getByText("Total received").nextSibling).toHaveTextContent("4.85 tUSDM");
 
     const l = row("Price API");
-    expect(within(l).getByText("Live")).toBeInTheDocument();
+    expect(within(l).getByRole("img", { name: "Running" })).toBeInTheDocument();
     expect(within(l).getByText("75%")).toBeInTheDocument();
     expect(within(l).getByRole("link", { name: "Open" })).toHaveAttribute("href", "/apis/api_live");
     expect(within(l).getByRole("link", { name: "Try it live" })).toHaveAttribute("href", "/p/api_live/try");
@@ -50,7 +50,7 @@ describe("AccountApis", () => {
     expect(within(l).getByRole("button", { name: "Delete" })).toBeInTheDocument();
 
     const d = row("Weather API");
-    expect(within(d).getByText("In progress")).toBeInTheDocument();
+    expect(within(d).getByRole("img", { name: "Setting up: Waiting for you to choose endpoints" })).toBeInTheDocument();
     expect(within(d).getByText("Step 3 of 7: Choose endpoints. Your turn.")).toBeInTheDocument();
     expect(within(d).queryByRole("link", { name: "Try it live" })).toBeNull();
     expect(within(d).queryByRole("button", { name: "Retire" })).toBeNull();
@@ -95,7 +95,7 @@ describe("AccountApis", () => {
     expect(within(dialog).queryByRole("textbox")).toBeNull();
     await user.click(within(dialog).getByRole("button", { name: "Retire API" }));
     expect(f).toHaveBeenCalledWith("/api/apis/api_live/retire", expect.objectContaining({ method: "POST" }));
-    await waitFor(() => expect(within(row("Price API")).getByText("Retired")).toBeInTheDocument());
+    await waitFor(() => expect(within(row("Price API")).getByRole("img", { name: "Retired" })).toBeInTheDocument());
     expect(within(row("Price API")).queryByRole("link", { name: "Try it live" })).toBeNull();
     expect(within(screen.getByRole("list", { name: "Totals" })).getByText("Live APIs").nextSibling).toHaveTextContent("0");
     expect(await screen.findByText("Retired Price API")).toBeInTheDocument();

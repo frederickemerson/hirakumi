@@ -4,6 +4,8 @@ import { createApp } from "./app";
 import { listen } from "./server";
 import { ChannelWatcher } from "./channelWatcher";
 import { demoBuyerFromEnv } from "./demoBuy";
+import { DomainRegistry } from "./domains";
+import { tlsAskApp } from "./frontDoorAdmin";
 import { blockfrostEscrowChain } from "./escrowChain";
 import { loadConfig } from "./config";
 import { HealthTracker } from "./health";
@@ -18,7 +20,9 @@ const sql = createDb(config.databaseUrl);
 const applied = await migrate(sql);
 if (applied.length) console.log(`[gateway] migrations applied: ${applied.join(", ")}`);
 
+// No upstream may resolve to Hirakumi's own edge: it would come back in through the front door.
 const health = new HealthTracker(config.thresholds);
+const domains = new DomainRegistry(sql);
 const registry = new ApiRegistry(sql, health, config.upstreamAuthPrivateKey);
 const facilitator = new HTTPFacilitatorClient({ url: config.facilitatorUrl });
 const masumi = config.masumi ? masumiPortFrom(config.masumi) : null;
@@ -32,8 +36,8 @@ if (config.packMode === "hybrid" && !escrowChain) console.warn("[gateway] PACK_M
 if (config.packEscrow && !config.packEscrow.operatorMnemonic) console.warn("[gateway] OPERATOR_MNEMONIC not set: the ChannelWatcher only observes (no Close / Raise / Settle)");
 const demoBuyer = demoBuyerFromEnv(process.env);
 if (!demoBuyer) console.warn("[gateway] BUYER_MNEMONIC or BLOCKFROST_PROJECT_ID not set: \"Buy a pack live\" answers 503");
-const app = createApp({ sql, config, registry, health, facilitator, masumi, escrowChain, demoBuyer });
-const monitor = new Monitor({ sql, registry, health, config });
+const app = createApp({ sql, config, registry, health, facilitator, masumi, escrowChain, demoBuyer, domains });
+const monitor = new Monitor({ sql, registry, health, config, domains });
 monitor.start();
 const jobs = masumi ? new JobRunner({ sql, registry, masumi, config }) : null;
 jobs?.start();
@@ -54,6 +58,11 @@ const server = listen(app, config.port, () => {
     `probe=${config.probeIntervalMs / 1000}s escrow=${masumi ? "on" : "off"} reconcile=${reconciler ? "on" : "off"} packs=${config.packMode}${watcher ? ` watcher=${escrowChain?.operator ? "acting" : "observing"}` : ""}`);
 });
 
+// Caddy's on-demand TLS asks here before getting a certificate for a front-door host. Only Caddy reaches this port.
+const tlsAsk = listen(tlsAskApp(domains), config.tlsAskPort, () => {
+  console.log(`[gateway] tls ask listening on :${config.tlsAskPort} edge=${config.edgeIps.join(",")}`);
+});
+
 const shutdown = async () => {
   monitor.stop();
   jobs?.stop();
@@ -61,6 +70,7 @@ const shutdown = async () => {
   watcher?.stop();
   if (pruner) clearInterval(pruner);
   server.close();
+  tlsAsk.close();
   await sql.end({ timeout: 5 });
   process.exit(0);
 };

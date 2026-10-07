@@ -2,6 +2,7 @@ import { isIP } from "node:net";
 import { DEFAULT_SETTLEMENT_POLICY, publicKeyFromPrivate, type SettlementPolicy } from "@hirakumi/core";
 import { walletKeys } from "@hirakumi/escrow/txs";
 import type { HealthThresholds } from "./health";
+import { DEFAULT_DNS_RESOLVERS } from "./ownership";
 
 export type { HealthThresholds } from "./health";
 export type GatewayConfig = {
@@ -12,7 +13,9 @@ export type GatewayConfig = {
   facilitatorUrl: string;
   databaseUrl: string;
   probeIntervalMs: number;
-  /** How often an API proven with the X-Hirakumi-Verify header is checked again (jittered by 10%). */
+  /** DNS_RESOLVERS: the servers the ownership proof asks for TXT records (comma list of IPs). Default 1.1.1.1, 8.8.8.8. */
+  dnsResolvers: string[];
+  /** How often a proven API's ownership is checked again (jittered by 10%). */
   ownershipRecheckMs: number;
   /** How soon it is checked again after a failed or unreachable check, so two failures in a row come quickly. */
   ownershipRetryMs: number;
@@ -51,6 +54,17 @@ export type GatewayConfig = {
    * UPSTREAM_AUTH_PUBLIC_KEY. The gateway still starts; keyed APIs turn Down with an operator reason. Null when fine.
    */
   upstreamAuthKeyProblem: UpstreamAuthKeyProblem | null;
+  /** WEB_BASE_URL: the web app, for the listing link in a front-door 402 (<web>/p/<apiId>). Unset: no listingUrl. */
+  webBaseUrl: string | null;
+  /**
+   * EDGE_IPS: the public addresses Caddy serves on (comma list). A front-door host must resolve only to these, and no
+   * upstream may resolve to one (it would loop through the front door). Default 52.70.235.103.
+   */
+  edgeIps: string[];
+  /** TLS_ASK_PORT: the listener only Caddy reaches (compose expose), for on-demand TLS. Default 4022. */
+  tlsAskPort: number;
+  /** How often a front-door host's TXT record and DNS are checked again (jittered by 10%). */
+  domainRecheckMs: number;
 };
 
 export type UpstreamAuthKeyProblem = "mismatch" | "unparseable";
@@ -102,6 +116,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     facilitatorUrl: required("FACILITATOR_URL"),
     databaseUrl: required("DATABASE_URL"),
     probeIntervalMs: demoMode ? 10_000 : 120_000,
+    dnsResolvers: parseDnsResolvers(env.DNS_RESOLVERS),
     ownershipRecheckMs: 6 * 3_600_000,
     ownershipRetryMs: 15 * 60_000,
     thresholds: demoMode ? { failsToDown: 2, passesToHeal: 2 } : { failsToDown: 3, passesToHeal: 2 },
@@ -122,6 +137,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     startJobTrustedCidrs: parseTrustedCidrs(env.START_JOB_TRUSTED_CIDRS),
     tryLiveApis: parseTryLiveApis(env.TRY_LIVE_APIS),
     ...upstreamAuthKeyFrom(env),
+    webBaseUrl: parseWebBaseUrl(env.WEB_BASE_URL),
+    edgeIps: parseEdgeIps(env.EDGE_IPS),
+    tlsAskPort: parsePort(env.TLS_ASK_PORT, 4022, "TLS_ASK_PORT"),
+    domainRecheckMs: 6 * 3_600_000,
   };
 }
 
@@ -148,13 +167,47 @@ export function upstreamAuthKeyFrom(env: NodeJS.ProcessEnv): Pick<GatewayConfig,
   return { upstreamAuthPrivateKey: privateKey, upstreamAuthKeyProblem: null };
 }
 
+/** "1.1.1.1, 8.8.8.8" to a list of IPs; unset or blank gives the public default. A name is refused (it needs DNS itself). */
+export function parseDnsResolvers(raw: string | undefined): string[] {
+  const items = (raw ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (items.length === 0) return [...DEFAULT_DNS_RESOLVERS];
+  const bad = items.find((item) => isIP(item) === 0);
+  if (bad) throw new Error(`DNS_RESOLVERS: "${bad}" is not an IP address`);
+  return items;
+}
+
 /** GATEWAY_PORT: blank or unset is 4021. Number("") is 0 (a random port) and Number("x") is NaN, so check the text. */
-function parsePort(raw: string | undefined): number {
+function parsePort(raw: string | undefined, dflt = 4021, name = "GATEWAY_PORT"): number {
   const v = raw?.trim() ?? "";
-  if (!v) return 4021;
+  if (!v) return dflt;
   const n = /^\d{1,5}$/.test(v) ? Number(v) : NaN;
-  if (!(n >= 1 && n <= 65_535)) throw new Error(`GATEWAY_PORT must be a port number from 1 to 65535, not "${v}"`);
+  if (!(n >= 1 && n <= 65_535)) throw new Error(`${name} must be a port number from 1 to 65535, not "${v}"`);
   return n;
+}
+
+export const DEFAULT_EDGE_IPS = ["52.70.235.103"];
+
+/** "a, b" to a list of IPs; unset or blank gives the default. A name is refused: the routed check compares addresses. */
+export function parseEdgeIps(raw: string | undefined): string[] {
+  const items = (raw ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  if (items.length === 0) return [...DEFAULT_EDGE_IPS];
+  const bad = items.find((item) => isIP(item) === 0);
+  if (bad) throw new Error(`EDGE_IPS: "${bad}" is not an IP address`);
+  return [...new Set(items)];
+}
+
+/** An http(s) URL without a trailing slash, or null when unset. */
+export function parseWebBaseUrl(raw: string | undefined): string | null {
+  const v = raw?.trim();
+  if (!v) return null;
+  let u: URL;
+  try {
+    u = new URL(v);
+  } catch {
+    throw new Error(`WEB_BASE_URL must be a URL, not "${v}"`);
+  }
+  if (u.protocol !== "https:" && u.protocol !== "http:") throw new Error("WEB_BASE_URL must be an http or https URL");
+  return v.replace(/\/+$/, "");
 }
 
 /** "a.b.c.d/n, x:y::/n, a.b.c.d" → normalised CIDRs. A bare address is a /32 or /128. /0 is refused (trusts everyone). */

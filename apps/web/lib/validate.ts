@@ -19,7 +19,7 @@ export function validateOpenApiUrl(raw: unknown, allowInsecure: boolean): { url:
   }
   // "api.example.com." names the same host but is a different origin and listing base: one spelling only.
   if (u.hostname.endsWith(".")) throw new ValidationError("Remove the dot at the end of the host name in the link.");
-  // The file only describes the API (ownership is the X-Hirakumi-Verify header), so it may be hosted anywhere.
+  // The file only describes the API (ownership is a DNS record), so it may be hosted anywhere.
   // A query is still refused: the link is stored and shown on the seller's pages and Sokosumi task, a query often
   // carries an access token (the file must be public), and one plain link per file keeps resubmits the same API.
   if (u.search !== "" || s.split("#")[0].includes("?")) throw new ValidationError("Remove the ?query from the link. Use the plain public link to your OpenAPI file.");

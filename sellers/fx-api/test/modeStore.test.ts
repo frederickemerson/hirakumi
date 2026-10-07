@@ -39,8 +39,12 @@ describe("modeStore", () => {
     expect(modeStoreFromEnv({}).kind).toBe("memory");
   });
 
-  it("refuses memory store on Vercel (break switch must be shared by every instance)", () => {
-    expect(() => modeStoreFromEnv({ VERCEL: "1" })).toThrow(/UPSTASH_REDIS_REST_URL/);
+  it("on Vercel without Redis, reads a fixed mode from BREAK_MODE that every instance shares", async () => {
+    const fixed = modeStoreFromEnv({ VERCEL: "1", BREAK_MODE: "empty" });
+    expect(fixed.kind).toBe("env");
+    await expect(fixed.get()).resolves.toBe("empty");
+    await expect(fixed.set("ok")).rejects.toThrow(/BREAK_MODE/);
+    await expect(modeStoreFromEnv({ VERCEL: "1" }).get()).resolves.toBe("ok");
   });
 
   it("validates modes", () => {

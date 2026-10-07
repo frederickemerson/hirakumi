@@ -49,8 +49,8 @@ export function DeleteApiButton({ api, onDeleted }: { api: DeletableApi; onDelet
       pendingLabel="Deleting…"
       typeToConfirm={api.name}
       onConfirm={async () => {
-        await deleteJson(`/api/apis/${api.id}`);
-        toast(`Deleted ${api.name}`);
+        const r = await deleteJson<{ undo?: string[] }>(`/api/apis/${api.id}`);
+        toast(r.undo?.length ? `Deleted ${api.name}. The steps to undo on your side are in your messages.` : `Deleted ${api.name}`);
         onDeleted();
       }}
     />

@@ -48,7 +48,7 @@ export const MAX_UPSTREAM_SECRET_LENGTH = 4096;
 // Headers the gateway sets itself, or that would change how the request is framed or routed.
 const RESERVED_HEADERS = new Set([
   "accept", "user-agent", "content-type", "content-length", "host", "connection", "transfer-encoding", "te", "trailer",
-  "upgrade", "keep-alive", "proxy-authorization", "proxy-connection", "expect", "x-hirakumi-probe", "forwarded",
+  "upgrade", "keep-alive", "proxy-authorization", "proxy-connection", "expect", "x-hirakumi-probe", "x-hirakumi-hop", "forwarded",
   "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-real-ip", "accept-encoding",
 ]);
 
@@ -244,6 +244,8 @@ export const upstreamSecretHint = (value: string) => (value.length >= 16 ? value
 const MIN_SECRET_PART = 8;
 /** The token after a scheme word ("Bearer abc1234") is looked for down to this length: it is the key itself. */
 const MIN_SCHEME_TOKEN = 4;
+/** A value that starts with a well-known scheme word, and the token after it. */
+const KNOWN_SCHEME = /^(?:bearer|token|basic|apikey|api-key|key)\s+(.+)$/i;
 
 /** "Basic <base64 of user:password>" decoded, or null. */
 function basicCredentials(value: string): { pair: string; user: string; password: string } | null {
@@ -263,7 +265,7 @@ function basicCredentials(value: string): { pair: string; user: string; password
  */
 export function upstreamSecretParts(value: string): string[] {
   const parts = [value];
-  const scheme = /^(?:bearer|token|basic|apikey|api-key|key)\s+(.+)$/i.exec(value);
+  const scheme = KNOWN_SCHEME.exec(value);
   const token = scheme ? scheme[1].trim() : "";
   if (token.length >= MIN_SCHEME_TOKEN) parts.push(token);
   const last = value.trim().split(/\s+/).pop() ?? "";
@@ -493,20 +495,28 @@ export const MAX_UPSTREAM_LEAK_NEEDLES = 160;
  */
 function derivedSecrets(value: string): string[] {
   const basic = basicCredentials(value);
-  if (basic) return [basic.password, basic.pair].filter((s) => s.length >= MIN_SECRET_PART);
+  // The same floor as a single key (upstreamSecretParts): a Basic password, or the token after a well-known scheme
+  // word, is looked for down to MIN_SCHEME_TOKEN; validateUpstreamBag refuses them under MIN_SECRET_PART anyway.
+  if (basic) return [basic.password, basic.pair].filter((s) => s.length >= MIN_SCHEME_TOKEN);
+  const known = KNOWN_SCHEME.exec(value.trim())?.[1].trim() ?? "";
   const token = /^\S+\s+(.+)$/.exec(value.trim())?.[1].trim() ?? "";
   const last = value.trim().split(/\s+/).pop() ?? "";
-  return [token, last].filter((s) => s !== value && s.length >= MIN_SECRET_PART);
+  return [
+    ...(known.length >= MIN_SCHEME_TOKEN && known !== value ? [known] : []),
+    ...[token, last].filter((s) => s !== value && s.length >= MIN_SECRET_PART),
+  ];
 }
 
 /**
- * The secret a value carries is too short to look for on its own: the key after a word ("Bearer abcd") or a Basic
- * password under 8 characters. The bearer and basic presets refuse these, and so do rows.
+ * The secret a value carries is too short to look for on its own: the key after a well-known scheme word
+ * ("Bearer abcd", "Token abcd") or a Basic password under 8 characters. Only well-known words count: a secret that
+ * merely contains a space ("ab+cd/ef gh=ij") is a whole secret, not a word and a key. The bearer and basic presets
+ * refuse these, so do rows, and so does validateUpstreamBag on the gateway for every secret part.
  */
 export function schemeSecretTooShort(value: string): boolean {
   const basic = basicCredentials(value);
   if (basic) return basic.password.length < MIN_SECRET_PART;
-  const token = /^\S+\s+(.+)$/.exec(value.trim())?.[1].trim();
+  const token = KNOWN_SCHEME.exec(value.trim())?.[1].trim();
   return token !== undefined && token.length < MIN_SECRET_PART;
 }
 
@@ -528,6 +538,7 @@ export function validateUpstreamBag(placements: readonly UpstreamPartPlacement[]
   if (!unique(parts.filter((p) => p.in === "query").map((p) => p.name))) throw new UpstreamAuthError("Each query parameter can be used once.");
   const secrets = parts.filter((_, i) => !fixed.has(i)).map((p) => p.value);
   if (secrets.length === 0) throw new UpstreamAuthError("At least one part must be the secret key, not fixed text.");
+  if (secrets.some(schemeSecretTooShort)) throw new UpstreamAuthError("The key after the word before it looks too short. Paste the whole key.");
   if (bag.leak.length > MAX_UPSTREAM_LEAK_ENTRIES) throw new UpstreamAuthError("The key has too many secret parts.");
   if (bag.leak.some((l) => l.length < MIN_SECRET_PART || l.length > MAX_UPSTREAM_SECRET_LENGTH)) {
     throw new UpstreamAuthError("Each secret must be 8 to 4096 characters.");

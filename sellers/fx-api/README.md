@@ -22,5 +22,6 @@ Same as `sellers/price-api` (see its README): `POST /admin/break {"mode":"ok"|"e
 | `PUBLIC_URL` | `servers[0]` in the spec |
 | `API_TITLE` | the spec's `info.title`, the listing's name (default "Mika's FX Rates") |
 | `ADMIN_TOKEN` | enables `/admin/*` (break switch, verification code) |
+| `API_KEY` | when set, `/rate` and `/convert` need it in `X-API-Key` (401 otherwise) and the spec declares it, so Hirakumi asks the seller for it; its publish gate needs this |
 | `HIRAKUMI_CHALLENGE` | `{"api_xxx":"hkv_..."}` verification codes; the last entry is sent as the header |
 | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | optional shared break-switch store (required on Vercel) |

@@ -24,6 +24,23 @@ describe("loadConfig", () => {
     expect(c).toMatchObject({ port: 5000, demoMode: true, probeIntervalMs: 10_000, thresholds: { failsToDown: 2, passesToHeal: 2 } });
     expect(estimatedDowntimeSeconds(c)).toBe(20);
   });
+  it("DNS_RESOLVERS: public resolvers by default, a comma list of IPs, and never a name", () => {
+    expect(loadConfig(env).dnsResolvers).toEqual(["1.1.1.1", "8.8.8.8"]);
+    expect(loadConfig({ ...env, DNS_RESOLVERS: " " }).dnsResolvers).toEqual(["1.1.1.1", "8.8.8.8"]);
+    expect(loadConfig({ ...env, DNS_RESOLVERS: "9.9.9.9, 2620:fe::fe" }).dnsResolvers).toEqual(["9.9.9.9", "2620:fe::fe"]);
+    expect(() => loadConfig({ ...env, DNS_RESOLVERS: "dns.google" })).toThrow(/DNS_RESOLVERS: "dns.google" is not an IP address/);
+  });
+  it("front door: EDGE_IPS (IPs only, default 52.70.235.103), WEB_BASE_URL (optional URL), TLS_ASK_PORT (default 4022)", () => {
+    const c = loadConfig(env);
+    expect(c).toMatchObject({ edgeIps: ["52.70.235.103"], webBaseUrl: null, tlsAskPort: 4022, domainRecheckMs: 6 * 3_600_000 });
+    expect(loadConfig({ ...env, EDGE_IPS: "1.2.3.4, 2600:1F18::1,1.2.3.4" }).edgeIps).toEqual(["1.2.3.4", "2600:1f18::1"]);
+    expect(() => loadConfig({ ...env, EDGE_IPS: "edge.example.com" })).toThrow(/EDGE_IPS/);
+    expect(loadConfig({ ...env, WEB_BASE_URL: "https://hirakumi.vercel.app/" }).webBaseUrl).toBe("https://hirakumi.vercel.app");
+    expect(() => loadConfig({ ...env, WEB_BASE_URL: "hirakumi" })).toThrow(/WEB_BASE_URL/);
+    expect(() => loadConfig({ ...env, WEB_BASE_URL: "ftp://x.com" })).toThrow(/WEB_BASE_URL/);
+    expect(loadConfig({ ...env, TLS_ASK_PORT: "5022" }).tlsAskPort).toBe(5022);
+    expect(() => loadConfig({ ...env, TLS_ASK_PORT: "x" })).toThrow(/TLS_ASK_PORT/);
+  });
   it("GATEWAY_PORT: blank means the default; anything but a port number 1-65535 is refused", () => {
     expect(loadConfig({ ...env, GATEWAY_PORT: "" }).port).toBe(4021);
     expect(loadConfig({ ...env, GATEWAY_PORT: " 8080 " }).port).toBe(8080);

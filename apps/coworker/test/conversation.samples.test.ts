@@ -191,7 +191,7 @@ describe("keys in comments", () => {
 });
 
 describe("the ownership step for an API without an OpenAPI file", () => {
-  it("says to send the X-Hirakumi-Verify header at the base URL, the same as for an OpenAPI link, and to add the key on the same page", async () => {
+  it("says to add the DNS TXT record, the same as for an OpenAPI link, and to add the key on the same page", async () => {
     const t = newTask();
     const sellerId = await linkSeller(t.userId);
     const { reply } = await run(t);
@@ -206,12 +206,12 @@ describe("the ownership step for an API without an OpenAPI file", () => {
     await reply("sell 1");
     const body = (await messagesForTask(t.id)).at(-1)?.body ?? "";
     expect(body).toBe(
-      "Step 4 of 7, Prove ownership: Prove you own https://s.example.dev/v1: make your API send the header X-Hirakumi-Verify with the code from this page on responses at your base URL " +
-      `(any status counts, even a 404 page), then sign once with your Cardano wallet (no payment): ${WEB}/apis/${apiId}/ownership Your API needs a key (a bearer token in the Authorization header): add it on the same page. Never paste it in a comment.`,
+      "Step 4 of 7, Prove ownership: Prove you own https://s.example.dev/v1: add one DNS TXT record with the name and code from this page " +
+      `(your API itself doesn't change), then sign once with your Cardano wallet (no payment): ${WEB}/apis/${apiId}/ownership Your API needs a key (a bearer token in the Authorization header): add it on the same page. Never paste it in a comment.`,
     );
     await reply("what now?");
     const help = (await messagesForTask(t.id)).at(-1)?.body ?? "";
-    expect(help).toContain("Next, prove you own https://s.example.dev/v1: make your API send the header X-Hirakumi-Verify");
+    expect(help).toContain("Next, prove you own https://s.example.dev/v1: add one DNS TXT record");
     expect(help).not.toContain("hirakumi-verify.json");
   });
 });

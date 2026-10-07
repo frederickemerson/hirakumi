@@ -3,9 +3,13 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getAuth } from "@/lib/auth-client";
+import { forgetEmailWallet } from "@/lib/utxos-wallet";
 import { dedupeWallets, listWallets, type Cip30Api } from "@/lib/wallet-client";
 import { jsonResponse } from "@/test/http";
 import { WalletLogin } from "./wallet-login";
+
+const sdk = vi.hoisted(() => ({ enable: vi.fn() }));
+vi.mock("@utxos/sdk", () => ({ Web3Wallet: { enable: sdk.enable } }));
 
 const nav = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => nav }));
@@ -87,7 +91,6 @@ describe("WalletLogin", () => {
     const signData = vi.fn(async () => ({ signature: "84a1", key: "a401" }));
     installWallet({ signData });
     const fetchMock = routeFetch({
-      "/api/wallet/preprod-funds": () => jsonResponse({ status: "funded" }),
       "/api/auth/nonce": () => jsonResponse({ address: "addr_test1qq", message: "Sign in to Hirakumi", nonceToken: "n.t" }),
       "/api/auth/verify": () => jsonResponse({ sellerId: "sel_1", address: "addr_test1qq" }),
     });
@@ -99,33 +102,26 @@ describe("WalletLogin", () => {
     // The header learns about the new session without a reload.
     expect(getAuth()).toEqual({ status: "in", address: "addr_test1qq" });
     expect(signData).toHaveBeenCalledWith("00abcd", Buffer.from("Sign in to Hirakumi").toString("hex"));
-    expect(bodyOf(fetchMock, "/api/wallet/preprod-funds")).toEqual({ addresses: ["00abcd"] });
     expect(bodyOf(fetchMock, "/api/auth/nonce")).toEqual({ address: "00abcd" });
     expect(bodyOf(fetchMock, "/api/auth/verify")).toEqual({ nonceToken: "n.t", signature: "84a1", key: "a401" });
   });
 
-  it("warns about a wallet with no preprod funds and still lets the seller sign in", async () => {
+  it("signs a wallet with no funds straight in: signing in needs no funds", async () => {
     installWallet();
-    routeFetch({
-      "/api/wallet/preprod-funds": () => jsonResponse({ status: "empty" }),
+    const fetchMock = routeFetch({
       "/api/auth/nonce": () => jsonResponse({ address: "a", message: "m", nonceToken: "n" }),
       "/api/auth/verify": () => jsonResponse({ sellerId: "s", address: "a" }),
     });
-    const user = userEvent.setup();
     render(<WalletLogin next="/apis" />);
-    await user.click(await screen.findByRole("button", { name: "Log in with Test Wallet" }));
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("This wallet has no preprod funds. Get test ADA from the Cardano faucet");
-    expect(within(alert).getByRole("link", { name: "Cardano faucet" })).toHaveAttribute("href", "https://docs.cardano.org/cardano-testnets/tools/faucet");
-    expect(nav.push).not.toHaveBeenCalled();
-    await user.click(within(alert).getByRole("button", { name: "Log in anyway" }));
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Log in with Test Wallet" }));
     await vi.waitFor(() => expect(nav.push).toHaveBeenCalledWith("/apis"));
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes("preprod-funds"))).toBe(false);
+    expect(screen.queryByText(/no preprod funds/)).toBeNull();
   });
 
   it("explains a cancelled signature", async () => {
     installWallet({ signData: async () => Promise.reject({ code: 3, info: "user declined" }) });
     routeFetch({
-      "/api/wallet/preprod-funds": () => jsonResponse({ status: "unknown" }),
       "/api/auth/nonce": () => jsonResponse({ address: "a", message: "m", nonceToken: "n" }),
     });
     render(<WalletLogin next="/apis" />);
@@ -147,11 +143,68 @@ describe("WalletLogin", () => {
   it("shows the server's plain-English error", async () => {
     installWallet();
     routeFetch({
-      "/api/wallet/preprod-funds": () => jsonResponse({ status: "funded" }),
       "/api/auth/nonce": () => jsonResponse({ error: "Switch your wallet to the Cardano preprod test network, then try again." }, 400),
     });
     render(<WalletLogin next="/apis" />);
     await userEvent.setup().click(await screen.findByRole("button", { name: "Log in with Test Wallet" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Switch your wallet to the Cardano preprod test network");
+  });
+});
+
+describe("WalletLogin with the email wallet", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    sdk.enable.mockReset();
+    forgetEmailWallet();
+  });
+
+  it("is not offered when NEXT_PUBLIC_UTXOS_PROJECT_ID is unset", async () => {
+    vi.stubEnv("NEXT_PUBLIC_UTXOS_PROJECT_ID", "");
+    installWallet();
+    render(<WalletLogin next="/apis" />);
+    await screen.findByRole("button", { name: "Log in with Test Wallet" });
+    expect(screen.queryByRole("button", { name: "Continue with email or Google" })).toBeNull();
+  });
+
+  it("is offered next to the browser's wallets, and alone (with where to get an extension) when there are none", async () => {
+    vi.stubEnv("NEXT_PUBLIC_UTXOS_PROJECT_ID", "proj");
+    installWallet();
+    const { unmount } = render(<WalletLogin next="/apis" />);
+    expect(await screen.findByRole("button", { name: "Log in with Test Wallet" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Continue with email or Google" })).toBeInTheDocument();
+    expect(screen.queryByText(/No extension was found/)).toBeNull();
+    unmount();
+    delete window.cardano;
+    render(<WalletLogin next="/apis" />);
+    expect(await screen.findByRole("button", { name: "Continue with email or Google" }, { timeout: 4000 })).toBeInTheDocument();
+    expect(screen.getByText("Prefer a browser wallet? No extension was found in this browser.")).toBeInTheDocument();
+  });
+
+  it("connects on the first click, signs the same server message on the second, with the bech32 address", async () => {
+    vi.stubEnv("NEXT_PUBLIC_UTXOS_PROJECT_ID", "proj");
+    const signData = vi.fn(async () => ({ signature: "84a1", key: "a401" }));
+    sdk.enable.mockResolvedValue({
+      cardano: {
+        getNetworkId: async () => 0, getChangeAddress: async () => "00abcd", getChangeAddressBech32: async () => "addr_test1qq",
+        getUsedAddresses: async () => ["00abcd"], signData, signTx: async () => "",
+      },
+    });
+    const fetchMock = routeFetch({
+      "/api/auth/nonce": () => jsonResponse({ address: "addr_test1qq", message: "Sign in to Hirakumi", nonceToken: "n.t" }),
+      "/api/auth/verify": () => jsonResponse({ sellerId: "sel_1", address: "addr_test1qq" }),
+    });
+    const user = userEvent.setup();
+    render(<WalletLogin next="/apis" />);
+    const button = await screen.findByRole("button", { name: "Continue with email or Google" }, { timeout: 4000 });
+    await user.click(button);
+    expect(await screen.findByText(/Your email wallet is connected/)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(signData).not.toHaveBeenCalled();
+    await user.click(button);
+    await vi.waitFor(() => expect(nav.push).toHaveBeenCalledWith("/apis"));
+    expect(sdk.enable).toHaveBeenCalledTimes(1);
+    expect(signData).toHaveBeenCalledWith("addr_test1qq", Buffer.from("Sign in to Hirakumi").toString("hex"));
+    expect(bodyOf(fetchMock, "/api/auth/nonce")).toEqual({ address: "00abcd" });
+    expect(bodyOf(fetchMock, "/api/auth/verify")).toEqual({ nonceToken: "n.t", signature: "84a1", key: "a401" });
   });
 });

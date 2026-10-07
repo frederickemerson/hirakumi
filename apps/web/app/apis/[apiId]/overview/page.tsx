@@ -6,6 +6,7 @@ import { BuyerSnippet } from "@/components/buyer-snippet";
 import { HealthBadge } from "@/components/health-badge";
 import { LiveMoment } from "@/components/live-moment";
 import { LiveProgress } from "@/components/live-progress";
+import { ProtectLink } from "@/components/protect-link";
 import { RetireButton } from "@/components/retire-button";
 import { PackSalesTable } from "@/components/sales-tables";
 import { EmptyState, WaitingState } from "@/components/states";
@@ -13,12 +14,14 @@ import { sellerTryHref, TryLiveLink } from "@/components/try-live-link";
 import { UpstreamAuthForm } from "@/components/upstream-auth-form";
 import { OverviewStatGrid } from "@/components/stat";
 import { formatTime } from "@/lib/copy";
+import { undoSteps } from "@/lib/front-door";
 import { getSql } from "@/lib/db";
 import { env } from "@/lib/env";
 import { firstFailedStep, stepForState } from "@/lib/flow";
 import { getGateway } from "@/lib/gateway";
 import { loadApiPage } from "@/lib/page-auth";
 import { listOnboardSteps } from "@/lib/repo/apis";
+import { getFrontDoorSummary } from "@/lib/repo/front-door";
 import { getPack } from "@/lib/repo/packs";
 import { listLatestRules } from "@/lib/repo/rules";
 import { hasAnyApiSchema } from "@/lib/repo/schema";
@@ -42,10 +45,10 @@ export default async function OverviewPage({ params }: { params: Promise<{ apiId
     redirect(`/apis/${apiId}/${stepForState(api.state)}`);
   }
   const sql = getSql();
-  const [stats, incidents, pack, promises, sales, steps, upstreamAuth, keysOn] = await Promise.all([
+  const [stats, incidents, pack, promises, sales, steps, upstreamAuth, keysOn, frontDoor] = await Promise.all([
     getOverviewStats(sql, apiId), listIncidents(sql, apiId), getPack(sql, apiId),
     listLatestRules(sql, apiId), listPackSales(sql, apiId, 5), listOnboardSteps(sql, apiId), getUpstreamAuth(sql, apiId),
-    hasAnyApiSchema(sql),
+    hasAnyApiSchema(sql), getFrontDoorSummary(sql, apiId),
   ]);
   const downReasons = api.state === "live" && api.health === "down"
     ? await getGateway().getHealth(apiId).then((h) => h.lastReasons).catch(() => [])
@@ -144,7 +147,11 @@ export default async function OverviewPage({ params }: { params: Promise<{ apiId
           v3={env.upstreamAuthV3()} egressIps={env.gatewayEgressIps()} keyInAddress={api.pathPrefix.split("/").some(valueLooksLikeKey)} />
       )}
 
-      {api.state === "live" && <RetireButton apiId={apiId} name={api.name} />}
+      {api.state !== "retired" && <ProtectLink apiId={apiId} frontDoor={frontDoor} />}
+
+      {api.state === "live" && (
+        <RetireButton apiId={apiId} name={api.name} undo={undoSteps({ frontDoorHost: frontDoor?.host ?? null, hadKey: upstreamAuth !== null })} />
+      )}
     </section>
   );
 }

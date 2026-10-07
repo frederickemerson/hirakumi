@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { WALLETS_CHANGED } from "@/components/phone-wallet-connect";
-import { isMobileBrowser, listWallets, sameWallets, type WalletInfo } from "@/lib/wallet-client";
+import { isEmailWallet, isMobileBrowser, listWallets, sameWallets, type WalletInfo } from "@/lib/wallet-client";
 
 const LOOK_EVERY_MS = 300;
 const LOOK_FOR_MS = 3_000;
@@ -19,7 +19,8 @@ export function useWallets(): WalletInfo[] | null {
     const look = () => {
       const found = listWallets();
       const searching = Date.now() - startedAt < LOOK_FOR_MS;
-      if (found.length === 0 && searching) return;
+      // The email wallet is always there at once; keep waiting for a slow extension all the same.
+      if (!found.some((w) => !isEmailWallet(w)) && searching) return;
       setWallets((prev) => (sameWallets(prev, found) ? prev : found));
     };
     look();
@@ -40,6 +41,9 @@ export function useWallets(): WalletInfo[] | null {
   }, []);
   return wallets;
 }
+
+/** True when the only way to sign here is the email wallet: say where to get an extension too. */
+export const onlyEmailWallet = (wallets: WalletInfo[]) => wallets.length > 0 && wallets.every(isEmailWallet);
 
 /** True after hydration on a phone or tablet browser. */
 export function useIsMobile(): boolean {
@@ -62,11 +66,13 @@ export const GET_A_WALLET = [
   { name: "Typhon", href: "https://typhonwallet.io" },
 ] as const;
 
+export const BROWSER_WALLET_TOO = "Prefer a browser wallet? No extension was found in this browser.";
+
 /** No wallet in this browser: where to get one, and the one setting that matters. */
-export function GetAWallet() {
+export function GetAWallet({ title = "No Cardano wallet found in this browser." }: { title?: string }) {
   return (
     <div className="space-y-4">
-      <p className="text-body-lg font-medium">No Cardano wallet found in this browser.</p>
+      <p className="text-body-lg font-medium">{title}</p>
       <div>
         <h2 className="text-caption font-semibold uppercase tracking-[0.04em]">Get a wallet</h2>
         <ul className="mt-2 divide-y divide-silver rounded-[2px] border-2 border-ink bg-frost">

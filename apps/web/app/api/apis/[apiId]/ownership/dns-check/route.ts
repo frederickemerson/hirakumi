@@ -1,19 +1,16 @@
 import { GatewayError, getGateway, type ChallengeCheck } from "@/lib/gateway";
 import { errorJson, json, type ApiRouteContext } from "@/lib/http";
 import { getOrCreateVerifyCode, markVerifyPassed } from "@/lib/repo/challenges";
-import { updatingResponse } from "@/lib/repo/schema";
+import { ownershipUpdatingResponse } from "@/lib/repo/schema";
 import { loadOwnedApi, wrongStep } from "@/lib/route-helpers";
 
-/**
- * Asks the gateway to request this API's base URL once and look for its code in the X-Hirakumi-Verify response
- * header (any status). The route keeps its old name: the ownership panel calls it.
- */
+/** Asks the gateway to look up the TXT record at _hirakumi.<host> for this API's code. Records the pass. */
 export async function POST(req: Request, ctx: ApiRouteContext): Promise<Response> {
   const loaded = await loadOwnedApi(req, ctx);
   if (loaded instanceof Response) return loaded;
   const { api, sql } = loaded;
-  // The verification code is a challenge of kind 'header', which needs migration 0015.
-  const updating = await updatingResponse(sql);
+  // The verification code is a challenge of kind 'dns', which needs migration 0018.
+  const updating = await ownershipUpdatingResponse(sql);
   if (updating) return updating;
   if (api.state !== "endpoints_confirmed") return wrongStep(api);
   // Only the owning seller reaches this line (loadOwnedApi), and the code belongs to this API alone.
@@ -28,6 +25,6 @@ export async function POST(req: Request, ctx: ApiRouteContext): Promise<Response
     }
     throw e;
   }
-  if (result.ok) await markVerifyPassed(sql, code.id, result.triedUrl);
+  if (result.ok) await markVerifyPassed(sql, code.id, result.record);
   return json(result);
 }

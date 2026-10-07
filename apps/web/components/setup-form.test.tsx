@@ -25,6 +25,32 @@ describe("SetupForm", () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ openapiUrl: "https://price.example.dev/openapi.json", name: "" });
   });
 
+  it("says an API already live is already monetized, and links to it instead of jumping there", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ apiId: "api_1", state: "live", name: "Live Crypto Prices", created: false }, 200)));
+    const user = userEvent.setup();
+    render(<SetupForm initialUrl="" />);
+    await user.type(screen.getByLabelText("OpenAPI link"), "https://price.example.dev/openapi.json");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    const notice = await screen.findByTestId("already-listed");
+    expect(notice).toHaveTextContent("This API is already monetized on Hirakumi.");
+    expect(screen.getByRole("link", { name: "Open Live Crypto Prices" })).toHaveAttribute("href", "/apis/api_1/overview");
+    expect(screen.getByRole("link", { name: "Its public page" })).toHaveAttribute("href", "/p/api_1");
+    expect(nav.push).not.toHaveBeenCalled();
+    expect(notice.textContent).not.toMatch(/[–—]/);
+  });
+
+  it("says an API still being listed was already started, and continues it on request", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ apiId: "api_2", state: "endpoints_confirmed", name: "FX", created: false }, 200)));
+    const user = userEvent.setup();
+    render(<SetupForm initialUrl="" />);
+    await user.type(screen.getByLabelText("OpenAPI link"), "https://fx.example.dev/openapi.json");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByText("You already started listing this API.")).toBeInTheDocument();
+    expect(nav.push).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Continue listing FX" }));
+    expect(nav.push).toHaveBeenCalledWith("/apis/api_2/endpoints");
+  });
+
   it("shows the server's error next to the form", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ error: "The link must start with https://" }, 400)));
     render(<SetupForm initialUrl="http://price.example.dev" />);

@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import { ExposureCard, KEY_FORM_ID } from "@/components/exposure-card";
 import { ReviewPanel } from "@/components/review-panel";
 import { LiveProgress } from "@/components/live-progress";
+import { ProtectLink } from "@/components/protect-link";
 import { UpstreamAuthForm } from "@/components/upstream-auth-form";
 import { ErrorState, NoticeList, WaitingState } from "@/components/states";
 import { getSql } from "@/lib/db";
@@ -9,6 +11,8 @@ import { env } from "@/lib/env";
 import { stepForState } from "@/lib/flow";
 import { loadApiPage } from "@/lib/page-auth";
 import { listingBaseNotes } from "@/lib/repo/apis";
+import { getFrontDoorSummary } from "@/lib/repo/front-door";
+import { getStoredExposure } from "@/lib/repo/exposure";
 import { loadProgress } from "@/lib/repo/progress";
 import { getPack } from "@/lib/repo/packs";
 import { hasAnyApiSchema } from "@/lib/repo/schema";
@@ -53,9 +57,10 @@ export default async function ReviewPage({ params }: { params: Promise<{ apiId: 
   }
   if (api.state !== "rule_built" && api.state !== "priced") redirect(`/apis/${apiId}/${stepForState(api.state)}`);
 
-  const [promises, pack, upstreamAuth, suggestedPhrases] = await Promise.all([
-    listLatestRules(sql, apiId), getPack(sql, apiId), getUpstreamAuth(sql, apiId), getSuggestedPhrases(sql, apiId),
+  const [promises, pack, upstreamAuth, suggestedPhrases, exposure] = await Promise.all([
+    listLatestRules(sql, apiId), getPack(sql, apiId), getUpstreamAuth(sql, apiId), getSuggestedPhrases(sql, apiId), getStoredExposure(sql, apiId),
   ]);
+  const frontDoor = await getFrontDoorSummary(sql, apiId);
   return (
     <section className="space-y-6">
       {heading}
@@ -65,9 +70,19 @@ export default async function ReviewPage({ params }: { params: Promise<{ apiId: 
       ) : (
         <ReviewPanel apiId={apiId} state={api.state} promises={promises} pack={pack} suggestedPhrases={suggestedPhrases} />
       )}
-      {/* For key rotation before publishing: a new key takes effect on the next call. */}
-      {keysOn && <UpstreamAuthForm apiId={apiId} initial={upstreamAuth} hint={null} title="Your API's key"
-        v3={env.upstreamAuthV3()} egressIps={env.gatewayEgressIps()} />}
+      {/* Publishing needs every endpoint to refuse calls without the key; the publish route runs this check again. */}
+      {promises.length > 0 && (
+        <ExposureCard apiId={apiId}
+          initial={exposure ? { exposure: exposure.exposure, checkedAt: exposure.checkedAt?.toISOString() ?? null } : null} />
+      )}
+      {/* The key the leak check points to, and key rotation before publishing: a new key takes effect on the next call. */}
+      {keysOn && (
+        <div id={KEY_FORM_ID}>
+          <UpstreamAuthForm apiId={apiId} initial={upstreamAuth} hint={null} title="Your API's key"
+            v3={env.upstreamAuthV3()} egressIps={env.gatewayEgressIps()} />
+        </div>
+      )}
+      <ProtectLink apiId={apiId} frontDoor={frontDoor} />
     </section>
   );
 }

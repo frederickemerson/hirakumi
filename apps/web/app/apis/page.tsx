@@ -1,17 +1,15 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { RefreshingDeleteApiButton } from "@/components/delete-api-button";
-import { HealthBadge } from "@/components/health-badge";
 import { EmptyState } from "@/components/states";
+import { StatusLight } from "@/components/status-light";
 import { sellerTryHref, TryLiveLink } from "@/components/try-live-link";
-import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
-import { shortAddress, STATE_LABEL } from "@/lib/copy";
+import { shortAddress } from "@/lib/copy";
 import { getSql } from "@/lib/db";
 import { requireSellerPage } from "@/lib/page-auth";
 import { listApisForSeller, listRecordsKept, listStoppedApiIds } from "@/lib/repo/apis";
-import { apiStatus, STATUS_BADGE_VARIANT } from "@/lib/status-labels";
-import type { Api } from "@/lib/types";
+import { apiStatus } from "@/lib/status-labels";
 
 export const metadata: Metadata = { title: "Your APIs" };
 
@@ -37,13 +35,11 @@ export default async function ApisPage() {
         <ul className="divide-y-2 divide-ink rounded-[2px] border-2 border-ink bg-frost">
           {apis.map((a) => (
             <li key={a.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
-              <Link href={`/apis/${a.id}`} className="text-body-lg font-medium underline-offset-4 hover:underline">{a.name}</Link>
-              <div className="flex flex-wrap items-center gap-3">
-                {a.state === "live" ? (
-                  <HealthBadge state={a.state} health={a.health} checkedAt={a.healthCheckedAt} />
-                ) : (
-                  <ApiStatusBadge state={a.state} health={a.health} stopped={stopped.has(a.id)} />
-                )}
+              <div className="flex min-w-0 items-center gap-2.5">
+                <StatusLight tone={apiStatus(a.state, a.health, stopped.has(a.id)).tone} state={a.state} />
+                <Link href={`/apis/${a.id}`} className="min-w-0 text-body-lg font-medium break-words underline-offset-4 hover:underline">{a.name}</Link>
+              </div>
+              <div className="ml-auto flex flex-wrap items-center gap-3">
                 <TryLiveLink apiId={a.id} state={a.state} health={a.health} variant="outline" size="sm" href={sellerTryHref(a.id)} />
                 <RefreshingDeleteApiButton api={{ id: a.id, name: a.name, state: a.state, recordsKept: recordsKept.get(a.id) ?? null }} />
               </div>
@@ -55,16 +51,5 @@ export default async function ApisPage() {
         <button type="submit" className="text-body underline underline-offset-4 hover:text-graphite">Log out</button>
       </form>
     </section>
-  );
-}
-
-/** The same label /account shows (lib/status-labels), with where the API stands while it is being listed. */
-function ApiStatusBadge({ state, health, stopped }: { state: Api["state"]; health: Api["health"]; stopped: boolean }) {
-  const status = apiStatus(state, health, stopped);
-  return (
-    <span className="inline-flex flex-wrap items-center gap-2">
-      <Badge variant={STATUS_BADGE_VARIANT[status.tone]}>{status.label}</Badge>
-      {state !== "retired" && <span className="text-caption text-graphite">{STATE_LABEL[state]}</span>}
-    </span>
   );
 }
