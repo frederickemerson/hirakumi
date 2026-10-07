@@ -14,6 +14,7 @@ import { type EXTRA_QUESTIONS, type LANDING_QUESTIONS, type SUGGESTED_QUESTIONS,
  * - app/apis/[apiId]/review/page.tsx (at least 5 test calls per endpoint)
  * - components/upstream-auth-form.tsx and @hirakumi/core upstreamAuth.ts (API keys: sealed for the gateway, never shown)
  * - @hirakumi/core rules.ts (JSON and text answers; binary answers are refused)
+ * - lib/exposure.ts and app/api/apis/[apiId]/publish/route.ts (the leak check: publishing needs calls without the key refused)
  */
 
 const FACTS = `
@@ -56,6 +57,7 @@ APIS THAT NEED A KEY
 - The gateway sends the key only to this API's own address, the proven origin and folder, and never follows redirects. An answer that contains the key is withheld from the buyer. That check catches the key as is and in common encodings, not every possible one, so a header is safer than a query parameter: a key in the address can leak in logs and error messages.
 - After saving, the key is never shown again. The seller only sees its name, where it goes and its last 4 characters. To change it they replace it.
 - If the test calls get 401 or 403, the API needs a key that Hirakumi doesn't have yet. The review page then shows the key form: saving or removing the key there runs the test calls again.
+- Publishing needs the API to refuse calls without its key, because an API anyone can call for free would never sell. When the seller publishes, Hirakumi calls each endpoint once without the key; if one gives a good answer, publishing is refused until the API requires a key and the key is added on the review page. If the check can't reach the API, publishing waits until "Check again" on the review page gets an answer. Listings already live stay live.
 
 ANSWER FORMATS
 - JSON answers are checked field by field against the promise.

@@ -6,7 +6,7 @@ import { createSessionToken } from "@/lib/session";
 import { statusLight } from "@/lib/status-labels";
 import { resetDb } from "@/test/db";
 import { getAccount } from "@/lib/repo/account";
-import { seedApi, seedOnboardStep, seedSeller } from "@/test/factories";
+import { seedApi, seedOnboardStep, seedOperation, seedRule, seedSeller } from "@/test/factories";
 import AccountPage from "./account/page";
 import ApisPage, { metadata as apisMetadata } from "./apis/page";
 import ApiLayout, { generateMetadata as apiLayoutMetadata } from "./apis/[apiId]/layout";
@@ -142,5 +142,29 @@ describe("key rotation before publishing", () => {
     expect(screen.getByRole("heading", { name: "Your API's key" })).toBeInTheDocument();
     expect(screen.getByTestId("upstream-auth-current")).toHaveTextContent("X-API-Key in header, ending in WXYZ");
     expect(document.body.textContent).not.toContain("hks1");
+  });
+});
+
+describe("the leak check on the review page", () => {
+  it("shows the stored result and points to the key form", async () => {
+    const api = await seedApi(sellerId, "priced");
+    const op = await seedOperation(api.id, { enabled: true });
+    await seedRule(op.id);
+    await getSql()`update apis set exposure = 'open', exposure_checked_at = '2026-10-07T17:20:00Z' where id = ${api.id}`;
+    render(await ReviewPage({ params: Promise.resolve({ apiId: api.id }) }));
+    expect(screen.getByTestId("exposure-card")).toHaveAttribute("data-exposure", "open");
+    expect(screen.getByTestId("exposure-text")).toHaveTextContent(/^Anyone can call your API for free without its key/);
+    expect(screen.getByText("Checked 2026-10-07 17:20 UTC")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Add your API's key" })).toHaveAttribute("href", "#api-key");
+    expect(document.getElementById("api-key")).toContainElement(screen.getByRole("heading", { name: "Your API's key" }));
+  });
+
+  it("offers the first check on an API never checked", async () => {
+    const api = await seedApi(sellerId, "rule_built");
+    const op = await seedOperation(api.id, { enabled: true });
+    await seedRule(op.id);
+    render(await ReviewPage({ params: Promise.resolve({ apiId: api.id }) }));
+    expect(screen.getByTestId("exposure-card")).toHaveAttribute("data-exposure", "unknown");
+    expect(screen.getByRole("button", { name: "Check now" })).toBeInTheDocument();
   });
 });
