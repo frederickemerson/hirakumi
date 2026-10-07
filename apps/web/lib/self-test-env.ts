@@ -1,8 +1,10 @@
 import { env } from "./env";
-import { DEFAULT_BLOCKFROST_PREPROD } from "./preprod-funds";
 import { createSelfTestHandlers } from "./self-test";
 import { evolutionBuilder, SelfPayError } from "./self-test-wallet";
 import { createRateLimiter } from "./try";
+
+/** Blockfrost preprod, when BLOCKFROST_BASE_URL is unset. */
+const DEFAULT_BLOCKFROST_PREPROD = "https://cardano-preprod.blockfrost.io/api/v0";
 
 // Per instance, like the public try routes: one purchase step every 5 s, one call every 3 s.
 const allowBuy = createRateLimiter(5_000);

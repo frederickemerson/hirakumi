@@ -91,7 +91,6 @@ describe("WalletLogin", () => {
     const signData = vi.fn(async () => ({ signature: "84a1", key: "a401" }));
     installWallet({ signData });
     const fetchMock = routeFetch({
-      "/api/wallet/preprod-funds": () => jsonResponse({ status: "funded" }),
       "/api/auth/nonce": () => jsonResponse({ address: "addr_test1qq", message: "Sign in to Hirakumi", nonceToken: "n.t" }),
       "/api/auth/verify": () => jsonResponse({ sellerId: "sel_1", address: "addr_test1qq" }),
     });
@@ -103,33 +102,26 @@ describe("WalletLogin", () => {
     // The header learns about the new session without a reload.
     expect(getAuth()).toEqual({ status: "in", address: "addr_test1qq" });
     expect(signData).toHaveBeenCalledWith("00abcd", Buffer.from("Sign in to Hirakumi").toString("hex"));
-    expect(bodyOf(fetchMock, "/api/wallet/preprod-funds")).toEqual({ addresses: ["00abcd"] });
     expect(bodyOf(fetchMock, "/api/auth/nonce")).toEqual({ address: "00abcd" });
     expect(bodyOf(fetchMock, "/api/auth/verify")).toEqual({ nonceToken: "n.t", signature: "84a1", key: "a401" });
   });
 
-  it("warns about a wallet with no preprod funds and still lets the seller sign in", async () => {
+  it("signs a wallet with no funds straight in: signing in needs no funds", async () => {
     installWallet();
-    routeFetch({
-      "/api/wallet/preprod-funds": () => jsonResponse({ status: "empty" }),
+    const fetchMock = routeFetch({
       "/api/auth/nonce": () => jsonResponse({ address: "a", message: "m", nonceToken: "n" }),
       "/api/auth/verify": () => jsonResponse({ sellerId: "s", address: "a" }),
     });
-    const user = userEvent.setup();
     render(<WalletLogin next="/apis" />);
-    await user.click(await screen.findByRole("button", { name: "Log in with Test Wallet" }));
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("This wallet has no preprod funds. Get test ADA from the Cardano faucet");
-    expect(within(alert).getByRole("link", { name: "Cardano faucet" })).toHaveAttribute("href", "https://docs.cardano.org/cardano-testnets/tools/faucet");
-    expect(nav.push).not.toHaveBeenCalled();
-    await user.click(within(alert).getByRole("button", { name: "Log in anyway" }));
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Log in with Test Wallet" }));
     await vi.waitFor(() => expect(nav.push).toHaveBeenCalledWith("/apis"));
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes("preprod-funds"))).toBe(false);
+    expect(screen.queryByText(/no preprod funds/)).toBeNull();
   });
 
   it("explains a cancelled signature", async () => {
     installWallet({ signData: async () => Promise.reject({ code: 3, info: "user declined" }) });
     routeFetch({
-      "/api/wallet/preprod-funds": () => jsonResponse({ status: "unknown" }),
       "/api/auth/nonce": () => jsonResponse({ address: "a", message: "m", nonceToken: "n" }),
     });
     render(<WalletLogin next="/apis" />);
@@ -151,7 +143,6 @@ describe("WalletLogin", () => {
   it("shows the server's plain-English error", async () => {
     installWallet();
     routeFetch({
-      "/api/wallet/preprod-funds": () => jsonResponse({ status: "funded" }),
       "/api/auth/nonce": () => jsonResponse({ error: "Switch your wallet to the Cardano preprod test network, then try again." }, 400),
     });
     render(<WalletLogin next="/apis" />);
@@ -199,7 +190,6 @@ describe("WalletLogin with the email wallet", () => {
       },
     });
     const fetchMock = routeFetch({
-      "/api/wallet/preprod-funds": () => jsonResponse({ status: "funded" }),
       "/api/auth/nonce": () => jsonResponse({ address: "addr_test1qq", message: "Sign in to Hirakumi", nonceToken: "n.t" }),
       "/api/auth/verify": () => jsonResponse({ sellerId: "sel_1", address: "addr_test1qq" }),
     });
