@@ -42,6 +42,12 @@ mika.{$PUBLIC_DOMAIN} {
 	reverse_proxy mika-api:4100
 }
 
+# A third demo seller (sellers/weather-api) on a hostname whose DNS the team edits (an A record to this host).
+weather.patricksteveharrison.com {
+	encode zstd gzip
+	reverse_proxy weather-api:4100
+}
+
 # Every other hostname: a seller's front door. The gateway answers it by Host (apps/gateway/src/frontDoor.ts) and
 # never serves its own routes there. Sites above match first, so this only sees front-door hosts.
 https:// {
