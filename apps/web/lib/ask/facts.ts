@@ -94,9 +94,9 @@ WHEN AN API IS DOWN
 - Hirakumi checks each Live API on a schedule against its promise. After 2 failed checks it shows as Down: the gateway answers 503 before any payment, no credits are used, Masumi marks the agent Offline, and the public status page shows the outage.
 
 WHERE THE MONEY SITS (is my money safe?)
-- Escrow packs, the default: the pack payment locks in a Cardano contract (Aiken, Plutus V3, 175 contract tests), never with Hirakumi. The buyer signs for each answer that kept the promise; when the pack closes the seller is paid for the signed calls less Hirakumi's 3% fee, and everything else goes back to the buyer. The buyer can always exit with everything unsigned. Hirakumi closes a pack once its calls are used up or the buyer asks.
+- Settlement is chosen per purchase (hybrid, the default). Escrow packs, for a large pack, a newer or less proven seller, or whenever the buyer asks: the pack payment locks in a Cardano contract (Aiken, Plutus V3, 175 contract tests), never with Hirakumi. The buyer signs for each answer that kept the promise; when the pack closes the seller is paid for the signed calls less Hirakumi's 3% fee, and everything else goes back to the buyer. The buyer can always exit with everything unsigned. Hirakumi closes a pack once its calls are used up or the buyer asks.
 - Masumi escrow jobs: an agent can hire the API for a single job. Masumi's contract holds the money per job. A failing answer is not submitted, so Masumi refunds the buyer automatically on-chain.
-- Direct packs: an older mode where the pack payment settles straight to the seller's wallet. It is only a fallback now.
+- Direct packs, for small packs from proven sellers: the pack payment goes straight to the seller's wallet, and Hirakumi's gateway counts a credit only on a good answer. A buyer who asks for escrow always gets escrow, never a silent switch to direct.
 
 COST AND BUSINESS MODEL
 - Hirakumi earns a 3% fee, an output of the escrow contract, paid only on good answers, plus a small listing fee per API (planned). On preprod everything is paid with test tokens.
