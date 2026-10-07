@@ -273,9 +273,20 @@ describe("replies on a task", () => {
     ]);
     expect((await db.pool.query(`select state, escrow_op_id from apis where id = $1`, [apiId])).rows[0]).toEqual({ state: "endpoints_confirmed", escrow_op_id: "getPrice" });
     const msgs = (await messagesForTask(t.id)).slice(1);
+    const code: string = (await db.pool.query(`select token from challenges where api_id = $1 and kind = 'dns' and consumed_at is null`, [apiId])).rows[0].token;
+    expect(code).toMatch(/^hkv_/);
     expect(msgs).toEqual([
       { body: "Step 3 of 7, Choose endpoints: Selling GET /price. Per-job hires (Masumi escrow) run getPrice.", task_status: "RUNNING", api_id: apiId },
-      { body: `Step 4 of 7, Prove ownership: Prove you own https://price.example.dev/${apiId}: add one DNS TXT record with the name and code from this page (your API itself doesn't change), then sign once with your Cardano wallet (no payment): ${WEB}/apis/${apiId}/ownership`, task_status: "INPUT_REQUIRED", api_id: apiId },
+      {
+        body: [
+          `Step 4 of 7, Prove ownership: Prove you own price.example.dev: add this DNS TXT record where your domain's DNS is managed (your API itself doesn't change), then sign once with your Cardano wallet (no payment): ${WEB}/apis/${apiId}/ownership`,
+          "- Type: TXT",
+          "- Name: _hirakumi.price (the full name is _hirakumi.price.example.dev)",
+          `- Value: ${code}`,
+          "The page checks every 10 seconds and unlocks signing once the record is live.",
+        ].join("\n"),
+        task_status: "INPUT_REQUIRED", api_id: apiId,
+      },
     ]);
   });
 
@@ -362,8 +373,10 @@ describe("replies on a task", () => {
     const { t, apiId, reply } = await setup("endpoints_confirmed");
     await reply("what now?");
     const body = (await messagesForTask(t.id)).at(-1)?.body ?? "";
-    expect(body).toContain(`Next, prove you own https://price.example.dev/${apiId}: add one DNS TXT record with the name and code from this page`);
-    expect(body).toContain("(your API itself doesn't change), then sign once with your Cardano wallet");
+    const code: string = (await db.pool.query(`select token from challenges where api_id = $1 and kind = 'dns' and consumed_at is null`, [apiId])).rows[0].token;
+    expect(body).toContain("Next: Prove you own price.example.dev: add this DNS TXT record where your domain's DNS is managed (your API itself doesn't change), then sign once with your Cardano wallet");
+    expect(body).toContain("- Name: _hirakumi.price (the full name is _hirakumi.price.example.dev)");
+    expect(body).toContain(`- Value: ${code}`);
     expect(body).not.toMatch(/x-hirakumi-verify|hirakumi-verify\.json|OpenAPI file/i);
     expect(body).toContain(`${WEB}/apis/${apiId}/ownership`);
     expect(body).not.toMatch(/well-known|challenge|download|upload/i);

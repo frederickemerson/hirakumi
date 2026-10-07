@@ -90,6 +90,9 @@ importers:
       pg:
         specifier: 8.23.1
         version: 8.23.1
+      tldts:
+        specifier: 7.4.16
+        version: 7.4.16
       yaml:
         specifier: 2.9.1
         version: 2.9.1
