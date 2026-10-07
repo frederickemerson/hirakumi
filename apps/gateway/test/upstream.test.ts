@@ -304,7 +304,9 @@ describe("resolveAuth", () => {
 describe("keys of several parts (hks3) and keyed answers", () => {
   it("a single key's request is today's plus accept-encoding: identity; a keyless one is unchanged", () => {
     const r = buildUpstreamRequest({ origin: "https://a.example", path_prefix: "/", credential: headerKey, credentialError: null }, { method: "GET", path: "/p" }, {});
-    expect(r.init).toEqual({ method: "GET", headers: { accept: "application/json", "user-agent": "hirakumi-gateway/0.1", "accept-encoding": "identity", "x-api-key": KEY } });
+    expect(r.init).toEqual({
+      method: "GET", headers: { accept: "application/json", "user-agent": "hirakumi-gateway/0.1", "x-hirakumi-hop": "1", "accept-encoding": "identity", "x-api-key": KEY },
+    });
     expect(buildUpstreamRequest({ origin: "https://a.example", path_prefix: "/" }, { method: "GET", path: "/p" }, {}).init.headers["accept-encoding"]).toBeUndefined();
   });
   it("sends every part after the buyer's fields, so a buyer field of the same name can't replace one", async () => {
