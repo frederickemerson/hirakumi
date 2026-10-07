@@ -6,7 +6,9 @@ const SESSION_TTL_S = 7 * 24 * 3600;
 const LOGIN_TTL_S = 5 * 60;
 
 export type SessionInfo = { sellerId: string; addr: string };
-type SessionPayload = { sid: string; addr: string; exp: number };
+/** A session token's signed contents. jti is the session's id: logout revokes it (lib/repo/sessions.ts). */
+export type SessionClaims = SessionInfo & { jti: string; exp: number };
+type SessionPayload = { sid: string; addr: string; jti: string; exp: number };
 type LoginPayload = { addr: string; nonce: string; exp: number };
 
 const nowSeconds = () => Math.floor(Date.now() / 1000);
@@ -38,13 +40,19 @@ function unseal<T extends { exp: number }>(kind: "session" | "login", token: str
 }
 
 export function createSessionToken(sellerId: string, addr: string, now = nowSeconds()): string {
-  return seal("session", { sid: sellerId, addr, exp: now + SESSION_TTL_S } satisfies SessionPayload);
+  const jti = randomBytes(16).toString("base64url");
+  return seal("session", { sid: sellerId, addr, jti, exp: now + SESSION_TTL_S } satisfies SessionPayload);
 }
 
-export function readSessionToken(token: string, now = nowSeconds()): SessionInfo | null {
+/**
+ * The claims of a validly signed, unexpired session token, or null. This alone does not make a session valid: it may
+ * have been revoked (liveSession in lib/repo/sessions.ts checks). A token without a jti was issued before sessions
+ * could be revoked and is refused, so that seller signs in again.
+ */
+export function readSessionToken(token: string, now = nowSeconds()): SessionClaims | null {
   const p = unseal<SessionPayload>("session", token, now);
-  if (!p || typeof p.sid !== "string" || typeof p.addr !== "string") return null;
-  return { sellerId: p.sid, addr: p.addr };
+  if (!p || typeof p.sid !== "string" || typeof p.addr !== "string" || typeof p.jti !== "string" || !p.jti) return null;
+  return { sellerId: p.sid, addr: p.addr, jti: p.jti, exp: p.exp };
 }
 
 export function sessionCookieHeader(token: string): string {

@@ -197,9 +197,8 @@ describe("sign-in", () => {
     expect((await getSql()`select count(*)::int n from sellers where cardano_addr = ${w.bech32}`)[0].n).toBe(1);
   });
 
-  // BUG (low): sessions are stateless and logout only clears the browser cookie, so a copied session cookie
-  // keeps working for its whole 7-day life after the seller signs out.
-  it.fails("after logout, the old session cookie no longer signs anyone in", async () => {
+  // Fixed: each session has an id (jti); logout records it in revoked_sessions and every session check looks it up.
+  it("after logout, the old session cookie no longer signs anyone in", async () => {
     const s = await seedSeller();
     const cookie = cookieFor(s);
     expect((await logout(new Request("https://web.hirakumi.test/api/auth/logout", { method: "POST", headers: { cookie } }))).status).toBe(303);

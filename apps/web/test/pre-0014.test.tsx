@@ -51,6 +51,8 @@ async function useDatabase(url: string) {
 beforeAll(async () => {
   await resetDatabase(PRE_0014_URL, "0014");
   await useDatabase(PRE_0014_URL);
+  // Sessions need 0017 (revoked session ids, used sign-in nonces) whatever else has run: it only adds two tables.
+  await getSql().unsafe(readFileSync(join(MIGRATIONS_DIR, "0017_auth_sessions.sql"), "utf8"));
 }, 60_000);
 afterAll(async () => {
   await useDatabase(mainUrl!);
