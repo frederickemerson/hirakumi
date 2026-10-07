@@ -136,17 +136,27 @@ export async function findCoworkerTask(sql: Sql, setupToken: string): Promise<{ 
   return row ?? null;
 }
 
+/** Serialises every change of which wallet holds a Sokosumi account (lib/repo/sokosumi-link.ts). */
+export const sokosumiLock = (tx: postgres.TransactionSql, sokosumiUserId: string) =>
+  tx`select pg_advisory_xact_lock(hashtext(${`sokosumi|${sokosumiUserId}`}))`;
+
 /** Create the API from a setup link: one API per Sokosumi task, linked so progress and billing reach the task. */
 export async function createApiForTask(
   sql: Sql,
   input: ApiInput,
   task: { taskId: string; sokosumiUserId: string },
-): Promise<{ api: Api; created: boolean } | { claimedByOther: true } | { takenByOther: true }> {
+): Promise<{ api: Api; created: boolean } | { claimedByOther: true } | { linkedElsewhere: true } | { takenByOther: true }> {
   return sql.begin(async (tx) => {
     await tx`select pg_advisory_xact_lock(hashtext(${`task|${task.taskId}`}))`;
     // Audit M4: the first wallet to use a setup link owns that task; progress and billing go to it.
     const [other] = await tx`select 1 from apis where sokosumi_task_id = ${task.taskId} and seller_id <> ${input.sellerId} limit 1`;
     if (other) return { claimedByOther: true as const };
+    // A Sokosumi account belongs to one wallet; moving it is its own explicit step (POST /api/sokosumi/link).
+    await sokosumiLock(tx, task.sokosumiUserId);
+    const [elsewhere] = await tx`
+      select 1 from sellers where sokosumi_user_id = ${task.sokosumiUserId} and id <> ${input.sellerId} limit 1`;
+    if (elsewhere) return { linkedElsewhere: true as const };
+    // The setup page tells the seller this submit links their Sokosumi account to this wallet.
     await tx`update sellers set sokosumi_user_id = ${task.sokosumiUserId} where id = ${input.sellerId} and sokosumi_user_id is null`;
     const anyApi = await hasAnyApiSchema(tx);
     const cols = apiColumns(tx, anyApi);

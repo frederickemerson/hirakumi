@@ -3,6 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AccountApis } from "@/components/account-apis";
 import { CopyButton } from "@/components/copy-button";
+import { SokosumiAccountLink } from "@/components/sokosumi-link";
 import { formatTime } from "@/lib/copy";
 import { getSql } from "@/lib/db";
 import { requireSellerPage } from "@/lib/page-auth";
@@ -35,12 +36,8 @@ export default async function AccountPage() {
             </dd>
             <dt className="text-graphite">Created</dt>
             <dd>{formatTime(account.createdAt)}</dd>
-            {account.sokosumiUserId && (
-              <>
-                <dt className="text-graphite">Sokosumi user</dt>
-                <dd className="break-all">{account.sokosumiUserId}</dd>
-              </>
-            )}
+            <dt className="text-graphite">Sokosumi</dt>
+            <dd><SokosumiAccountLink linked={account.sokosumiUserId !== null} /></dd>
           </dl>
           <p className="text-caption text-graphite">Buyers pay this address. It is also how you log in.</p>
         </section>
