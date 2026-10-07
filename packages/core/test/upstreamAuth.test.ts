@@ -244,4 +244,67 @@ describe("leaks in other encodings (normalised text and base64 tokens)", () => {
       expect(answerLeaksSecret(body, s), body).toBe(false);
     }
   });
+
+  it("finds the key split by zero-width characters or soft hyphens, raw, entity- or \\u-escaped", () => {
+    const s = { in: "header" as const, name: "X-Key", value: SECRET };
+    for (const sep of ["\u200b", "\u200c", "\u200d", "\u2060", "\ufeff", "\u00ad"]) {
+      const split = [...SECRET].join(sep);
+      expect(answerLeaksSecret(`{"echo":"${split}"}`, s), JSON.stringify(sep)).toBe(true);
+      expect(answerLeaksSecret(JSON.stringify({ echo: split }, null, 0).replace(/[\u00ad\u200b-\u200d\u2060\ufeff]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`), s)).toBe(true);
+    }
+    expect(answerLeaksSecret(`<p>${[...SECRET].join("&shy;")}</p>`, s)).toBe(true);
+    expect(answerLeaksSecret(`<p>${[...SECRET].join("&#8203;")}</p>`, s)).toBe(true);
+    expect(redactUpstreamSecret(`echo ${[...SECRET].join("\u200b")}`, SECRET)).toBe(WITHHELD_TEXT);
+  });
+
+  it("finds the key in MIME-wrapped base64 (76 columns, CRLF or LF), also inside a JSON string", () => {
+    const s = { in: "header" as const, name: "X-Key", value: SECRET };
+    const b64 = Buffer.from(`${"request log line ".repeat(8)}key=${SECRET} ${"more ".repeat(20)}`).toString("base64");
+    for (const eol of ["\r\n", "\n"]) {
+      const wrapped = b64.replace(/(.{76})/g, `$1${eol}`);
+      expect(answerLeaksSecret(wrapped, s), JSON.stringify(eol)).toBe(true);
+      expect(answerLeaksSecret(JSON.stringify({ attachment: wrapped }), s), JSON.stringify(eol)).toBe(true);
+      expect(answerLeaksSecret(`-----BEGIN LOG-----\n${wrapped}\n-----END LOG-----`, s)).toBe(true);
+    }
+    // Wrapped with indentation, as a PEM-like block in a YAML or an email body.
+    expect(answerLeaksSecret(b64.replace(/(.{64})/g, "$1\n    "), s)).toBe(true);
+  });
+
+  it("finds the key as UTF-16LE or UTF-16BE hex, in any case, and redacts it", () => {
+    const s = { in: "header" as const, name: "X-Key", value: SECRET };
+    const le = Buffer.from(SECRET, "utf16le").toString("hex");
+    const be = Buffer.from(SECRET, "utf16le").swap16().toString("hex");
+    for (const h of [le, be, le.toUpperCase(), be.toUpperCase()]) {
+      expect(answerLeaksSecret(`{"trace":"${h}"}`, s), h).toBe(true);
+      expect(redactUpstreamSecret(`trace ${h} end`, SECRET), h).toBe("trace [key] end");
+    }
+  });
+
+  it("does not flag ordinary multi-line text, invisible characters or UTF-16 hex of other values", () => {
+    const s = { in: "header" as const, name: "X-Key", value: SECRET };
+    const lines = Array.from({ length: 30 }, (_, i) => `line ${i} price 0.${i} ADA\u200b`).join("\n");
+    expect(answerLeaksSecret(lines, s)).toBe(false);
+    expect(answerLeaksSecret(Buffer.from("sk_live_9999999999999999", "utf16le").toString("hex"), s)).toBe(false);
+    expect(answerLeaksSecret(Buffer.from("x".repeat(400)).toString("base64").replace(/(.{76})/g, "$1\r\n"), s)).toBe(false);
+  });
+
+  it("finds a key starting with hex digits after a % inside a base64 token (decoding %0A must not eat it)", () => {
+    const key = "0Aaa_0a_a-AaA0Aa_";
+    expect(textLeaksSecret(Buffer.from(`%${key}`).toString("base64"), key)).toBe(true);
+  });
+
+  it("stays fast on large text: one 2 MB base64 run, and 1 MB of short lines", () => {
+    const t = Date.now();
+    expect(textLeaksSecret("QUFB".repeat(500_000), SECRET)).toBe(false);
+    expect(textLeaksSecret("ab\n".repeat(350_000), SECRET)).toBe(false);
+    expect(textLeaksSecret("\u200b".repeat(500_000), SECRET)).toBe(false);
+    expect(Date.now() - t).toBeLessThan(5_000);
+  });
+
+  it("documented limits (defence in depth): the key reversed or base64 encoded three times is not found", () => {
+    const s = { in: "header" as const, name: "X-Key", value: SECRET };
+    const b64 = (t: string) => Buffer.from(t).toString("base64");
+    expect(answerLeaksSecret([...SECRET].reverse().join(""), s)).toBe(false);
+    expect(answerLeaksSecret(b64(b64(b64(SECRET))), s)).toBe(false);
+  });
 });

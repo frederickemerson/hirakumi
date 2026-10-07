@@ -1,5 +1,7 @@
+import { getSql } from "./db";
 import { env } from "./env";
-import { readCookie, readSessionToken, SESSION_COOKIE, type SessionInfo } from "./session";
+import { liveSession } from "./repo/sessions";
+import { readCookie, SESSION_COOKIE, type SessionInfo } from "./session";
 
 export type ApiRouteContext = { params: Promise<{ apiId: string }> };
 
@@ -49,9 +51,17 @@ export function sameOrigin(req: Request): boolean {
   }
 }
 
-export function requireSeller(req: Request): SessionInfo | Response {
+/** The signed-in seller, or the response to send. A session that can't be checked is refused (503), never trusted. */
+export async function requireSeller(req: Request): Promise<SessionInfo | Response> {
   if (!sameOrigin(req)) return errorJson(403, "Cross-site request refused.");
-  const token = readCookie(req.headers.get("cookie"), SESSION_COOKIE);
-  const session = token ? readSessionToken(token) : null;
+  let session: SessionInfo | null;
+  try {
+    session = await liveSession(getSql(), readCookie(req.headers.get("cookie"), SESSION_COOKIE));
+  } catch (e) {
+    console.error("session check unavailable", e instanceof Error ? e.message : e);
+    return errorJson(503, SESSION_UNAVAILABLE);
+  }
   return session ?? errorJson(401, "Please sign in with your wallet again.");
 }
+
+export const SESSION_UNAVAILABLE = "Hirakumi is busy, try again shortly.";

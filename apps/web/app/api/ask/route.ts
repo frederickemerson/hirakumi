@@ -6,7 +6,8 @@ import { MAX_HISTORY_MESSAGES, MAX_QUESTION_CHARS, type AskTurn } from "@/lib/as
 import { getSql } from "@/lib/db";
 import { env } from "@/lib/env";
 import { errorJson, readJson, sameOrigin } from "@/lib/http";
-import { readCookie, readSessionToken, SESSION_COOKIE } from "@/lib/session";
+import { liveSession } from "@/lib/repo/sessions";
+import { readCookie, SESSION_COOKIE, type SessionInfo } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -95,16 +96,16 @@ export async function POST(req: Request): Promise<Response> {
   if (!question) return errorJson(400, "Write a question first.");
   if (question.length > MAX_QUESTION_CHARS) return errorJson(400, "Keep questions under 1,000 characters.");
 
-  const token = readCookie(req.headers.get("cookie"), SESSION_COOKIE);
-  const session = token ? readSessionToken(token) : null;
   const sql = getSql();
 
+  let session: SessionInfo | null;
   let allowed: boolean;
   try {
+    session = await liveSession(sql, readCookie(req.headers.get("cookie"), SESSION_COOKIE));
     allowed = await takeAskSlot(sql, askBucket(session?.sellerId ?? null, req));
   } catch (e) {
-    // Fail closed: without the counter every question would be unmetered model spend.
-    console.error("ask: rate limit unavailable", e instanceof Error ? e.message : e);
+    // Fail closed: without the counter every question would be unmetered model spend, and an unchecked session is never trusted.
+    console.error("ask: rate limit or session check unavailable", e instanceof Error ? e.message : e);
     return errorJson(503, "Ask is busy, try again shortly.");
   }
   if (!allowed) return errorJson(429, "That's a lot of questions at once. Please try again in a few minutes.");

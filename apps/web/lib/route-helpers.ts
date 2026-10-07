@@ -10,7 +10,7 @@ export async function loadOwnedApi(
   req: Request,
   ctx: ApiRouteContext,
 ): Promise<{ session: SessionInfo; api: Api; sql: Sql } | Response> {
-  const session = requireSeller(req);
+  const session = await requireSeller(req);
   if (session instanceof Response) return session;
   const { apiId } = await ctx.params;
   const sql = getSql();

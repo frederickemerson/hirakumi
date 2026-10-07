@@ -28,7 +28,7 @@ function readIntake(body: Record<string, unknown>, sellerId: string): { input: A
 const SAMPLES_OFF = "Listing an API from example requests isn't available yet. Paste the link to your OpenAPI description instead.";
 
 export async function POST(req: Request): Promise<Response> {
-  const session = requireSeller(req);
+  const session = await requireSeller(req);
   if (session instanceof Response) return session;
   const body = await readJson(req);
   if (!body) return errorJson(400, "Paste the link to your OpenAPI description, or your base URL and example requests.");

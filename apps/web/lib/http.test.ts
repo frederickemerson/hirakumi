@@ -38,8 +38,8 @@ describe("sameOrigin (CSRF guard for body-less state changes)", () => {
   it("allows requests with neither header (non-browser clients)", () => {
     expect(sameOrigin(at("POST"))).toBe(true);
   });
-  it("requireSeller refuses a cross-site request with 403 before looking at the session", () => {
-    const res = requireSeller(at("POST", { "sec-fetch-site": "cross-site" }));
+  it("requireSeller refuses a cross-site request with 403 before looking at the session", async () => {
+    const res = await requireSeller(at("POST", { "sec-fetch-site": "cross-site" }));
     expect(res).toBeInstanceOf(Response);
     expect((res as Response).status).toBe(403);
   });

@@ -2,13 +2,16 @@ import { cookies } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { getSql } from "./db";
 import { getApiForSeller } from "./repo/apis";
-import { readSessionToken, SESSION_COOKIE, type SessionInfo } from "./session";
+import { liveSession } from "./repo/sessions";
+import { SESSION_COOKIE, type SessionInfo } from "./session";
 import type { Api } from "./types";
 
-/** The session behind this request, or null. Reading cookies makes the page dynamic. */
+/**
+ * The session behind this request, or null. Reading cookies makes the page dynamic. Throws when the session can't be
+ * checked (the page shows its error state): an unchecked session is never trusted.
+ */
 export async function readPageSession(): Promise<SessionInfo | null> {
-  const token = (await cookies()).get(SESSION_COOKIE)?.value;
-  return token ? readSessionToken(token) : null;
+  return liveSession(getSql(), (await cookies()).get(SESSION_COOKIE)?.value);
 }
 
 export async function requireSellerPage(nextPath: string): Promise<SessionInfo> {

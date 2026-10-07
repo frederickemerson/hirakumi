@@ -12,7 +12,7 @@ async function ownsApi(apiId: string | null, sellerId: string): Promise<boolean>
 
 export async function GET(req: Request): Promise<Response> {
   if (!env.chatFallback()) return OFF();
-  const session = requireSeller(req);
+  const session = await requireSeller(req);
   if (session instanceof Response) return session;
   const params = new URL(req.url).searchParams;
   const apiId = params.get("apiId");
@@ -24,7 +24,7 @@ export async function GET(req: Request): Promise<Response> {
 
 export async function POST(req: Request): Promise<Response> {
   if (!env.chatFallback()) return OFF();
-  const session = requireSeller(req);
+  const session = await requireSeller(req);
   if (session instanceof Response) return session;
   const body = await readJson(req);
   const text = typeof body?.body === "string" ? body.body.trim() : "";

@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   buildLoginMessage, clearSessionCookieHeader, createSessionToken, issueLoginChallenge, openLoginChallenge,
@@ -10,7 +11,19 @@ const NOW = 1_800_000_000;
 describe("session tokens", () => {
   it("round-trips a seller session", () => {
     const token = createSessionToken("sel_1", ADDR, NOW);
-    expect(readSessionToken(token, NOW + 60)).toEqual({ sellerId: "sel_1", addr: ADDR });
+    expect(readSessionToken(token, NOW + 60)).toEqual({ sellerId: "sel_1", addr: ADDR, jti: expect.stringMatching(/^[\w-]{22}$/), exp: NOW + 7 * 24 * 3600 });
+  });
+
+  it("gives every session its own id", () => {
+    const a = readSessionToken(createSessionToken("sel_1", ADDR, NOW), NOW);
+    const b = readSessionToken(createSessionToken("sel_1", ADDR, NOW), NOW);
+    expect(a?.jti).not.toBe(b?.jti);
+  });
+
+  it("refuses a validly signed token issued before sessions had an id, so that seller signs in again", () => {
+    const body = Buffer.from(JSON.stringify({ sid: "sel_1", addr: ADDR, exp: NOW + 999 })).toString("base64url");
+    const sig = createHmac("sha256", process.env.SESSION_SECRET!).update(`session.${body}`).digest("base64url");
+    expect(readSessionToken(`${body}.${sig}`, NOW)).toBeNull();
   });
 
   it("rejects a tampered token", () => {
@@ -35,7 +48,7 @@ describe("session tokens", () => {
 describe("login challenge", () => {
   it("rebuilds the exact message the wallet was asked to sign", () => {
     const { message, nonceToken } = issueLoginChallenge(ADDR, NOW);
-    expect(openLoginChallenge(nonceToken, NOW + 10)).toEqual({ addr: ADDR, message });
+    expect(openLoginChallenge(nonceToken, NOW + 10)).toEqual({ addr: ADDR, message, nonce: expect.stringMatching(/^[0-9a-f]{32}$/), exp: NOW + 300 });
     expect(message).toContain(ADDR);
     expect(message).toContain("moves no funds");
     expect(message).toContain("Site: web.hirakumi.test");

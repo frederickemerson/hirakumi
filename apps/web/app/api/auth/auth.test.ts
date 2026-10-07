@@ -40,6 +40,37 @@ describe("wallet sign-in", () => {
     expect(count).toBe(1);
   });
 
+  it("a signed sign-in works once: the same nonce and signature again is refused", async () => {
+    const w = await makeTestWallet();
+    const { body } = await getNonce(w.addressHex);
+    const signed = { nonceToken: body.nonceToken, ...w.sign(body.message) };
+    expect((await verify(jsonRequest("/api/auth/verify", { body: signed }))).status).toBe(200);
+    const again = await verify(jsonRequest("/api/auth/verify", { body: signed }));
+    expect(again.status).toBe(401);
+    expect(((await again.json()) as { error: string }).error).toBe("This sign-in link was already used. Start again.");
+    expect(again.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("20 concurrent verifies of one signed sign-in open exactly one session", async () => {
+    const w = await makeTestWallet();
+    const { body } = await getNonce(w.addressHex);
+    const signed = { nonceToken: body.nonceToken, ...w.sign(body.message) };
+    const res = await Promise.all(Array.from({ length: 20 }, () => verify(jsonRequest("/api/auth/verify", { body: signed }))));
+    expect(res.filter((r) => r.status === 200)).toHaveLength(1);
+    expect(res.filter((r) => r.status === 401)).toHaveLength(19);
+    expect(res.filter((r) => r.headers.get("set-cookie"))).toHaveLength(1);
+  });
+
+  it("a wrong signature does not use up the nonce", async () => {
+    const owner = await makeTestWallet();
+    const attacker = await makeTestWallet();
+    const { body } = await getNonce(owner.addressHex);
+    const bad = await verify(jsonRequest("/api/auth/verify", { body: { nonceToken: body.nonceToken, ...attacker.sign(body.message) } }));
+    expect(bad.status).toBe(401);
+    const good = await verify(jsonRequest("/api/auth/verify", { body: { nonceToken: body.nonceToken, ...owner.sign(body.message) } }));
+    expect(good.status).toBe(200);
+  });
+
   it("rejects a signature from a different wallet", async () => {
     const owner = await makeTestWallet();
     const attacker = await makeTestWallet();
