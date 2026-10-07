@@ -56,9 +56,9 @@ export function createTryHandler(d: TryDeps) {
     if (!opId || opId.length > 64 || !METHODS.has(method) || !input || typeof input !== "object" || Array.isArray(input)) {
       return errorJson(400, "Pick an endpoint and fill in its input.");
     }
+    if (!d.allow(visitorKey(req))) return errorJson(429, "One call every few seconds, please. Wait a moment and try again.");
     const pack = await d.pack(apiId);
     if (!pack) return json({ error: "No pack with credits yet. Buy one live first.", needsPack: true }, 409);
-    if (!d.allow(visitorKey(req))) return errorJson(429, "One call every few seconds, please. Wait a moment and try again.");
     const problem = await d.budget(apiId, pack.token);
     if (problem) return errorJson(429, problem);
 
@@ -119,6 +119,8 @@ export function createReceiptsHandler(d: { gatewayBase: string; pack: (apiId: st
       return errorJson(502, "We couldn't reach the Hirakumi gateway. Try again in a minute.");
     }
     if (!res.ok) return errorJson(502, `The gateway answered HTTP ${res.status} for the receipts.`);
-    return json(await res.json(), 200, { "cache-control": "no-store" });
+    const data: unknown = await res.json().catch(() => undefined);
+    if (data === undefined) return errorJson(502, "The gateway's receipts answer wasn't JSON.");
+    return json(data, 200, { "cache-control": "no-store" });
   };
 }

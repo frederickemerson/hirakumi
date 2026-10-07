@@ -43,13 +43,6 @@ export async function getSuggestedPhrases(sql: Sql, apiId: string): Promise<Reco
   return out;
 }
 
-export async function countEnabledWithoutRule(sql: Sql, apiId: string): Promise<number> {
-  const [row] = await sql<{ count: number }[]>`
-    select count(*)::int as count from operations o
-    where o.api_id = ${apiId} and o.enabled and not exists (select 1 from rules r where r.operation_id = o.id)`;
-  return row.count;
-}
-
 /** The last sentence of a status-only promise's plain English (apps/coworker src/llm/ruleText.ts). */
 const STATUS_ONLY_SENTENCE = " This is a status-only promise: it does not check the content.";
 

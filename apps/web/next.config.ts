@@ -7,6 +7,17 @@ const config: NextConfig = {
   transpilePackages: ["@hirakumi/core", "@hirakumi/escrow"],
   // Don't write AGENTS.md / CLAUDE.md into the app directory on `next dev`.
   agentRules: false,
+  // No page is meant to be framed; refuse it so a wallet signature can't be clickjacked.
+  async headers() {
+    return [{
+      source: "/:path*",
+      headers: [
+        { key: "X-Frame-Options", value: "DENY" },
+        { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+        { key: "X-Content-Type-Options", value: "nosniff" },
+      ],
+    }];
+  },
 };
 
 export default config;

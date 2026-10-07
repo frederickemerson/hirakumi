@@ -29,7 +29,7 @@ export default async function OwnershipPage({ params }: { params: Promise<{ apiI
       </p>
     </div>
   );
-  // The code is a challenge of kind 'header', which needs migration 0014 (lib/repo/schema.ts).
+  // The code is a challenge of kind 'header', which needs migrations 0014 and 0015 (lib/repo/schema.ts).
   if (!(await hasAnyApiSchema(sql))) {
     return (
       <section className="space-y-6">

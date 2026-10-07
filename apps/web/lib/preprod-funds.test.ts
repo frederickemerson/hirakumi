@@ -49,6 +49,18 @@ describe("POST /api/wallet/preprod-funds", () => {
     expect(fetchImpl.mock.calls[0][0]).toMatch(/\/addresses\/addr_test1/);
   });
 
+  it("rate-limits by the platform's client address, not a client-chosen x-forwarded-for", async () => {
+    const keys: string[] = [];
+    const handler = createPreprodFundsHandler({ projectId: "p", baseUrl: BASE, fetchImpl: vi.fn().mockResolvedValue(notFound()), allow: (k) => (keys.push(k), true) });
+    const req = new Request("https://web.test/api/wallet/preprod-funds", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-real-ip": "203.0.113.7", "x-forwarded-for": "1.2.3.4, 203.0.113.7" },
+      body: JSON.stringify({ addresses: [HEX] }),
+    });
+    await handler(req);
+    expect(keys).toEqual(["203.0.113.7"]);
+  });
+
   it("rejects a request without addresses and rate-limits quietly", async () => {
     const handler = createPreprodFundsHandler({ projectId: "p", baseUrl: BASE, fetchImpl: vi.fn(), allow: () => false });
     expect((await handler(post({}))).status).toBe(400);

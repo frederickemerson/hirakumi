@@ -1,4 +1,5 @@
 import { AddressError, toPreprodBech32 } from "./cardano";
+import { clientAddress } from "./client-address";
 import { errorJson, json, readJson } from "./http";
 
 /**
@@ -53,8 +54,7 @@ export function createPreprodFundsHandler(d: Deps & { allow: (key: string) => bo
     if (!Array.isArray(raw) || raw.length === 0 || raw.some((a) => typeof a !== "string")) {
       return errorJson(400, "Connect a wallet first.");
     }
-    const visitor = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || "unknown";
-    if (!d.allow(visitor)) return json({ status: "unknown" });
+    if (!d.allow(clientAddress(req))) return json({ status: "unknown" });
     let addresses: string[];
     try {
       addresses = [...new Set((raw as string[]).slice(0, MAX_ADDRESSES).map(toPreprodBech32))];

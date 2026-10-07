@@ -89,6 +89,16 @@ describe("try handler", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("rate-limits before it looks up the pack, so throttled requests cost no query", async () => {
+    let lookups = 0;
+    const handle = createTryHandler({
+      gatewayBase: "https://gw.test", pack: async () => (lookups++, PACK), allow: () => false, budget: async () => null,
+      fetchImpl: (() => { throw new Error("no"); }) as unknown as typeof fetch,
+    });
+    expect((await handle(req({ opId: "getPrice", method: "GET", input: {} }), "api_1")).status).toBe(429);
+    expect(lookups).toBe(0);
+  });
+
   it("refuses once the pack's hourly budget is used, without calling the gateway (audit: drain)", async () => {
     const { calls, handle } = setup(() => new Response("{}"), { budget: async () => "This pack has made its calls for this hour. Try again later." });
     const res = await handle(req({ opId: "getPrice", method: "GET", input: {} }), "api_1");
@@ -158,6 +168,13 @@ describe("receipts handler", () => {
     expect(await res.json()).toEqual({ token: { id: "ct_live1" }, calls: [] });
     expect(seen[0].url).toBe("https://gw.test/a/api_1/receipts");
     expect((seen[0].init.headers as Record<string, string>).authorization).toBe("Bearer hk_live_token");
+  });
+  it("502, not a crash, when the gateway answers 200 with a body that isn't JSON", async () => {
+    const handle = createReceiptsHandler({
+      gatewayBase: "https://gw.test", pack: async () => PACK,
+      fetchImpl: (async () => new Response("<html>proxy</html>", { status: 200 })) as unknown as typeof fetch,
+    });
+    expect((await handle("api_1")).status).toBe(502);
   });
   it("404 before any pack was bought", async () => {
     const handle = createReceiptsHandler({ gatewayBase: "https://gw.test", pack: async () => null, fetchImpl: (() => { throw new Error("no"); }) as unknown as typeof fetch });
