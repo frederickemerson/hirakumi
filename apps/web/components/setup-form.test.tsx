@@ -34,6 +34,24 @@ describe("SetupForm", () => {
   });
 });
 
+describe("SetupForm without an OpenAPI file", () => {
+  it("sends the base URL and example requests", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ apiId: "api_2", state: "intake", created: true }, 201));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<SetupForm initialUrl="" />);
+    await user.click(screen.getByRole("radio", { name: "I don't" }));
+    expect(screen.queryByLabelText("OpenAPI link")).toBeNull();
+    await user.type(screen.getByLabelText("Base URL"), "https://api.example.com/v1");
+    await user.type(screen.getByLabelText("Example requests"), "GET /price?symbol=ADA");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await vi.waitFor(() => expect(nav.push).toHaveBeenCalledWith("/apis/api_2/endpoints"));
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+      mode: "samples", baseUrl: "https://api.example.com/v1", samples: "GET /price?symbol=ADA", name: "",
+    });
+  });
+});
+
 describe("SetupForm with a Sokosumi setup token (review I5)", () => {
   it("sends the setup token with the OpenAPI link", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ apiId: "api_1", state: "intake", created: true }), { status: 201 }));

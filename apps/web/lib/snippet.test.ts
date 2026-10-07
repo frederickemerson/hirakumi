@@ -29,4 +29,11 @@ describe("buildBuyerSnippet", () => {
     expect(code).toContain("body: JSON.stringify(input)");
     expect(code.split("\n").length).toBeLessThanOrEqual(20);
   });
+
+  it("reads a text answer as text, and a JSON answer as JSON", () => {
+    expect(buildBuyerSnippet(input)).toContain("await res.json());");
+    const code = buildBuyerSnippet({ ...input, textAnswer: true });
+    expect(code).toContain("await res.text());");
+    expect(code).not.toContain("await res.json());");
+  });
 });

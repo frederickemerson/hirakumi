@@ -1,11 +1,35 @@
 import Ajv2020 from "ajv/dist/2020.js";
-import { compileRule, formatSchemaErrors, jcs, type CompiledRule } from "@hirakumi/core";
+import {
+  compileRule, formatSchemaErrors, jcs, openUpstreamSecret, validateUpstreamAuth, type CompiledRule, type UpstreamCredential,
+} from "@hirakumi/core";
 import { loadApiBundle, type ApiRow, type OperationRow, type PackRow, type RuleRow, type Sql } from "@hirakumi/db";
 import type { HealthTracker } from "./health";
 
 export type InputCheck = { ok: true; value: Record<string, unknown> } | { ok: false; reasons: string[] };
 export type LoadedOp = { row: OperationRow; ruleRow: RuleRow | null; rule: CompiledRule | null; validateInput(input: unknown): InputCheck };
-export type LoadedApi = { api: ApiRow; ops: Map<string, LoadedOp>; packs: PackRow[] };
+/**
+ * How the gateway reaches the API: its row, plus the opened key when it needs one. credentialError is set when a
+ * key is stored but can't be opened; every upstream call is then blocked rather than sent without it.
+ */
+export type UpstreamAccess = { credential: UpstreamCredential | null; credentialError: string | null };
+export type LoadedApi = { api: ApiRow & UpstreamAccess; ops: Map<string, LoadedOp>; packs: PackRow[] };
+
+/**
+ * Opens an API's stored key with the gateway's private key. Never throws; the reason is in credentialError, which
+ * buyers can see, so it never names the key or the gateway's settings. The placement and name are stored in the
+ * clear, so they are checked again here like the web app checks them (no reserved header, no line breaks).
+ */
+export function openCredential(api: Pick<ApiRow, "id" | "upstream_auth">, privateKey: string | null): UpstreamAccess {
+  const stored = api.upstream_auth;
+  if (!stored) return { credential: null, credentialError: null };
+  if (!privateKey) return { credential: null, credentialError: "this API needs a key, and the gateway can't read keys right now" };
+  try {
+    const value = openUpstreamSecret(privateKey, api.id, stored.sealed);
+    return { credential: validateUpstreamAuth({ in: stored.in, name: stored.name, value }), credentialError: null };
+  } catch {
+    return { credential: null, credentialError: "this API's key could not be read. The seller should enter it again" };
+  }
+}
 
 const inputAjv = new Ajv2020({ allErrors: true, strict: false, coerceTypes: true, useDefaults: true });
 const validators = new Map<string, (input: unknown) => InputCheck>();
@@ -29,7 +53,7 @@ export const REGISTRY_TTL_MS = 60_000;
 
 export class ApiRegistry {
   private readonly cache = new Map<string, { at: number; value: Promise<LoadedApi | null> }>();
-  constructor(private readonly sql: Sql, private readonly health: HealthTracker) {}
+  constructor(private readonly sql: Sql, private readonly health: HealthTracker, private readonly upstreamAuthKey: string | null = null) {}
 
   get(apiId: string, opts: { fresh?: boolean } = {}): Promise<LoadedApi | null> {
     const hit = this.cache.get(apiId);
@@ -64,7 +88,11 @@ export class ApiRegistry {
       }
       ops.set(row.op_id, { row, ruleRow: rule ? ruleRow : null, rule, validateInput: compileInputValidator(row.input_schema) });
     }
-    return { api: b.api, ops, packs: b.packs };
+    const access = openCredential(b.api, this.upstreamAuthKey);
+    if (access.credentialError) {
+      console.warn(`[registry] ${b.api.id}: ${access.credentialError}${this.upstreamAuthKey ? "" : " (UPSTREAM_AUTH_PRIVATE_KEY is not set)"}`);
+    }
+    return { api: { ...b.api, ...access }, ops, packs: b.packs };
   }
 }
 

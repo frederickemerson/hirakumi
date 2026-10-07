@@ -9,7 +9,8 @@ const T = Date.UTC(2026, 9, 6, 8, 0, 0);
 const PURCHASER = "a1b2c3d4e5f60718293a";
 const OUTPUT = '{"symbol":"ADA","usd":0.27,"change24h":1.2,"timestamp":"2026-10-06T08:00:00.000Z"}';
 
-function fakeEscrow(o: { statuses: JobStatus["status"][]; unit?: string; badInputHash?: boolean; down?: boolean; reasons?: string[] }) {
+function fakeEscrow(o: { statuses: JobStatus["status"][]; unit?: string; badInputHash?: boolean; down?: boolean; reasons?: string[]; output?: string }) {
+  const out = o.output ?? OUTPUT;
   const statuses = [...o.statuses];
   const fetch: FetchLike = async (url, init) => {
     if (url.endsWith("/start_job")) {
@@ -25,7 +26,7 @@ function fakeEscrow(o: { statuses: JobStatus["status"][]; unit?: string; badInpu
     }
     if (url.includes("/status?job_id=job_1")) {
       const status = statuses.shift() ?? "running";
-      if (status === "completed") return json(200, { job_id: "job_1", status, output: OUTPUT, output_hash: outputHash(PURCHASER, OUTPUT) });
+      if (status === "completed") return json(200, { job_id: "job_1", status, output: out, output_hash: outputHash(PURCHASER, out) });
       if (status === "failed") return json(200, { job_id: "job_1", status, reasons: o.reasons ?? ["/usd is required"] });
       return json(200, { job_id: "job_1", status });
     }
@@ -65,6 +66,14 @@ describe("runEscrowJob", () => {
       payByTime: new Date(T + 600_000), submitResultTime: new Date(T + 900_000), unlockTime: new Date(T + 1_200_000),
       externalDisputeUnlockTime: new Date(T + 1_500_000), amountMicros: 1_000_000n,
     });
+  });
+
+  it("returns and prints a text answer as it came", async () => {
+    const csv = "symbol,usd\nADA,0.27\n";
+    const h = makeDeps(fakeEscrow({ statuses: ["completed"], output: csv }));
+    const r = await runEscrowJob(h.deps, opts);
+    expect(r).toEqual({ outcome: "completed", output: csv, outputVerified: true });
+    expect(h.lines).toContain(`Result: \n${csv}`);
   });
 
   it("on failure prints reasons and the automatic refund time", async () => {

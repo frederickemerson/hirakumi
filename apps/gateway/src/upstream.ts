@@ -1,22 +1,61 @@
-import { safeFetch, urlWithinBase, UpstreamBlockedError, UpstreamTimeoutError, UpstreamTooLargeError, type UpstreamResult } from "@hirakumi/core";
+import {
+  isJsonMediaType, redactUpstreamSecret, safeFetch, textLeaksSecret, upstreamSecretForms, urlWithinBase, UpstreamBlockedError, UpstreamTimeoutError, UpstreamTooLargeError, type UpstreamCredential, type UpstreamResult,
+} from "@hirakumi/core";
 import type { ApiRow, OperationRow } from "@hirakumi/db";
-import type { LoadedOp } from "./registry";
+import type { LoadedOp, UpstreamAccess } from "./registry";
+
+/** The API as an upstream call needs it. Access is optional: an API without it needs no key. */
+export type UpstreamApi = Pick<ApiRow, "origin" | "path_prefix"> & Partial<UpstreamAccess>;
+
+/**
+ * Every way the key can be written in an answer or a message (@hirakumi/core upstreamSecretForms): the whole value
+ * and, for "Bearer abc…", the bare token, each as is and base64-encoded, percent-encoded, JSON-escaped and
+ * entity-escaped, lowercased (matching ignores case). Longest first.
+ */
+export const secretForms = upstreamSecretForms;
+
+/** True when text (an answer or one of its headers) contains the key in any of its forms, in any case. */
+export function leaksSecret(text: string | null | undefined, credential: UpstreamCredential | null | undefined): boolean {
+  return !!credential && textLeaksSecret(text, credential.value);
+}
+
+/** Removes the key from text that may reach a buyer, the database or a log (error messages can quote the URL). */
+export function redactSecret(text: string, credential: UpstreamCredential | null | undefined): string {
+  return credential ? redactUpstreamSecret(text, credential.value) : text;
+}
+
+/**
+ * The Accept header for an operation. A JSON promise, or no promise yet (QA and previews of a new listing), asks for
+ * exactly application/json: Rails and others treat an Accept that lists the any-type wildcard as a browser and
+ * answer HTML. A text promise asks for its own type first, then any text, and never for the wildcard. An API that
+ * only answers CSV usually ignores Accept, so QA without a promise still sees its CSV.
+ */
+export function acceptFor(ruleContentType: string | null | undefined): string {
+  if (!ruleContentType || isJsonMediaType(ruleContentType)) return "application/json";
+  return `${ruleContentType}, text/*;q=0.9`;
+}
 
 export function buildUpstreamRequest(
-  api: Pick<ApiRow, "origin" | "path_prefix">,
+  api: UpstreamApi,
   op: Pick<OperationRow, "method" | "path">,
   input: Record<string, unknown>,
+  ruleContentType?: string | null,
 ): { url: string; init: { method: string; headers: Record<string, string>; body?: string } } {
   const rest: Record<string, unknown> = { ...input };
   const path = op.path.replace(/\{([^}]+)\}/g, (_m, name: string) => {
     const v = rest[name];
     if (v === undefined || v === null) throw new Error(`missing path parameter ${name}`);
     // "." / ".." (also percent-encoded) or "" would let a buyer step outside the path prefix whose ownership
-    // was verified, because URLs normalise dot segments.
+    // was verified, because URLs normalise dot segments. A "/" or a backslash is sent encoded (%2F, %5C), which the URL
+    // check below can't see through, but some servers decode it before routing: "../../other" would then reach
+    // another folder with the seller's key. One value fills one path segment, so neither is allowed (the same
+    // rule as a proven path, @hirakumi/core ownership AMBIGUOUS_PATH).
     const raw = String(v);
     let decoded = raw;
     try { decoded = decodeURIComponent(raw); } catch { /* keep raw */ }
-    if (raw === "" || /^\.{1,2}$/.test(raw) || /^\.{1,2}$/.test(decoded)) throw new Error(`invalid path parameter ${name}`);
+    if (raw === "" || /^\.{1,2}$/.test(raw) || /^\.{1,2}$/.test(decoded) || /[/\\]/.test(raw) || /[/\\]/.test(decoded)) {
+      throw new Error(`invalid path parameter ${name}`);
+    }
     delete rest[name];
     return encodeURIComponent(String(v));
   });
@@ -27,8 +66,9 @@ export function buildUpstreamRequest(
   if (!urlWithinBase(url, api.origin, api.path_prefix)) {
     throw new Error(`blocked: the endpoint path ${op.path} resolves outside the API's folder (${prefix || "/"}) on ${new URL(api.origin).origin}`);
   }
+  if (api.credentialError) throw new Error(`blocked: ${api.credentialError}`);
   const method = op.method.toUpperCase();
-  const headers: Record<string, string> = { accept: "application/json", "user-agent": "hirakumi-gateway/0.1" };
+  const headers: Record<string, string> = { accept: acceptFor(ruleContentType), "user-agent": "hirakumi-gateway/0.1" };
   // Shared input convention (P3 contract addition 3): `{name}` fields fill the path, a field named
   // `body` is the JSON request body, and every other field is a query parameter, for any method.
   const { body, ...query } = rest;
@@ -37,6 +77,10 @@ export function buildUpstreamRequest(
     if (Array.isArray(v)) for (const x of v) url.searchParams.append(k, String(x));
     else url.searchParams.set(k, typeof v === "object" ? JSON.stringify(v) : String(v));
   }
+  // The seller's key last, so no buyer input can replace it. The URL was checked to be under the proven base above.
+  const credential = api.credential;
+  if (credential?.in === "header") headers[credential.name.toLowerCase()] = credential.value;
+  if (credential?.in === "query") url.searchParams.set(credential.name, credential.value);
   if (body === undefined || method === "GET" || method === "HEAD") return { url: url.toString(), init: { method, headers } };
   headers["content-type"] = "application/json";
   return { url: url.toString(), init: { method, headers, body: JSON.stringify(body) } };
@@ -62,15 +106,32 @@ export type OperationOutcome = {
 };
 
 export async function runOperation(
-  api: Pick<ApiRow, "origin" | "path_prefix">,
+  api: UpstreamApi,
   op: LoadedOp,
   input: Record<string, unknown>,
   opts: { timeoutMs: number; probe?: boolean },
 ): Promise<OperationOutcome> {
   const failVerdict = op.rule ? "fail" : "n/a";
+  const outcome = await callUpstream(api, op, input, opts, failVerdict);
+  if (!api.credential) return outcome;
+  // An answer that repeats the seller's key is never passed on, and no reason may quote it.
+  const reasons = outcome.reasons.map((r) => redactSecret(r, api.credential));
+  if (outcome.result && (leaksSecret(outcome.result.body, api.credential) || leaksSecret(outcome.result.contentType, api.credential))) {
+    return { ...outcome, execution: "upstream_error", verdict: failVerdict, reasons: ["the answer contained the API's key, so it was withheld"], result: null };
+  }
+  return { ...outcome, reasons };
+}
+
+async function callUpstream(
+  api: UpstreamApi,
+  op: LoadedOp,
+  input: Record<string, unknown>,
+  opts: { timeoutMs: number; probe?: boolean },
+  failVerdict: "fail" | "n/a",
+): Promise<OperationOutcome> {
   let req: ReturnType<typeof buildUpstreamRequest>;
   try {
-    req = buildUpstreamRequest(api, op.row, input);
+    req = buildUpstreamRequest(api, op.row, input, op.rule?.contentType);
   } catch (e) {
     return { execution: "blocked", verdict: "n/a", reasons: [(e as Error).message], result: null, latencyMs: 0 };
   }

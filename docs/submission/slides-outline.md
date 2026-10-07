@@ -5,8 +5,8 @@
    - Agents need paid data per call; API sellers have no way to reach them on Masumi without building an agent.
    - Buyers pay even when a response is broken or stale.
    - Per-call on-chain payment on Cardano costs about 1.2–1.5 ADA min-UTxO plus about 0.17 ADA fee, with a 20–60s confirmation.
-3. **Solution:** A Sokosumi coworker that turns an OpenAPI link into a Masumi-registered agent:
-   - confirm endpoints, prove ownership (a code in the OpenAPI file + one wallet signature), approve a price and a plain-English promise, Publish;
+3. **Solution:** A Sokosumi coworker that turns any read-only API (an OpenAPI link, or a base URL plus example requests; JSON or text answers; keys sealed for the gateway only) into a Masumi-registered agent:
+   - confirm endpoints, prove ownership (a code in the OpenAPI file or a small proof file + one wallet signature), approve a price and a plain-English promise, Publish;
    - **call packs** over x402: one tUSDM payment straight to the seller for 100 calls;
    - **credits used only on pass**: a failing answer returns 422 and costs nothing;
    - **truthful health**: `/availability` returns 503 when the API is down, so the registry shows Offline.
@@ -19,5 +19,5 @@
    - Take rate on packs: 3% (second output if x402 supports it, else billed monthly).
    - Pro: faster probes, analytics, a scored badge.
    - Call-pack economics: about 1.4 ADA overhead once per pack = about 0.014 ADA per call at 100 calls, versus about 1.4 ADA per call if every call paid on-chain (100× cheaper per call). Non-custodial: pack payments go straight to the seller.
-8. **Roadmap:** packs paid into escrow (buyer protection if a seller disappears); public QA and pricing agents; drift detection; mainnet after the track; DNS ownership; upstream auth.
+8. **Roadmap:** packs paid into escrow (buyer protection if a seller disappears); public QA and pricing agents; drift detection; mainnet after the track; DNS ownership.
 - **Appendix:** edge cases we handle (replayed payment → same token; race for last credit → exactly one wins; settlement fails → token stays pending and unusable; SSRF guard; 15s upstream timeout).

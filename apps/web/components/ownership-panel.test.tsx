@@ -61,6 +61,15 @@ describe("OwnershipPanel: what, where, why", () => {
     expect(document.body.textContent).not.toMatch(/[–—]/);
   });
 
+  it("shows the optional key section between adding the code and signing", () => {
+    installWallet();
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(MISSING)));
+    render(<OwnershipPanel apiId="api_1" openapiUrl={SPEC_URL} code={CODE} initiallyPassed={false} beforeSigning={<p>Key section</p>} />);
+    const items = screen.getAllByRole("listitem");
+    expect(items.map((li) => li.textContent?.includes("Key section"))).toEqual([false, true, false]);
+    expect(within(items[2]).getByRole("heading", { name: "Sign with your wallet" })).toBeInTheDocument();
+  });
+
   it("builds the snippets from the code", () => {
     expect(specSnippets(CODE)).toEqual({ yaml: `x-hirakumi-verify: "${CODE}"`, json: `"x-hirakumi-verify": "${CODE}",` });
   });

@@ -1,5 +1,5 @@
 import type postgres from "postgres";
-import { newId, type RuleDefinition } from "@hirakumi/core";
+import { newId, type RuleDefinition, type StoredUpstreamAuth } from "@hirakumi/core";
 import type { Sql } from "./client";
 
 const json = (sql: Sql, v: unknown) => sql.json(v as postgres.JSONValue);
@@ -12,6 +12,8 @@ export type ApiRow = {
   id: string; seller_id: string; name: string; origin: string; path_prefix: string; state: ApiState;
   health: Health; health_checked_at: Date | null; escrow_op_id: string | null; agent_identifier: string | null;
   pay_to: string;
+  /** Sealed key for APIs that need one (@hirakumi/core upstreamAuth.ts); only the gateway can open it. */
+  upstream_auth: StoredUpstreamAuth | null;
 };
 export type OperationRow = {
   id: string; api_id: string; op_id: string; method: string; path: string;
@@ -24,7 +26,7 @@ export type ApiBundle = { api: ApiRow; operations: OperationRow[]; rules: RuleRo
 export async function loadApiBundle(sql: Sql, apiId: string): Promise<ApiBundle | null> {
   const [api] = await sql<ApiRow[]>`
     select a.id, a.seller_id, a.name, a.origin, a.path_prefix, a.state, a.health, a.health_checked_at,
-           a.escrow_op_id, a.agent_identifier, s.cardano_addr as pay_to
+           a.escrow_op_id, a.agent_identifier, a.upstream_auth, s.cardano_addr as pay_to
     from apis a join sellers s on s.id = a.seller_id
     where a.id = ${apiId}`;
   if (!api) return null;

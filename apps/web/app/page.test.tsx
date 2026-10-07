@@ -20,7 +20,7 @@ describe("Home", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Make your APIs monetizable" })).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Paste your OpenAPI link, sign with your Cardano wallet, set a pack price. AI agents pay in USDM, and stale or empty answers cost them nothing.",
+        "Paste an OpenAPI link or a few example requests, sign with your Cardano wallet, set a pack price. AI agents pay in USDM, and stale or empty answers cost them nothing.",
       ),
     ).toBeInTheDocument();
     const ctas = screen.getAllByRole("link", { name: "List your API" });
@@ -36,6 +36,12 @@ describe("Home", () => {
     expect(screen.getByRole("link", { name: "See a live status page" })).toHaveAttribute("href", "/p/api_eejiaioyqt");
   });
 
+  it("says any API works: an OpenAPI link or a few example requests", () => {
+    render(<Home />);
+    expect(screen.getByRole("heading", { name: "Paste a link or example requests" })).toBeInTheDocument();
+    expect(screen.getByText(/or your API's address and a few example requests/)).toBeInTheDocument();
+  });
+
   it("walks through the flow and is honest about the network", () => {
     render(<Home />);
     expect(screen.getByRole("heading", { name: "How it works" })).toBeInTheDocument();
@@ -47,9 +53,9 @@ describe("Home", () => {
     expect(screen.queryByText(/mainnet/i, { selector: "dd" })).toBeNull();
   });
 
-  it("describes today's ownership proof: a code in the OpenAPI file and one wallet signature", () => {
+  it("describes today's ownership proof: a code in the OpenAPI file or a small file, and one wallet signature", () => {
     const { container } = render(<Home />);
-    expect(screen.getByText(/add a code to your OpenAPI file and sign once with your wallet/)).toBeInTheDocument();
+    expect(screen.getByText(/add a code to your OpenAPI file or serve a small file, then sign once with your wallet/)).toBeInTheDocument();
     expect(container.textContent).not.toMatch(/one file on your domain|download|well-known/i);
   });
 

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { USDM_PREPROD_ASSET } from "@x402/cardano";
-import { callOperation, choosePack, formatMicros, parseCreditsRequired, NoAffordablePackError, GatewayProtocolError } from "../src/gatewayClient.js";
+import { answerBody, callOperation, choosePack, formatAnswer, formatMicros, parseCreditsRequired, NoAffordablePackError, GatewayProtocolError } from "../src/gatewayClient.js";
 import { fakeGateway, json, GW, API, TOKEN, MASUMI_UNIT } from "./fakeGateway.js";
 
 const call = (f: Parameters<typeof callOperation>[0], token?: string) =>
@@ -81,5 +81,37 @@ describe("gatewayClient", () => {
     expect(formatMicros("2000000")).toBe("2");
     expect(formatMicros(1_250_000n)).toBe("1.25");
     expect(formatMicros("100")).toBe("0.0001");
+  });
+
+  it("returns text answers as text and never parses them as JSON", async () => {
+    const csv = "symbol,usd\nADA,0.27\n";
+    const r = await call(fakeGateway({ answer: { body: csv, contentType: "text/csv; charset=utf-8" } }).fetch, TOKEN);
+    expect(r).toMatchObject({ kind: "ok", body: csv, contentType: "text/csv; charset=utf-8", remaining: 4 });
+    // A plain text answer that happens to look like JSON stays text.
+    const n = await call(fakeGateway({ answer: { body: "42", contentType: "text/plain" } }).fetch, TOKEN);
+    expect(n).toMatchObject({ kind: "ok", body: "42" });
+  });
+
+  it("asks for JSON first but accepts text", async () => {
+    let accept: string | null = null;
+    await call(async (_u, init) => { accept = new Headers(init?.headers).get("accept"); return json(200, {}); }, TOKEN);
+    expect(accept).toBe("application/json, text/*;q=0.9, */*;q=0.8");
+  });
+
+  it("answerBody parses JSON media types, keeps bad JSON as text, and keeps other types as text", () => {
+    expect(answerBody('{"a":1}', "application/json; charset=utf-8")).toEqual({ a: 1 });
+    expect(answerBody('{"a":1}', "application/problem+json")).toEqual({ a: 1 });
+    expect(answerBody('{"a":1}', null)).toEqual({ a: 1 });
+    expect(answerBody("not json", "application/json")).toBe("not json");
+    expect(answerBody("<a>1</a>", "application/xml")).toBe("<a>1</a>");
+    expect(answerBody('{"a":1}', "text/plain")).toBe('{"a":1}');
+  });
+
+  it("formatAnswer prints text as it came and JSON on one line", () => {
+    expect(formatAnswer({ a: 1 })).toBe('{"a":1}');
+    expect(formatAnswer("ok")).toBe("ok");
+    expect(formatAnswer("a,b\n1,2")).toBe("\na,b\n1,2");
+    expect(formatAnswer("x".repeat(10), 4)).toBe("xxxx... (6 more chars)");
+    expect(formatAnswer(undefined)).toBe("undefined");
   });
 });

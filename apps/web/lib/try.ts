@@ -26,7 +26,8 @@ export function buildGatewayCall(
   token?: string,
 ): { url: string; init: RequestInit } {
   const method = op.method.toUpperCase();
-  const headers: Record<string, string> = { accept: "application/json" };
+  // Answers can be text (CSV, XML...) as well as JSON; the gateway's own answers are always JSON.
+  const headers: Record<string, string> = { accept: "application/json, text/*;q=0.9, */*;q=0.8" };
   if (token) headers.authorization = `Bearer ${token}`;
   let url = `${gatewayBase.replace(/\/+$/, "")}/a/${encodeURIComponent(apiId)}/x/${encodeURIComponent(op.opId)}`;
   if (method === "GET") {

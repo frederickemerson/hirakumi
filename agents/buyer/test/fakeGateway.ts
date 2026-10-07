@@ -19,6 +19,8 @@ export function fakeGateway(o: {
   chargeOnFail?: boolean;
   remainingHeaderOnRefusal?: boolean;
   downBeforePay?: boolean;
+  /** A non-JSON answer for passing calls (CSV, XML, plain text). Default: the JSON price. */
+  answer?: { body: string; contentType: string };
 } = {}) {
   const state = { remaining: o.credits ?? 5, urls: [] as string[], modes: [...(o.modes ?? [])] };
   const fetch: FetchLike = async (url, init) => {
@@ -46,6 +48,9 @@ export function fakeGateway(o: {
     }
     if (state.remaining <= 0) return fetch(url, { ...init, headers: {} });
     state.remaining--;
+    if (o.answer) {
+      return new Response(o.answer.body, { status: 200, headers: { "content-type": o.answer.contentType, "X-Credits-Remaining": String(state.remaining) } });
+    }
     return json(200, { symbol: "ADA", usd: 0.27, change24h: 1.2, timestamp: "2026-10-06T08:00:00.000Z" }, { "X-Credits-Remaining": String(state.remaining) });
   };
   return { fetch, state };

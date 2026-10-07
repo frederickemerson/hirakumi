@@ -118,6 +118,28 @@ describe("try handler", () => {
     expect((await handle(req({ opId: "getPrice", method: "GET", input: {} }), "api_1")).status).toBe(502);
   });
 
+  it("keeps a paid text answer as text, even one that would parse as JSON, and says its type", async () => {
+    const csv = "date,usd\n2026-10-07,0.27\n";
+    const { handle } = setup(() => new Response(csv, { status: 200, headers: { "content-type": "text/csv; charset=utf-8" } }));
+    const out = await (await handle(req({ opId: "getPrice", method: "GET", input: {} }), "api_1")).json();
+    expect(out).toMatchObject({ body: csv, contentType: "text/csv", result: { kind: "kept" } });
+    expect(out.receipt.outputHash).toBe(outputHash("ct_live1", csv));
+    const { handle: h2 } = setup(() => new Response("42", { status: 200, headers: { "content-type": "text/plain" } }));
+    expect((await (await h2(req({ opId: "getPrice", method: "GET", input: {} }), "api_1")).json()).body).toBe("42");
+  });
+
+  it("still reads the gateway's JSON reasons on a refused text answer", async () => {
+    const { handle } = setup(() => new Response(JSON.stringify({ error: "promise_not_met", reasons: ["the answer is empty"] }), { status: 422 }));
+    const out = await (await handle(req({ opId: "getPrice", method: "GET", input: {} }), "api_1")).json();
+    expect(out.result).toMatchObject({ kind: "not_kept", reasons: ["the answer is empty"] });
+  });
+
+  it("asks the gateway for JSON or text", async () => {
+    const { calls, handle } = setup(() => new Response("ok", { status: 200, headers: { "content-type": "text/plain" } }));
+    await handle(req({ opId: "getPrice", method: "GET", input: {} }), "api_1");
+    expect((calls[0].init.headers as Record<string, string>).accept).toBe("application/json, text/*;q=0.9, */*;q=0.8");
+  });
+
   it("keeps non-JSON bodies as text", async () => {
     const { handle } = setup(() => new Response("plain", { status: 200 }));
     const out = await (await handle(req({ opId: "getPrice", method: "GET", input: {} }), "api_1")).json();

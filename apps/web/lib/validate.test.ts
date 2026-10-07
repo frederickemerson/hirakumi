@@ -19,6 +19,8 @@ describe("validateOpenApiUrl", () => {
     ["https://victim.example/proxy?u=https://evil.example/openapi.json", "Remove the ?query from the link."],
     ["https://price.example.dev/openapi.json?v=2", "Remove the ?query from the link."],
     ["https://price.example.dev/openapi.json#top", "Remove the #fragment from the link."],
+    ["https://price.example.dev./openapi.json", "Remove the dot at the end of the host name in the link."],
+    ["https://price.example.dev.:8443/openapi.json", "Remove the dot at the end of the host name in the link."],
   ])("rejects %j", (input, message) => {
     expect(() => validateOpenApiUrl(input, false)).toThrow(ValidationError);
     expect(() => validateOpenApiUrl(input, false)).toThrow(message);

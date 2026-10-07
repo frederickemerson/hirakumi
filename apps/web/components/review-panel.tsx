@@ -8,6 +8,7 @@ import { toast } from "@/components/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { promiseFormatNote } from "@/lib/answer-format";
 import { postJson, RequestError } from "@/lib/client-fetch";
 import { formatTusdm, parsePackCalls, parseTusdm, perCallTusdm } from "@/lib/money";
 import { startRouteProgress } from "@/lib/route-progress";
@@ -77,6 +78,7 @@ export function ReviewPanel({ apiId, promises, pack }: {
           <div key={p.operationId} className="space-y-3 rounded-[2px] border-2 border-ink bg-frost p-5">
             <p className="flex items-center gap-2 text-body-lg"><Badge variant="sky">{p.method.toUpperCase()}</Badge><code>{p.path}</code></p>
             <p className="text-body-lg">{p.plainEnglish ?? "The plain-English summary isn't ready yet. The exact check is below."}</p>
+            {promiseFormatNote(p.definition) && <p className="text-body text-graphite">{promiseFormatNote(p.definition)}</p>}
             <details className="group">
               <summary className="cursor-pointer text-body underline underline-offset-4">Show the exact check (JSON)</summary>
               <pre className="mt-3 overflow-x-auto rounded-[2px] bg-ink p-3 text-caption text-cream">{JSON.stringify(p.definition, null, 2)}</pre>

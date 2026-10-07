@@ -1,4 +1,4 @@
-import type { RuleDefinition } from "@hirakumi/core";
+import { isJsonMediaType, type RuleDefinition } from "@hirakumi/core";
 import { z } from "zod";
 import { LlmOutputError, LlmRefusalError, quoteAsData, type StructuredCall } from "./claude.js";
 
@@ -20,7 +20,14 @@ const RuleTextSchema = z.object({
   listing: z.object({ summary: z.string(), description: z.string(), tags: z.array(z.string()) }),
 });
 
-type SchemaShape = { required?: string[]; properties?: Record<string, { type?: unknown; maxAgeSeconds?: unknown }> };
+type SchemaShape = {
+  type?: unknown;
+  minLength?: unknown;
+  pattern?: unknown;
+  not?: unknown;
+  required?: string[];
+  properties?: Record<string, { type?: unknown; maxAgeSeconds?: unknown }>;
+};
 
 function typeWord(t: unknown): string {
   if (Array.isArray(t)) return t.map(typeWord).join(" or ");
@@ -32,10 +39,46 @@ function typeWord(t: unknown): string {
   return "any value";
 }
 
+/** The header line in a text rule's pattern (core inferTextRule: ^<escaped line>\r?\n), or null. */
+export function headerLineOf(pattern: unknown): string | null {
+  if (typeof pattern !== "string") return null;
+  const m = /^\^(.*)\\r\?\\n$/.exec(pattern);
+  if (!m || /(^|[^\\])[.*+?^${}()|[\]]/.test(m[1])) return null;
+  return m[1].replace(/\\(.)/g, "$1");
+}
+
+/** core's NON_BLANK text pattern: at least one non-whitespace character, said as "not empty". */
+const NON_BLANK = "\\S";
+
+/** A text rule's `not` pattern that refuses an HTML page (core HTML_PAGE), tested by what it matches. */
+function refusesHtmlPage(not: unknown): boolean {
+  const pattern = typeof not === "object" && not !== null ? (not as { pattern?: unknown }).pattern : undefined;
+  if (typeof pattern !== "string") return false;
+  try {
+    const re = new RegExp(pattern);
+    return re.test("<!DOCTYPE html>") && re.test("<html>") && !re.test("date,price");
+  } catch {
+    return false;
+  }
+}
+
+/** A text rule (contentType text/*, XML, CSV...): the body is checked as one string. */
+function textRuleText(def: RuleDefinition, s: SchemaShape): string {
+  const parts = [`A response counts as good when the status is ${def.status.min}-${def.status.max} and the body is ${def.contentType} text`];
+  if ((typeof s.minLength === "number" && s.minLength > 0) || s.pattern === NON_BLANK) parts.push("not empty");
+  const header = headerLineOf(s.pattern);
+  if (header !== null) parts.push(`starting with the line ${JSON.stringify(header.length > 120 ? `${header.slice(0, 120)}...` : header)}`);
+  else if (s.pattern !== undefined && s.pattern !== NON_BLANK) parts.push("matching the format of its test answers");
+  if (refusesHtmlPage(s.not)) parts.push("and not an HTML page");
+  return `${parts.join(", ")}.`;
+}
+
 /** Deterministic plain English for a rule: the only promise text buyers see. */
 export function fallbackRuleText(def: RuleDefinition): string {
   const s = def.schema as SchemaShape;
-  const parts = [`A response counts as good when the status is ${def.status.min}-${def.status.max} and the body is JSON`];
+  if (s.type === "string" && !isJsonMediaType(def.contentType)) return textRuleText(def, s);
+  const json = def.contentType === "application/json" ? "JSON" : `JSON (${def.contentType})`;
+  const parts = [`A response counts as good when the status is ${def.status.min}-${def.status.max} and the body is ${json}`];
   const required = s.required ?? [];
   if (required.length) parts.push(`it contains ${required.map((k) => `"${k}" (${typeWord(s.properties?.[k]?.type)})`).join(", ")}`);
   for (const [k, p] of Object.entries(s.properties ?? {})) {

@@ -10,7 +10,7 @@ import { writeRuleText } from "../llm/ruleText.js";
 import { enqueueMessage } from "../messages.js";
 import type { InputSchema } from "../openapi/parse.js";
 import { buildBadInput, buildGoodInputs } from "../qa/inputs.js";
-import { MIN_CALLS, qaOperation } from "../qa/runQa.js";
+import { MIN_CALLS, NeedsKeyError, qaOperation } from "../qa/runQa.js";
 import { finishStep, getStep, runStep, saveStepOutput, type StepOutcome } from "../steps.js";
 
 export type QaDeps = { pool: pg.Pool; gateway: GatewayClient; llm: StructuredCall; webBaseUrl: string; now?: () => Date };
@@ -105,7 +105,10 @@ export async function qaStep(deps: QaDeps, apiId: string): Promise<StepOutcome> 
         summaries.push({ opId: op.op_id, calls: 0, badInput: "reused" });
         continue;
       }
-      const r = await qaOperation(counted.gateway, apiId, op, samples[op.op_id] ?? []);
+      const r = await qaOperation(counted.gateway, apiId, op, samples[op.op_id] ?? []).catch((e: unknown) => {
+        // The failure message is all the seller gets (also on a Sokosumi task), so it links the key form.
+        throw e instanceof NeedsKeyError ? new PermanentError(`${e.message} Review page: ${reviewLink(deps.webBaseUrl, apiId)}`) : e;
+      });
       await withTx(deps.pool, async (c) => {
         await c.query(
           `insert into rules (id, operation_id, version, definition, hash) values ($1, $2, 1, $3::jsonb, $4)

@@ -8,6 +8,8 @@ export type SnippetInput = {
   packPriceMicros: string;
   opId: string;
   method: string;
+  /** The promise's answers are text (CSV, XML...), so the snippet reads the answer as text. */
+  textAnswer?: boolean;
 };
 
 /** Buyer integration in under 20 lines with the standard x402 client (US6). Strings are single-quoted on purpose: the output contains template literals. */
@@ -36,6 +38,6 @@ export function buildBuyerSnippet(i: SnippetInput): string {
     ...(isGet ? [] : ["const input = {}; // your request body"]),
     "// 200 uses one credit; 422 means the promise wasn't met and no credit was used",
     'const res = await fetch(`${base}/x/' + i.opId + "`, " + callInit + ");",
-    'console.log(res.status, res.headers.get("x-credits-remaining"), await res.json());',
+    'console.log(res.status, res.headers.get("x-credits-remaining"), await res.' + (i.textAnswer ? "text" : "json") + "());",
   ].join("\n");
 }

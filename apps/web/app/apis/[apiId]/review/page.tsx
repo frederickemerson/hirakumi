@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { ReviewPanel } from "@/components/review-panel";
 import { LiveProgress } from "@/components/live-progress";
+import { UpstreamAuthForm } from "@/components/upstream-auth-form";
 import { ErrorState, NoticeList, WaitingState } from "@/components/states";
 import { getSql } from "@/lib/db";
 import { stepForState } from "@/lib/flow";
@@ -9,6 +10,7 @@ import { loadApiPage } from "@/lib/page-auth";
 import { listingBaseNotes } from "@/lib/repo/apis";
 import { loadProgress } from "@/lib/repo/progress";
 import { getPack } from "@/lib/repo/packs";
+import { getAuthHint, getUpstreamAuth } from "@/lib/repo/upstream-auth";
 import { listLatestRules } from "@/lib/repo/rules";
 
 export const metadata: Metadata = { title: "Review and price" };
@@ -23,12 +25,17 @@ export default async function ReviewPage({ params }: { params: Promise<{ apiId: 
   if (api.state === "ownership_verified") {
     const progress = await loadProgress(sql, api);
     const failure = progress.failure;
+    // A missing or wrong key is the usual reason test calls fail, so the key can be fixed here and they run again.
+    const [upstreamAuth, authHint] = failure ? await Promise.all([getUpstreamAuth(sql, apiId), getAuthHint(sql, apiId)]) : [null, null];
     return (
       <section className="space-y-6">
         {heading}
         {overlaps}
         {failure ? (
-          <ErrorState title="Your test calls didn't pass" detail={failure} />
+          <>
+            <ErrorState title="Your test calls didn't pass" detail={failure} />
+            <UpstreamAuthForm apiId={apiId} initial={upstreamAuth} hint={authHint} retriesTests />
+          </>
         ) : (
           <WaitingState title="Running test calls on your API"
             detail="Hirakumi calls each endpoint at least 5 times to learn what a good answer looks like. This page updates by itself."
@@ -41,7 +48,7 @@ export default async function ReviewPage({ params }: { params: Promise<{ apiId: 
   }
   if (api.state !== "rule_built" && api.state !== "priced") redirect(`/apis/${apiId}/${stepForState(api.state)}`);
 
-  const [promises, pack] = await Promise.all([listLatestRules(sql, apiId), getPack(sql, apiId)]);
+  const [promises, pack, upstreamAuth] = await Promise.all([listLatestRules(sql, apiId), getPack(sql, apiId), getUpstreamAuth(sql, apiId)]);
   return (
     <section className="space-y-6">
       {heading}
@@ -51,6 +58,8 @@ export default async function ReviewPage({ params }: { params: Promise<{ apiId: 
       ) : (
         <ReviewPanel apiId={apiId} state={api.state} promises={promises} pack={pack} />
       )}
+      {/* For key rotation before publishing: a new key takes effect on the next call. */}
+      <UpstreamAuthForm apiId={apiId} initial={upstreamAuth} hint={null} title="Your API's key" />
     </section>
   );
 }

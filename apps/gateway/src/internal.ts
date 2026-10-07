@@ -49,9 +49,9 @@ async function checkOwnership(
   });
   if (!current.ok) return fail(current.reason, current.detail);
   const field = verifyDocField(doc, code.token);
-  if (field.kind === "missing") return fail("missing", `We read your OpenAPI file, but it has no ${VERIFY_FIELD} field at the root.`);
+  if (field.kind === "missing") return fail("missing", `We read your file, but it has no ${VERIFY_FIELD} field at the root.`);
   if (field.kind === "mismatch") return fail("mismatch", `Found ${VERIFY_FIELD}, but its value does not match this API's code. Copy the code shown on this page.`);
-  return { ok: true, reason: "verified", triedUrl, detail: "Found your code. The OpenAPI file is verified." };
+  return { ok: true, reason: "verified", triedUrl, detail: "Found your code. The file is verified." };
 }
 
 const digest = (s: string) => createHash("sha256").update(s).digest();

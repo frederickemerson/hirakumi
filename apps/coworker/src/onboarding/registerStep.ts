@@ -47,7 +47,7 @@ async function registrationInput(deps: RegisterDeps, apiId: string) {
   const qa = await getStep(deps.pool, apiId, "qa");
   const listing = qa?.output?.listing as Listing | undefined;
   // The registry's own limits (packages/masumi validateListing): name and description 1-250 characters,
-  // 1-15 tags of at most 63 characters, and exampleOutput must be an https URL (QA stores a JSON body, so it's omitted).
+  // 1-15 tags of at most 63 characters, and exampleOutput must be an https URL (QA stores an answer body, so it is omitted).
   const tags = (listing?.tags ?? []).map((t) => t.slice(0, 63)).filter(Boolean).slice(0, 15);
   return {
     name: api.name.slice(0, 250),

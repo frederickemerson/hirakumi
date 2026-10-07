@@ -24,7 +24,7 @@ export const HUMAN_STEP_OF: Record<StepName, HumanStep> = {
 };
 
 export const STEP_LABELS: Record<StepName, string> = {
-  parse: "reading your OpenAPI file",
+  parse: "reading your API",
   describe: "describing your endpoints",
   qa: "test calls",
   register: "registering on Masumi",

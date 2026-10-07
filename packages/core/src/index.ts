@@ -8,3 +8,6 @@ export * from "./health";
 export * from "./ownership";
 export * from "./listingBase";
 export * from "./settlement";
+export * from "./samples";
+export * from "./secrets";
+export * from "./upstreamAuth";

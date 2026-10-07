@@ -51,6 +51,31 @@ describe("parseStep (intake → parsed)", () => {
   });
 });
 
+describe("parseStep for an API that needs a key", () => {
+  const KEYED = JSON.stringify({
+    ...JSON.parse(PRICE_SPEC),
+    security: [{ key: [] }],
+    components: { ...JSON.parse(PRICE_SPEC).components, securitySchemes: { key: { type: "apiKey", in: "header", name: "X-API-Key" } } },
+  });
+
+  it("saves where the key goes and tells the seller to add it on the ownership page, not in a comment", async () => {
+    const apiId = await seedApi(db.pool, { sokosumiTaskId: "tsk_key" });
+    expect(await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(KEYED) }, apiId)).toBe("ran");
+    const step = await getStep(db.pool, apiId, "parse");
+    expect(step?.output?.authHint).toEqual({ in: "header", name: "X-API-Key" });
+    const [m] = await messagesFor(db.pool, apiId);
+    expect(m.body).toMatch(/found 4 endpoints\. I skipped 2/);
+    expect(m.body).toContain("Your API needs a key (the X-API-Key header). Add it on the ownership page before you prove ownership. Never paste it in a comment.");
+  });
+
+  it("saves a null hint when no endpoint needs a key", async () => {
+    const apiId = await seedApi(db.pool);
+    await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(PRICE_SPEC) }, apiId);
+    expect((await getStep(db.pool, apiId, "parse"))?.output?.authHint).toBeNull();
+    expect((await messagesFor(db.pool, apiId))[0].body).not.toMatch(/key/);
+  });
+});
+
 describe("parseStep honours servers[0].url (review I7)", () => {
   const withServers = (servers: unknown) => JSON.stringify({ ...JSON.parse(PRICE_SPEC), servers });
   const prefixOf = async (apiId: string) => (await db.pool.query(`select path_prefix, state from apis where id = $1`, [apiId])).rows[0];

@@ -37,6 +37,11 @@ export type GatewayConfig = {
    * the seller from Hirakumi's wallet, so any other API is refused; otherwise anyone could list an API and drain it.
    */
   tryLiveApis: string[];
+  /**
+   * UPSTREAM_AUTH_PRIVATE_KEY: opens the keys sellers give for APIs that need one (base64 PKCS#8 X25519, made with
+   * `pnpm --filter @hirakumi/gateway upstream-auth-keys`; the web app gets the public half). Unset: such APIs are blocked.
+   */
+  upstreamAuthPrivateKey: string | null;
 };
 
 export type PackMode = "direct" | "escrow" | "hybrid";
@@ -103,6 +108,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     settlement: settlementFrom(env),
     startJobTrustedCidrs: parseTrustedCidrs(env.START_JOB_TRUSTED_CIDRS),
     tryLiveApis: parseTryLiveApis(env.TRY_LIVE_APIS),
+    upstreamAuthPrivateKey: env.UPSTREAM_AUTH_PRIVATE_KEY?.trim() || null,
   };
 }
 

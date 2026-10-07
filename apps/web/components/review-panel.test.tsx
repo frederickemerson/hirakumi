@@ -29,6 +29,13 @@ describe("ReviewPanel", () => {
     expect(screen.getByText(/"last_updated":/)).toBeInTheDocument(); // the JSON block, not the sentence
   });
 
+  it("says a text promise checks the answer as text; a JSON promise has no such line", () => {
+    const csv: RuleView = { ...promises[0], operationId: "op_2", definition: { version: 1, contentType: "text/csv", schema: { type: "string", minLength: 1 } } };
+    render(<ReviewPanel apiId="api_1" state="rule_built" promises={[promises[0], csv]} pack={null} />);
+    expect(screen.getAllByText(/checked as text/)).toHaveLength(1);
+    expect(screen.getByText("Answers are CSV (text/csv), checked as text.")).toBeInTheDocument();
+  });
+
   it("suggests 100 calls for 2 tUSDM and shows the per-call price", () => {
     render(<ReviewPanel apiId="api_1" state="rule_built" promises={promises} pack={null} />);
     expect(screen.getByLabelText("Calls per pack")).toHaveValue("100");

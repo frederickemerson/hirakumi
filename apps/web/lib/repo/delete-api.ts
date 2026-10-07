@@ -68,7 +68,7 @@ export async function deleteApi(sql: Sql, a: { apiId: string; sellerId: string }
       select ${registerStartedSql(tx, a.apiId)} as register_started, ${soldSql(tx, a.apiId)} as sold`;
     const recordsKept = recordsKeptReason({ state: api.state, agentIdentifier: api.agentIdentifier, ...facts }) !== null;
     if (recordsKept) {
-      await tx`update apis set state = 'retired', deleted_at = now() where id = ${a.apiId}`;
+      await tx`update apis set state = 'retired', deleted_at = now(), upstream_auth = null where id = ${a.apiId}`;
     } else {
       for (const step of API_DELETE_ORDER) await step.run(tx, a.apiId);
       await tx`delete from apis where id = ${a.apiId}`;

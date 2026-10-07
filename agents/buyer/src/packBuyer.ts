@@ -1,4 +1,4 @@
-import { callOperation, choosePack, formatMicros, type CallOutcome, type CreditsRequired, type FetchLike } from "./gatewayClient.js";
+import { callOperation, choosePack, formatAnswer, formatMicros, type CallOutcome, type CreditsRequired, type FetchLike } from "./gatewayClient.js";
 import { PackPurchaseError, type PackPurchase } from "./payClient.js";
 import type { PendingPayment, PendingStore, TokenStore } from "./tokenStore.js";
 
@@ -164,7 +164,7 @@ export async function runPackDemo(deps: PackDemoDeps, o: PackDemoOptions): Promi
     switch (r.kind) {
       case "ok":
         s.passed++;
-        deps.log(`#${i} 200 in ${r.latencyMs}ms  credits left: ${r.remaining ?? "?"}  ${JSON.stringify(r.body)}`);
+        deps.log(`#${i} 200 in ${r.latencyMs}ms  credits left: ${r.remaining ?? "?"}  ${formatAnswer(r.body)}`);
         checkCredits(r.remaining, true);
         break;
       case "promise_not_met":

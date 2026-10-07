@@ -3,7 +3,7 @@ import { mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { USDM_PREPROD_ASSET } from "@x402/cardano";
-import { ruleHash, type RuleDefinition } from "@hirakumi/core";
+import { decodeBody, inferRuleFromResponses, ruleHash, type RuleDefinition } from "@hirakumi/core";
 import { PACK_ESCROW, encodePackDatum, newReceiptKey, verifyReceipt, type PackDatum } from "@hirakumi/escrow";
 import { EscrowOfferError, IouKeyStore, checkEscrowOffer, escrowCall, signNext, type EscrowChannel, type Requirement } from "../src/escrowPack.js";
 import { runEscrowPack } from "../src/escrowPackFlow.js";
@@ -121,6 +121,37 @@ describe("escrowCall", () => {
     const r = await escrowCall({ fetch: g.fetch, rule, save: (x) => store.put(x) }, c, "https://gw.test/x");
     expect(r.kind).toBe("dispute");
     expect(store.get("api_demo", "pk_demo")).toMatchObject({ disputed: true, lastSigned: 0, lastIou: null });
+  });
+
+  it("checks a text answer against a text promise and returns it as text", async () => {
+    const TEXT_RULE: RuleDefinition = { version: 1, status: { min: 200, max: 299 }, contentType: "text/csv", schema: { type: "string", minLength: 1, pattern: "^symbol,usd\\r?\\n" } };
+    const store = tmpStore();
+    const c = channel(store, { ruleHash: ruleHash(TEXT_RULE) });
+    const csv = (body: string) => () => new Response(body, { status: 200, headers: { "content-type": "text/csv", "x-hirakumi-sign-next": "1" } });
+    const g = gateway([csv("symbol,usd\nADA,0.27\n")]);
+    const r = await escrowCall({ fetch: g.fetch, rule: async () => TEXT_RULE, save: (x) => store.put(x) }, c, "https://gw.test/x");
+    expect(r).toEqual({ kind: "pass", body: "symbol,usd\nADA,0.27\n", contentType: "text/csv", signed: 1 });
+    expect(g.seen[0]!.accept).toContain("text/*");
+    const c2 = channel(tmpStore(), { ruleHash: ruleHash(TEXT_RULE) });
+    const g2 = gateway([csv("wrong,header\n1,2\n")]);
+    expect((await escrowCall({ fetch: g2.fetch, rule: async () => TEXT_RULE, save: () => {} }, c2, "https://gw.test/x")).kind).toBe("dispute");
+  });
+
+  it("agrees with the gateway on an inferred text promise: BOM-less text passes, blank and HTML pages are disputes", async () => {
+    // The rule the coworker's QA infers from one CSV example called 5 times: no header pinned, so a new price passes.
+    const textRule = inferRuleFromResponses(Array.from({ length: 5 }, () => ({ status: 200, contentType: "text/csv", body: "ADA 0.35\nupdated\n", latencyMs: 1 })));
+    const csv = (body: string | Uint8Array) => () => new Response(body, { status: 200, headers: { "content-type": "text/csv; charset=utf-8", "x-hirakumi-sign-next": "1" } });
+    const call = async (body: string | Uint8Array) => {
+      const c = channel(tmpStore(), { ruleHash: ruleHash(textRule) });
+      return escrowCall({ fetch: gateway([csv(body)]).fetch, rule: async () => textRule, save: () => {} }, c, "https://gw.test/x");
+    };
+    expect(await call("ADA 0.36\nupdated\n")).toMatchObject({ kind: "pass", body: "ADA 0.36\nupdated\n" });
+    // res.text() drops a BOM just as the gateway's safeFetch does, so both check (and hash) the same string.
+    const withBom = new Uint8Array([0xef, 0xbb, 0xbf, ...new TextEncoder().encode("ADA 0.36\n")]);
+    expect(decodeBody(withBom, "text/csv")).toBe(await new Response(withBom).text());
+    expect(await call(withBom)).toMatchObject({ kind: "pass", body: "ADA 0.36\n" });
+    expect((await call(" \n ")).kind).toBe("dispute");
+    expect((await call("<!DOCTYPE html><html>502</html>")).kind).toBe("dispute");
   });
 
   it("402 iou_required: signs an earned IOU and retries once; never an unearned one", async () => {

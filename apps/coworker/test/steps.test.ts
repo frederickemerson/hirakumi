@@ -43,7 +43,7 @@ describe("runStep", () => {
     const msgs = await messagesFor(db.pool, apiId);
     expect(msgs).toHaveLength(1);
     expect(msgs[0]).toMatchObject({ task_status: "INPUT_REQUIRED" });
-    expect(msgs[0].body).toMatch(/reading your OpenAPI file.*3 tries.*upstream timeout/);
+    expect(msgs[0].body).toMatch(/reading your API.*3 tries.*upstream timeout/);
   });
 
   it("stops at once on a PermanentError and shows its text to the seller", async () => {
@@ -52,7 +52,7 @@ describe("runStep", () => {
       throw new PermanentError("This is a Swagger 2.0 file.");
     });
     expect(outcome).toBe("failed");
-    expect((await messagesFor(db.pool, apiId))[0].body).toBe('I had to stop at "reading your OpenAPI file": This is a Swagger 2.0 file.');
+    expect((await messagesFor(db.pool, apiId))[0].body).toBe('I had to stop at "reading your API": This is a Swagger 2.0 file.');
   });
 
   it("bails out cleanly when the API was deleted before the step starts (audit M2)", async () => {

@@ -16,6 +16,7 @@
 
 ## Final checks (T-4h → T-1h)
 - [ ] `pnpm test` green on `main`; the tag `submission` is pushed
+- [ ] Deploy order for any-API (migration 0014): only the gateway applies migrations (at boot), and the web app and the coworker read `apis.intake_kind` / `apis.samples`. Restart the gateway first (or run `pnpm --filter @hirakumi/db migrate` against Neon), check `select 1 from schema_migrations where name = '0014_any_api_samples.sql'` returns a row, then promote the Vercel build and restart the coworker. Set `UPSTREAM_AUTH_PUBLIC_KEY` on Vercel and `UPSTREAM_AUTH_PRIVATE_KEY` on the gateway in the same window.
 - [ ] No secrets in the repo: `git log -p | grep -E 'BUYER_MNEMONIC=|ADMIN_TOKEN=|PAYMENT_SERVICE_TOKEN=' ` returns nothing with a value
 - [ ] `DEMO_MODE=1` stays on and the price API mode is `ok` during judging
 - [ ] Buyer and purchasing wallets keep ≥ 10 tADA so judges can re-run the buyer

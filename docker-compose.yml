@@ -49,6 +49,7 @@ services:
       - path: .env
         required: false
     # DATABASE_URL comes from .env: the Hirakumi database is Neon (contract v1.1). Local postgres serves only the payment service.
+    # UPSTREAM_AUTH_PRIVATE_KEY comes from .env too: the gateway alone opens the keys sellers give for their APIs.
     environment:
       PAYMENT_SERVICE_URL: http://payment-service:3001/api/v1
       GATEWAY_PORT: "4021"
@@ -73,6 +74,9 @@ services:
     # DATABASE_URL comes from .env: the Hirakumi database is Neon (contract v1.1). Local postgres serves only the payment service.
     environment:
       PAYMENT_SERVICE_URL: http://payment-service:3001/api/v1
+      # .env is shared with the gateway: only the gateway may hold the key that opens sellers' API keys.
+      UPSTREAM_AUTH_PRIVATE_KEY: ""
+      UPSTREAM_AUTH_PUBLIC_KEY: ""
     depends_on:
       postgres:
         condition: service_healthy
