@@ -10,6 +10,28 @@ Deadline: 7 Oct 2026, 23:59 SGT.
 - [ ] Slides (Google Drive, "Anyone with the link: Viewer")
 - [ ] Write-up: problem, technical approach with tools, frameworks and Cardano infrastructure, deployment and scaling (`docs/submission/writeup.md`)
 
+## Requirement check (7 Oct 2026, 13:55 UTC)
+
+Transactions checked on Blockfrost preprod (`/txs/<hash>/utxos`), listing data read from the production database, URLs fetched live. Showcase listing: Mika's FX Rates, `api_7ebwqwczcw`.
+
+| Requirement | Evidence | Verified |
+|---|---|---|
+| Working prototype on Cardano preprod | Gateway https://52-70-235-103.sslip.io/healthz 200; web https://hirakumi.vercel.app 200; every tx below is on preprod | yes |
+| Public GitHub repo with docs and license | https://github.com/frederickemerson/hirakumi (public), `README.md`, `LICENSE` | yes |
+| Live URLs | Web 200; gateway 200; try pages https://hirakumi.vercel.app/p/api_eejiaioyqt/try and https://hirakumi.vercel.app/p/api_7ebwqwczcw/try 200; seller OpenAPI files at price, mika and fx.patricksteveharrison.com 200 (their roots answer 404 by design) | yes |
+| Agent registered on Masumi | Mika agent identifier `67ab0c92c4ac1610895a1c965ee50aba41a8f1513b15240723b3bd0b10e52a7b4eff23a80d7da2d3ca490c28d7ea8eec153805b61d436d11f5000000`, mint [8f04206b...](https://preprod.cardanoscan.io/transaction/8f04206b27e66266d61f22423c01447cad88582fb9c7fd7b96b7ac1f728e602a) (10:51 UTC, metadata `api_base_url` is the gateway URL below). The masumi.network explorer does not index policy `67ab0c92...`, so link the [token on Cardanoscan](https://preprod.cardanoscan.io/token/67ab0c92c4ac1610895a1c965ee50aba41a8f1513b15240723b3bd0b10e52a7b4eff23a80d7da2d3ca490c28d7ea8eec153805b61d436d11f5000000) | yes |
+| Deployed MIP-003 agent | https://52-70-235-103.sslip.io/a/api_7ebwqwczcw/availability 200 `available`; `/input_schema` 200; `/status` without an id answers 404 `JOB_NOT_FOUND` | yes |
+| x402 payment offer | Paid route `/a/api_7ebwqwczcw/x/convertAmount` answers 402 with the pack; `POST /a/api_7ebwqwczcw/packs/pk_jsus5yvzmq` answers x402 v2 402: `exact`, `cardano:preprod`, 2 000 000 tUSDM, `payTo` the seller `addr_test1qzrz6vvv...dwlc45` | yes |
+| Buyer paid for the Mika agent | Pack lock [07d1bc1d...](https://preprod.cardanoscan.io/transaction/07d1bc1d7f51dc41e17ea4bc179fe94f06e5524b51ce0de3f03321679728605b): 2 tUSDM into the escrow script, datum names the Mika seller and promise `sha256:e05d0453...` | yes |
+| Paid calls served | 3 credit calls, 3 passed, 0 failed (`calls` table); buyer signed IOUs for 2 | yes |
+| Mika seller received payment | Close [faae6b22...](https://preprod.cardanoscan.io/transaction/faae6b22dca816fd91f8ed5d7a639db8f2c2d8325c5fa32457820aa3354cf6ac), Settle [d64f7906...](https://preprod.cardanoscan.io/transaction/d64f790605dbda025dbf92272c0546ea0fe02ab6f10984516df064da0fa4fdaa): 38 800 micros tUSDM to `addr_test1qzrz6vvv...dwlc45` for 2 signed calls, 1 200 fee, 1 960 000 refunded to the buyer (Blockfrost preprod) | yes |
+| Sellers received payments (earlier listings) | Direct packs [43844e7b...](https://preprod.cardanoscan.io/transaction/43844e7b86c35e680805d5916cd38743462fbcf4cbd1db580d0faad8936e6a09) 2 tUSDM, [9d1b37be...](https://preprod.cardanoscan.io/transaction/9d1b37bee0227ae56217699b15ddea5cf7d549f2bd4dae0e734f304c55c7b9eb) 2 tUSDM, [200a86c0...](https://preprod.cardanoscan.io/transaction/200a86c03d0936de6f15f37f09e7931ca3fad96ce20b22728d9c731bf3975e7b) 1 tUSDM; escrow lock [8b648494...](https://preprod.cardanoscan.io/transaction/8b6484943561dad5f8a297e07fb217c5ee009e018c9c618ad711691bbd775032), Close [2d296403...](https://preprod.cardanoscan.io/transaction/2d29640399bd266b9e2a7bfcd5d382443b97fd0a884b987e5997f3989136d4e4), Settle [cad54fc0...](https://preprod.cardanoscan.io/transaction/cad54fc01cdd98f04e94f32113f5d3368f462c734beb37d66fee54980180093d) (seller 58 200, fee 1 800, buyer 1 940 000 micros) | yes |
+| Masumi escrow job paid out | Result [f60d247d...](https://preprod.cardanoscan.io/transaction/f60d247d30e075f69cd5b876c49df45a4aadf68fa7fc67d0a00c60edb2321fd2), collection [6fd28bb9...](https://preprod.cardanoscan.io/transaction/6fd28bb92094e8fd5e9332d644c8fd7fd6f2c4572847ded32bcb22df9a46ae4a): 2 Masumi tUSDM to the seller. No Masumi jobs exist for the Mika listings | yes (not on Mika) |
+| Earlier Mika listing `api_cke2nitg7f` | Mint [4e6f7040...](https://preprod.cardanoscan.io/transaction/4e6f7040fade713187f29d52a68dfa6661ea3703de60201dc6bac71082c5dac0); pack lock [7119fc43...](https://preprod.cardanoscan.io/transaction/7119fc43e2a474f0d9930f80ce83a1b152fdc3ccf5feca12ea48f71213b9eb14) 2 tUSDM, 1 passed call, no IOU, still Open | yes |
+| Demo video (3:00 or less) | Link not filled in below | no |
+| Slides | Link not filled in below | no |
+| Write-up | `docs/submission/writeup.md` | yes |
+
 ## Links
 - Repo: https://github.com/frederickemerson/hirakumi
 - Write-up: https://github.com/frederickemerson/hirakumi/blob/main/docs/submission/writeup.md
