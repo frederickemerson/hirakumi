@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
-import { generateUpstreamAuthKeys, sealUpstreamSecret, setSelfAddresses } from "@hirakumi/core";
+import { generateUpstreamAuthKeys, sealUpstreamSecret } from "@hirakumi/core";
 import { createApp } from "../src/app";
 import { checkRouted, DomainRegistry, tlsAskDecision, type AddressResolver } from "../src/domains";
 import { tlsAskApp } from "../src/frontDoorAdmin";
@@ -54,7 +54,7 @@ beforeEach(async () => {
     insert into challenges (id, api_id, kind, token, expires_at, consumed_at, proof)
     values ('ch_fd', ${h.seeded.apiId}, 'dns', 'hkv_code', now() + interval '1 year', now(), ${h.sql.json({ passedAt: new Date().toISOString() })})`;
 });
-afterEach(async () => { setSelfAddresses([]); await h.close(); });
+afterEach(async () => { await h.close(); });
 
 const call = (path = "/price?symbol=ADA") => request(app).get(path).set("host", HOST);
 
@@ -160,13 +160,16 @@ describe("the front door", () => {
     expect(h.stub.hits()).toBe(0);
   });
 
-  it("refuses an origin that resolves to Hirakumi's own address", async () => {
-    setSelfAddresses(["127.0.0.1"]);
+  it("508 for the hop header on the gateway's own host too, so an origin pointing at the gateway never loops", async () => {
+    const r = await request(app).get(`/a/${h.seeded.apiId}/x/getPrice?symbol=ADA`).set("x-hirakumi-hop", "1");
+    expect(r.status).toBe(508);
+  });
+
+  it("calls an origin that shares Hirakumi's address (another site on the same host): only the hop header stops loops", async () => {
     const t = await insertActiveToken(h.sql, h.seeded);
-    const r = await call().set("authorization", `Bearer ${t.token}`);
-    expect(r.status).toBe(502);
-    expect(JSON.stringify(r.body.reasons)).toMatch(/Hirakumi's own address/);
-    expect(h.stub.hits()).toBe(0);
+    const r = await request(app).get(`/a/${h.seeded.apiId}/x/getPrice?symbol=ADA`).set("authorization", `Bearer ${t.token}`);
+    expect(r.status).toBe(200);
+    expect(h.stub.lastHeaders()?.["x-hirakumi-hop"]).toBe("1");
   });
 
   it("leaves the native routes as they were", async () => {
