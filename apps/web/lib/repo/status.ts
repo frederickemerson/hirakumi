@@ -1,4 +1,6 @@
 import type { Sql } from "../db";
+import { hasSelfTestSchema } from "./self-test-schema";
+import { notSelfTestCall } from "./stats";
 
 export type HourState = "up" | "degraded" | "down" | "no_data";
 export type StatusHour = { start: Date; probes: number; passed: number; state: HourState };
@@ -7,7 +9,7 @@ export type PublicStatus = {
   uptimePct: number | null;
   /** 24 hourly buckets, oldest first. */
   hours: StatusHour[];
-  /** Paid calls (credit and escrow) in the last 24 hours and the share that kept the promise. */
+  /** Paid calls (credit and escrow) in the last 24 hours and the share that kept the promise. A seller's own tests don't count. */
   paidCalls: number;
   passRatePct: number | null;
   /** Median latency of passing probes in the last 24 hours, in ms. */
@@ -18,6 +20,7 @@ const HOUR = 3_600_000;
 
 export async function getPublicStatus(sql: Sql, apiId: string, now: Date = new Date()): Promise<PublicStatus> {
   const since = new Date(now.getTime() - 24 * HOUR);
+  const ready = await hasSelfTestSchema(sql);
   const firstHour = new Date(Math.floor(now.getTime() / HOUR) * HOUR - 23 * HOUR);
   const [probeRows, [paid], [lat]] = await Promise.all([
     sql<{ bucket: Date; probes: number; passed: number }[]>`
@@ -27,7 +30,8 @@ export async function getPublicStatus(sql: Sql, apiId: string, now: Date = new D
       group by 1`,
     sql<{ total: number; passed: number }[]>`
       select count(*)::int as total, count(*) filter (where verdict = 'pass')::int as passed
-      from calls where api_id = ${apiId} and kind in ('credit', 'escrow') and created_at > ${since} and created_at <= ${now}`,
+      from calls c where c.api_id = ${apiId} and c.kind in ('credit', 'escrow') and c.created_at > ${since} and c.created_at <= ${now}
+        and ${sql.unsafe(notSelfTestCall(ready))}`,
     sql<{ p50: number | null }[]>`
       select percentile_cont(0.5) within group (order by latency_ms)::int as p50
       from calls where api_id = ${apiId} and kind = 'probe' and verdict = 'pass' and latency_ms is not null

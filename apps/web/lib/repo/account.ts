@@ -5,7 +5,8 @@ import { buildTimeline } from "../timeline";
 import type { ApiState, Health, OnboardStep } from "../types";
 import { ONBOARD_STEP_NAMES } from "./apis";
 import { registerStartedSql, soldSql } from "./delete-api";
-import { escrowTake } from "./stats";
+import { hasSelfTestSchema } from "./self-test-schema";
+import { escrowTake, notSelfTestCall, RECEIVED_MICROS, soldToken } from "./stats";
 
 type Row = {
   cardanoAddr: string;
@@ -36,6 +37,7 @@ type Row = {
  */
 export async function getAccount(sql: Sql, sellerId: string): Promise<Account | null> {
   const a = sql`a.id`;
+  const ready = await hasSelfTestSchema(sql);
   const rows = await sql<Row[]>`
     select s.cardano_addr, s.created_at as seller_created_at, s.sokosumi_user_id,
            a.id, a.name, a.state, a.health, a.health_checked_at, a.agent_identifier, a.created_at,
@@ -50,12 +52,14 @@ export async function getAccount(sql: Sql, sellerId: string): Promise<Account | 
       select count(*)::int as paid_calls_day,
              count(*) filter (where verdict = 'pass')::int as pass_day,
              count(*) filter (where verdict = 'fail')::int as fail_day
-      from calls where api_id = a.id and kind in ('credit', 'escrow') and created_at > now() - interval '24 hours'
+      from calls c where c.api_id = a.id and c.kind in ('credit', 'escrow') and c.created_at > now() - interval '24 hours'
+        and ${sql.unsafe(notSelfTestCall(ready))}
     ) c on true
     left join lateral (
-      select coalesce(sum(p.price_micros), 0)::text as pack_micros
+      select coalesce(sum(${sql.unsafe(RECEIVED_MICROS)}), 0)::text as pack_micros
       from credit_tokens t join packs p on p.id = t.pack_id
-      where t.api_id = a.id and t.status <> 'pending'
+      left join pack_channels pc on pc.credit_token_id = t.id
+      where t.api_id = a.id and ${sql.unsafe(soldToken(ready))}
     ) pk on true
     left join lateral (
       select count(*)::int as completed_jobs from jobs where api_id = a.id and status = 'completed'

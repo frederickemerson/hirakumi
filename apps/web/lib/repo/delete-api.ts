@@ -31,6 +31,7 @@ export const API_DELETE_ORDER: { table: string; run: (tx: Tx, apiId: string) => 
   { table: "credit_tokens", run: (tx, id) => tx`delete from credit_tokens where api_id = ${id}` },
   { table: "jobs", run: (tx, id) => tx`delete from jobs where api_id = ${id}` },
   { table: "try_tokens", run: (tx, id) => tx`delete from try_tokens where api_id = ${id}` },
+  { table: "self_test_packs", run: (tx, id) => tx`delete from self_test_packs where api_id = ${id}` },
   { table: "packs", run: (tx, id) => tx`delete from packs where api_id = ${id}` },
   { table: "test_inputs", run: (tx, id) => tx`delete from test_inputs where operation_id in (select id from operations where api_id = ${id})` },
   { table: "rules", run: (tx, id) => tx`delete from rules where operation_id in (select id from operations where api_id = ${id})` },

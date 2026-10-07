@@ -1,4 +1,5 @@
 import type { Sql } from "../db";
+import { hasSelfTestSchema } from "./self-test-schema";
 
 export type PackSale = {
   id: string;
@@ -20,11 +21,36 @@ export type EscrowJob = {
   failureReasons: unknown;
 };
 
+/**
+ * The seller testing their own API (migration 0016's self_test_credit_tokens: paid from the API's own payout
+ * address, a free test, or bought through the seller's Try it live). Never a sale, never earnings or reputation.
+ * `ready`: hasSelfTestSchema; before 0016 ran nothing is a self test.
+ */
+export const notSelfTest = (alias: string, ready: boolean) =>
+  ready ? `not exists (select 1 from self_test_credit_tokens x where x.credit_token_id = ${alias}.id)` : "true";
+
+/** A paid call that counts toward stats: not made with a self-test pack. `c` is the calls row. */
+export const notSelfTestCall = (ready: boolean) => ready
+  ? "(c.credit_token_id is null or not exists (select 1 from self_test_credit_tokens x where x.credit_token_id = c.credit_token_id))"
+  : "true";
+
+/** A pack that sold: paid (settled), never revoked, and not a self test. Needs `credit_tokens t`. */
+export const soldToken = (ready: boolean) => `t.status in ('active', 'exhausted') and ${notSelfTest("t", ready)}`;
+
+/**
+ * What the seller receives for one sold pack. Needs `packs p` and `left join pack_channels pc on pc.credit_token_id = t.id`.
+ * Direct: the pack price. Escrow: the payout once settled; until then the calls the buyer signed for, at the
+ * price per call, less the fee. Never the full locked amount: the unused part refunds to the buyer.
+ */
+export const RECEIVED_MICROS =
+  "coalesce(pc.seller_paid_micros, (pc.iou_accepted::bigint * pc.price_per_call_micros * (10000 - pc.fee_bps)) / 10000, p.price_micros)";
+
 export async function listPackSales(sql: Sql, apiId: string, limit = 100): Promise<PackSale[]> {
+  const ready = await hasSelfTestSchema(sql);
   return sql<PackSale[]>`
     select t.id, t.created_at, t.payer, p.calls, p.price_micros::text as price_micros, t.status, t.remaining, t.tx_hash
     from credit_tokens t join packs p on p.id = t.pack_id
-    where t.api_id = ${apiId}
+    where t.api_id = ${apiId} and ${sql.unsafe(notSelfTest("t", ready))}
     order by t.created_at desc limit ${limit}`;
 }
 
@@ -57,16 +83,19 @@ export function escrowTake(completedJobs: number, escrowPriceMicros: string | nu
 }
 
 export async function getOverviewStats(sql: Sql, apiId: string): Promise<OverviewStats> {
+  const ready = await hasSelfTestSchema(sql);
   const [calls] = await sql<{ callsDay: number; passDay: number; failDay: number }[]>`
     select count(*)::int as calls_day,
            count(*) filter (where verdict = 'pass')::int as pass_day,
            count(*) filter (where verdict = 'fail')::int as fail_day
-    from calls
-    where api_id = ${apiId} and kind in ('credit', 'escrow') and created_at > now() - interval '24 hours'`;
+    from calls c
+    where c.api_id = ${apiId} and c.kind in ('credit', 'escrow') and c.created_at > now() - interval '24 hours'
+      and ${sql.unsafe(notSelfTestCall(ready))}`;
   const [packs] = await sql<{ packSales: number; packEarningsMicros: string }[]>`
-    select count(*)::int as pack_sales, coalesce(sum(p.price_micros), 0)::text as pack_earnings_micros
+    select count(*)::int as pack_sales, coalesce(sum(${sql.unsafe(RECEIVED_MICROS)}), 0)::text as pack_earnings_micros
     from credit_tokens t join packs p on p.id = t.pack_id
-    where t.api_id = ${apiId} and t.status <> 'pending'`;
+    left join pack_channels pc on pc.credit_token_id = t.id
+    where t.api_id = ${apiId} and ${sql.unsafe(soldToken(ready))}`;
   const [escrow] = await sql<{ escrowJobs: number; escrowPriceMicros: string | null }[]>`
     select (select count(*)::int from jobs where api_id = ${apiId} and status = 'completed') as escrow_jobs,
            (select escrow_price_micros::text from packs where api_id = ${apiId} order by id limit 1) as escrow_price_micros`;

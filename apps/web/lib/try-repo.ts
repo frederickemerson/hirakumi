@@ -1,5 +1,6 @@
 import { ruleHash, sha256Hex, type RuleDefinition } from "@hirakumi/core";
 import type { Sql } from "./db";
+import { hasSelfTestSchema } from "./repo/self-test-schema";
 import type { TryChannel, TryEscrowStore } from "./try-escrow";
 
 export type TryOperationRow = {
@@ -31,18 +32,19 @@ export type TryPack = {
   pending: boolean;
   txHash: string | null;
   boughtAt: Date;
-  source: "live" | "env";
+  /** `wallet`: a seller bought it for their own API with their own wallet (self_test_packs). */
+  source: "live" | "env" | "wallet";
   /** An escrow pack (PACK_MODE=escrow): the demo wallet signs its IOUs (lib/try-escrow). Null for a direct pack. */
   channel?: TryChannel | null;
 };
 
 /** Columns arrive camel-cased (lib/db transform). */
-type PackRow = {
+export type PackRow = {
   token: string; creditTokenId: string; remaining: number; status: string; txHash: string | null; boughtAt: Date;
   tryId?: string; channelId?: string | null; iouSecret?: string | null; ruleHash?: string | null; iouLast?: string | null;
 };
 
-const toPack = (r: PackRow, source: TryPack["source"]): TryPack => ({
+export const toPack = (r: PackRow, source: TryPack["source"]): TryPack => ({
   token: r.token, creditTokenId: r.creditTokenId, remaining: r.remaining, pending: r.status === "pending",
   txHash: r.txHash, boughtAt: r.boughtAt, source,
   channel: r.tryId && r.channelId && r.iouSecret && r.ruleHash
@@ -51,7 +53,8 @@ const toPack = (r: PackRow, source: TryPack["source"]): TryPack => ({
 });
 
 /**
- * The newest pack for this API, live purchases first, then the TRY_CREDIT_TOKENS fallback. With
+ * The newest public pack for this API, live purchases first, then the TRY_CREDIT_TOKENS fallback. A seller's own
+ * free test (self_test_seller_id) is never public: it powers only that seller's Try it live (lib/self-test-repo). With
  * `withCredits` (the default) only a pack that can still pay is returned; without it, the newest one at all
  * (its receipts stay readable after the credits run out).
  */
@@ -70,7 +73,7 @@ export async function findTryPack(
     select t.token, c.id as credit_token_id, c.remaining, c.status, coalesce(t.tx_hash, c.tx_hash) as tx_hash, t.created_at as bought_at,
            t.id as try_id, t.channel_id, t.iou_secret, t.rule_hash, t.iou_last
     from try_tokens t join credit_tokens c on c.token_hash = t.token_hash and c.api_id = t.api_id
-    where t.api_id = ${apiId} and t.status = 'active'
+    where t.api_id = ${apiId} and t.status = 'active' ${(await hasSelfTestSchema(sql)) ? sql`and t.self_test_seller_id is null` : sql``}
       and (${!withCredits} or (c.status in ('active', 'pending') and c.remaining > 0
         and (t.channel_id is null or (not t.disputed and exists (
           select 1 from pack_channels p where p.channel_id = t.channel_id and p.status in ('pending', 'locked'))))))

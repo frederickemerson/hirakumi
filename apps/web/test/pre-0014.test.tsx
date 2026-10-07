@@ -14,6 +14,7 @@ import { DEMO_API_ID } from "@/lib/demo";
 import { deleteApi } from "@/lib/repo/delete-api";
 import { getApiForSeller, getLiveApi, listApisForSeller } from "@/lib/repo/apis";
 import { hasAnyApiSchema, resetSchemaCheck, UPDATING } from "@/lib/repo/schema";
+import { resetSelfTestSchemaCheck } from "@/lib/repo/self-test-schema";
 import type { ApiState } from "@/lib/types";
 import { resetDb } from "./db";
 import { TEST_DATABASE_URL } from "./env";
@@ -46,6 +47,7 @@ async function useDatabase(url: string) {
   await closeSql();
   process.env.DATABASE_URL = url;
   resetSchemaCheck();
+  resetSelfTestSchemaCheck();
 }
 
 beforeAll(async () => {
