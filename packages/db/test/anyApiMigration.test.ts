@@ -12,6 +12,9 @@ const HEADER_VERIFY = "0015_header_verify.sql";
 /** sha256 of 0014 as PR #5 shipped it. A database may already have run that file, so it never changes again. */
 const ANY_API_SHA256 = "e5e3525fded53467041b8bc0191b57409e3d319bea607484c324d741303df3b7";
 
+/** Every migration file from `first` on, in the order migrate applies them (later migrations run too). */
+const migrationsFrom = async (first: string) => (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql") && f >= first).sort();
+
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const c of cleanups.splice(0)) await c(); });
 
@@ -61,7 +64,7 @@ describe(`migration ${ANY_API}`, () => {
     const oldCode = code();
     await challenge(sql, "ch_old", "api_old", "openapi", oldCode);
 
-    expect(await migrate(sql)).toEqual([ANY_API, HEADER_VERIFY]);
+    expect(await migrate(sql)).toEqual(await migrationsFrom(ANY_API));
 
     expect(await sql`select id, intake_kind, samples, openapi_url from apis`).toEqual([
       { id: "api_old", intake_kind: "openapi", samples: null, openapi_url: "https://h.com/v1/openapi.json" },
@@ -74,7 +77,8 @@ describe(`migration ${HEADER_VERIFY}`, () => {
   it("replays 0001 to 0015 on an empty database", async () => {
     const sql = await freshSchema();
     const applied = await migrate(sql);
-    expect(applied.slice(-2)).toEqual([ANY_API, HEADER_VERIFY]);
+    expect(applied).toEqual(await migrationsFrom(""));
+    expect(applied).toEqual(expect.arrayContaining([ANY_API, HEADER_VERIFY]));
     expect(applied).toEqual([...applied].sort());
     expect(await migrate(sql)).toEqual([]);
   }, 30_000);
@@ -91,7 +95,7 @@ describe(`migration ${HEADER_VERIFY}`, () => {
     const oldCode = code();
     await challenge(sql, "ch_old", "api_s5", "openapi", oldCode);
 
-    expect(await migrate(sql)).toEqual([HEADER_VERIFY]);
+    expect(await migrate(sql)).toEqual(await migrationsFrom(HEADER_VERIFY));
 
     expect(await sql`select id, intake_kind, openapi_url from apis order by id`).toEqual([
       { id: "api_old", intake_kind: "openapi", openapi_url: "https://h.com/v1/openapi.json" },

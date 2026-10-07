@@ -13,7 +13,8 @@ describe("migrate", () => {
     expect(rows.map((r) => r.table_name)).toEqual([
       "apis", "ask_requests", "calls", "challenges", "channel_leases", "coworker_task_events", "coworker_tasks", "credit_tokens", "health_events", "jobs", "messages",
       "onboard_steps", "operations", "pack_channels", "pack_quotes", "packs", "rules", "schema_migrations", "sellers", "settlement_decisions", "test_inputs", "try_tokens",
-    ]);
+      "revoked_sessions", "used_login_nonces", // 0017
+    ].sort());
   });
 
   it("is idempotent: a second run applies nothing", async () => {
