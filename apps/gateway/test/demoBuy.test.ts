@@ -55,6 +55,7 @@ afterEach(async () => { await h.close(); });
 
 const auth = () => ({ authorization: `Bearer ${h.config.internalToken}` });
 const buy = (apiId = h.seeded.apiId) => request(h.app).post(`/internal/demo/buy-pack/${apiId}`).set(auth());
+const resume = (id: string, apiId = h.seeded.apiId) => request(h.app).post(`/internal/demo/buy-pack/${apiId}?resume=${id}`).set(auth());
 const events = (text: string) => text.trim().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
 const rows = () => h.sql<{ status: string; created_at: Date }[]>`select status, created_at from try_tokens order by created_at`;
 
@@ -78,7 +79,7 @@ describe("POST /internal/demo/buy-pack/:apiId", () => {
     expect(r.headers["content-type"]).toMatch(/application\/x-ndjson/);
     const ev = events(r.text);
     expect(ev.map((e) => e.phase)).toEqual(["paying", "settling", "settled"]);
-    expect(ev[0]).toMatchObject({ packId: h.seeded.packId, calls: 100, priceMicros: "2000000", wallet: "addr_test1qdemobuyer" });
+    expect(ev[0]).toMatchObject({ purchaseId: expect.stringMatching(/^try_/), packId: h.seeded.packId, calls: 100, priceMicros: "2000000", wallet: "addr_test1qdemobuyer" });
     expect(ev[2]).toMatchObject({ txHash: "ab".repeat(32), credits: 100, recovered: false });
     expect(buyer.purchases).toEqual([{ url: `https://gw.test/a/${h.seeded.apiId}/packs/${h.seeded.packId}`, amount: 2_000_000n }]);
     const [row] = await h.sql<{ status: string; token: string; tx_hash: string; credits: number }[]>`select status, token, tx_hash, credits from try_tokens`;
@@ -175,8 +176,10 @@ describe("POST /internal/demo/buy-pack/:apiId", () => {
   it("saves a signed payment whose settlement failed, then recovers it with the recovery secret instead of paying again", async () => {
     buyer.next = "settlement_failed";
     const first = await buy();
-    expect(events(first.text).map((e) => e.phase)).toEqual(["paying", "settling", "failed"]);
-    expect(events(first.text).at(-1)).toMatchObject({ spent: true });
+    // Not confirmed is not failed: the payment may still land, so it is pending, never an error.
+    expect(events(first.text).map((e) => e.phase)).toEqual(["paying", "settling", "pending"]);
+    expect(events(first.text).at(-1)).toMatchObject({ purchaseId: events(first.text)[0].purchaseId });
+    expect(String(events(first.text).at(-1)!.message)).not.toMatch(/nothing|not charged|failed/i);
     expect((await rows()).map((x) => x.status)).toEqual(["unsettled"]);
 
     const { token } = await insertActiveToken(h.sql, h.seeded, 100);
@@ -275,7 +278,7 @@ describe("demo buy: concurrency, crashes and DB errors (audit I3)", () => {
       await h.sql.unsafe(`alter table try_tokens add constraint no_active_for_test check (status <> 'active') not valid`);
     };
     const first = await buy();
-    expect(events(first.text).at(-1)).toMatchObject({ phase: "failed", spent: true });
+    expect(events(first.text).at(-1)).toMatchObject({ phase: "pending" });
     const [row] = await h.sql<{ status: string; payment_signature: string | null; recovery_secret: string | null }[]>`
       select status, payment_signature, recovery_secret from try_tokens`;
     expect(row).toEqual({ status: "unsettled", payment_signature: "SIGNED_PAYMENT", recovery_secret: "BUYER_SECRET" });
@@ -289,5 +292,62 @@ describe("demo buy: concurrency, crashes and DB errors (audit I3)", () => {
     const second = await buy();
     expect(events(second.text)).toEqual([expect.objectContaining({ phase: "settled", recovered: true })]);
     expect(buyer.purchases).toHaveLength(1);
+  });
+});
+
+describe("demo buy: a pending payment is followed to a hard outcome (?resume)", () => {
+  const settlementFails = async () => {
+    buyer.next = "settlement_failed";
+    const ev = events((await buy()).text);
+    buyer.next = "ok";
+    return String(ev[0].purchaseId);
+  };
+
+  it("an earlier payment still settling: a new click follows it as pending and never pays again", async () => {
+    await settlementFails();
+    buyer.recoverAnswer = { status: 502, body: { error: "bad_gateway" } };
+    const r = await buy();
+    expect(r.status).toBe(200);
+    expect(events(r.text)).toEqual([expect.objectContaining({ phase: "pending" })]);
+    expect(buyer.purchases).toHaveLength(1);
+  });
+
+  it("resume: pending while /recover can't confirm yet, then settled once it does; never buys", async () => {
+    const id = await settlementFails();
+    buyer.recoverAnswer = { status: 502, body: {} };
+    expect(events((await resume(id)).text)).toEqual([expect.objectContaining({ phase: "pending", purchaseId: id })]);
+    const { token } = await insertActiveToken(h.sql, h.seeded, 100);
+    buyer.recoverAnswer = { status: 200, body: { token, status: "active", credits: 100 } };
+    expect(events((await resume(id)).text)).toEqual([expect.objectContaining({ phase: "settled", credits: 100, recovered: true })]);
+    // Settled stays settled.
+    expect(events((await resume(id)).text)).toEqual([expect.objectContaining({ phase: "settled", credits: 100 })]);
+    expect(buyer.purchases).toHaveLength(1);
+  });
+
+  it("resume: a payment Hirakumi never received is a hard failure with nothing paid", async () => {
+    const id = await settlementFails();
+    buyer.recoverAnswer = { status: 404, body: { error: "payment_not_found" } };
+    expect(events((await resume(id)).text)).toEqual([expect.objectContaining({ phase: "failed", spent: false, message: expect.stringMatching(/nothing was paid/) })]);
+    expect((await rows()).map((x) => x.status)).toEqual(["void"]);
+  });
+
+  it("resume: a purchase still running is pending; an unknown or missing one is never bought", async () => {
+    const id = newId("try");
+    await h.sql`insert into try_tokens (id, api_id, status, pack_id, price_micros) values (${id}, ${h.seeded.apiId}, 'buying', ${h.seeded.packId}, 2000000)`;
+    expect(events((await resume(id)).text)).toEqual([expect.objectContaining({ phase: "pending", purchaseId: id })]);
+    expect(events((await resume("latest")).text)).toEqual([expect.objectContaining({ phase: "pending", purchaseId: id })]);
+    expect(events((await resume("try_unknown")).text)).toEqual([expect.objectContaining({ phase: "failed", spent: false })]);
+    expect((await request(h.app).post(`/internal/demo/buy-pack/${h.seeded.apiId}?resume=../x`).set(auth())).status).toBe(400);
+    expect(buyer.purchases).toEqual([]);
+  });
+
+  it("resume follows the payment even while the API is Down", async () => {
+    const id = await settlementFails();
+    h.health.record(h.seeded.apiId, false, [{ op: "getPrice", reason: "x" }]);
+    h.health.record(h.seeded.apiId, false, [{ op: "getPrice", reason: "x" }]);
+    buyer.recoverAnswer = { status: 502, body: {} };
+    const r = await resume(id);
+    expect(r.status).toBe(200);
+    expect(events(r.text)).toEqual([expect.objectContaining({ phase: "pending" })]);
   });
 });

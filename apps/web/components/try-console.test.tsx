@@ -167,27 +167,49 @@ describe("TryConsole", () => {
     expect(screen.getByRole("button", { name: "Buy a pack live" })).toBeEnabled();
   });
 
-  it("never hangs: a stream that ends without a result says what to do", async () => {
+  it("a stream lost mid-way is pending, never an error, and is followed to its outcome without buying again", async () => {
     const stream = controlledStream();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(stream.response));
-    render(<TryConsole apiId="api_1" ops={[op]} initialPack={null} liveBuy />);
+    const urls: string[] = [];
+    const fetchMock = vi.fn((url: string) => {
+      urls.push(url);
+      if (url === "/api/try/api_1/buy") return Promise.resolve(stream.response);
+      if (url.includes("?resume=")) {
+        return Promise.resolve(new Response(`${JSON.stringify({ phase: "settled", txHash: TX, credits: 100, ms: 0, recovered: true })}\n`, { headers: { "content-type": "application/x-ndjson" } }));
+      }
+      return Promise.resolve(kept(99));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<TryConsole apiId="api_1" ops={[op]} initialPack={null} liveBuy resumeEveryMs={5} />);
     await userEvent.click(screen.getByRole("button", { name: "Buy a pack live" }));
+    await stream.send({ phase: "paying", purchaseId: "try_p1", packId: "pk_1", calls: 100, priceMicros: "2000000", wallet: "addr_test1q" });
     await stream.send({ phase: "settling" });
     await stream.close();
-    expect(await screen.findByText(/Lost the connection to the purchase/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Buy a pack live" })).toBeEnabled();
+    expect(await screen.findByText("Promise kept. One credit used.")).toBeInTheDocument();
+    expect(urls).toEqual(["/api/try/api_1/buy", "/api/try/api_1/buy?resume=try_p1", "/api/try/api_1"]);
+    expect(screen.queryByText(/Lost the connection/)).toBeNull();
   });
 
-  it("a payment that was sent but not confirmed says it is saved and won't be paid twice", async () => {
+  it("a payment sent but not confirmed shows Pending, not an error or 'not charged', until it is confirmed", async () => {
     const stream = controlledStream();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(stream.response));
-    render(<TryConsole apiId="api_1" ops={[op]} initialPack={null} liveBuy />);
+    let answer: unknown = { phase: "pending", purchaseId: "try_p2", message: "The payment is sent and waiting for Cardano to confirm it." };
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url === "/api/try/api_1/buy") return Promise.resolve(stream.response);
+      if (url.includes("?resume=")) return Promise.resolve(new Response(`${JSON.stringify(answer)}\n`));
+      return Promise.resolve(kept(99));
+    }));
+    render(<TryConsole apiId="api_1" ops={[op]} initialPack={null} liveBuy resumeEveryMs={20} />);
     await userEvent.click(screen.getByRole("button", { name: "Buy a pack live" }));
     await stream.send({ phase: "settling" });
-    await stream.send({ phase: "failed", spent: true, message: "The payment was sent but not confirmed yet. It is saved, and the next try picks it up without paying twice." });
+    await stream.send({ phase: "pending", purchaseId: "try_p2", message: "The payment is sent and waiting for Cardano to confirm it." });
     await stream.close();
-    expect(await screen.findByText(/without paying twice/)).toBeInTheDocument();
-    expect(within(screen.getByTestId("purchase")).getByText("Settling on Cardano").closest("li")).toHaveAttribute("data-state", "failed");
+    const pending = await screen.findByTestId("purchase-pending");
+    expect(pending).toHaveTextContent(/^Pending\./);
+    expect(pending).toHaveAttribute("role", "status");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/not charged|nothing was paid|failed/i);
+    expect(within(screen.getByTestId("purchase")).getByText("Waiting for Cardano to confirm").closest("li")).toHaveAttribute("data-state", "active");
+    answer = { phase: "failed", spent: false, message: "Hirakumi never received the payment, so nothing was paid." };
+    expect(await screen.findByRole("alert")).toHaveTextContent("never received the payment");
   });
 
   it("shows an honest Calling state with elapsed time in the result slot", async () => {

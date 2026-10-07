@@ -5,7 +5,8 @@ export type TryKind = "kept" | "not_kept" | "used_up" | "pending" | "down" | "in
 export type TryResult = { kind: TryKind; headline: string; reasons: string[] };
 /** What a paid call left behind: the same fields the buyer's /receipts shows. */
 export type TryReceipt = {
-  verdict: "kept" | "not_kept" | "no_charge";
+  /** pending: the pack's payment is not confirmed yet, so whether anything is charged is not known yet. */
+  verdict: "kept" | "not_kept" | "no_charge" | "pending";
   creditsLeft: number | null;
   /** MIP-004 output hash of a paid answer: sha256(token id + ";" + exact body). Null when no answer was paid for. */
   outputHash: string | null;

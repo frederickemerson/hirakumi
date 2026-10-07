@@ -12,7 +12,7 @@ import { cookieFor, ctx } from "@/test/requests";
 import { POST as createApi } from "@/app/api/apis/route";
 import { DELETE as deleteApi } from "@/app/api/apis/[apiId]/route";
 import { POST as endpoints } from "@/app/api/apis/[apiId]/endpoints/route";
-import { POST as specCheck } from "@/app/api/apis/[apiId]/ownership/spec-check/route";
+import { POST as dnsCheck } from "@/app/api/apis/[apiId]/ownership/dns-check/route";
 import { POST as ownVerify } from "@/app/api/apis/[apiId]/ownership/verify/route";
 import { POST as walletChallenge } from "@/app/api/apis/[apiId]/ownership/wallet-challenge/route";
 import { POST as pricing } from "@/app/api/apis/[apiId]/pricing/route";
@@ -27,12 +27,13 @@ import { POST as selfFree } from "@/app/api/apis/[apiId]/try/free/route";
 import { GET as selfReceipts } from "@/app/api/apis/[apiId]/try/receipts/route";
 import { POST as selfPrepare } from "@/app/api/apis/[apiId]/try/pay/prepare/route";
 import { POST as selfPay } from "@/app/api/apis/[apiId]/try/pay/route";
+import { POST as selfPayResume } from "@/app/api/apis/[apiId]/try/pay/resume/route";
 
 type Handler = (req: Request, c: { params: Promise<{ apiId: string }> }) => Promise<Response>;
 const ROUTES: { name: string; method: string; h: Handler; body?: unknown }[] = [
   { name: "DELETE api", method: "DELETE", h: deleteApi },
   { name: "endpoints", method: "POST", h: endpoints, body: { operations: [] } },
-  { name: "spec-check", method: "POST", h: specCheck, body: {} },
+  { name: "dns-check", method: "POST", h: dnsCheck, body: {} },
   { name: "ownership verify", method: "POST", h: ownVerify, body: { challengeId: "ch_x", signature: "00", key: "00" } },
   { name: "wallet-challenge", method: "POST", h: walletChallenge, body: {} },
   { name: "pricing", method: "POST", h: pricing, body: { packCalls: "10", packPrice: "1", escrowPrice: "1" } },
@@ -47,6 +48,7 @@ const ROUTES: { name: string; method: string; h: Handler; body?: unknown }[] = [
   { name: "self-test receipts", method: "GET", h: selfReceipts },
   { name: "self-test prepare", method: "POST", h: selfPrepare, body: { utxos: ["00"], changeAddress: "00" } },
   { name: "self-test pay", method: "POST", h: selfPay, body: { tx: "00", witnessSet: "00", nonce: `${"0".repeat(64)}#0`, priceMicros: "1" } },
+  { name: "self-test pay resume", method: "POST", h: selfPayResume, body: { tx: "00", witnessSet: "00", nonce: `${"0".repeat(64)}#0`, priceMicros: "1" } },
 ];
 
 const b64 = (s: string) => Buffer.from(s).toString("base64url");

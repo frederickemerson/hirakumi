@@ -14,6 +14,7 @@ import { POST as freeRoute } from "./free/route";
 import { GET as receiptsRoute } from "./receipts/route";
 import { POST as prepareRoute } from "./pay/prepare/route";
 import { POST as payRoute } from "./pay/route";
+import { POST as resumeRoute } from "./pay/resume/route";
 
 const GATEWAY = "https://api.hirakumi.test";
 const UNSIGNED_TX = "84a3008001800200a0f5f6";
@@ -40,6 +41,7 @@ const ROUTES: [string, Route, string, unknown][] = [
   ["receipts", receiptsRoute, "GET", undefined],
   ["prepare", prepareRoute, "POST", { utxos: ["00"], changeAddress: "00" }],
   ["pay", payRoute, "POST", { tx: UNSIGNED_TX, witnessSet: WITNESS, nonce: NONCE, priceMicros: "2000000" }],
+  ["resume", resumeRoute, "POST", { tx: UNSIGNED_TX, witnessSet: WITNESS, nonce: NONCE, priceMicros: "2000000" }],
 ];
 const req = (method: string, body: unknown, headers: Record<string, string> = {}, cookie?: string) => {
   const r = jsonRequest(`/api/apis/${api.id}/try`, { method, cookie, body });
@@ -92,7 +94,7 @@ function offer(payTo: string, amount = "2000000"): Response {
 function handlers(fetchImpl: typeof fetch, over: Partial<SelfTestDeps> = {}) {
   return createSelfTestHandlers({
     gatewayInternalUrl: "https://gateway.hirakumi.test", internalToken: "test-internal-token", gatewayBase: GATEWAY,
-    allowBuy: () => true, allowCall: () => true, fetchImpl,
+    allowBuy: () => true, allowCall: () => true, recoveryKey: "r".repeat(32), fetchImpl,
     build: vi.fn(async () => ({ tx: UNSIGNED_TX, nonce: NONCE, feeLovelace: "180000" })),
     ...over,
   });
@@ -203,6 +205,73 @@ describe("paying with the seller's own wallet", () => {
     const call = await h.call(own({ opId: "getPrice", method: "GET", input: {} }), ctx(api.id));
     expect(call.status).toBe(200);
     expect((await call.json()).receipt.receiptsUrl).toBe(`/api/apis/${api.id}/try/receipts`);
+  });
+
+  const SIGNED = { tx: UNSIGNED_TX, witnessSet: WITNESS, nonce: NONCE, priceMicros: "2000000" };
+  /** The gateway: a 402 offer, `buy` for the paid request, `recover` for /recover. Records what each got. */
+  function gateway(buy: () => Response | Promise<Response>, recover: () => Response | Promise<Response>) {
+    const seen: { url: string; headers: Headers }[] = [];
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url);
+      const hd = new Headers(init?.headers);
+      seen.push({ url: u, headers: hd });
+      if (u.endsWith("/recover")) return recover();
+      if (u.endsWith("/buy") && !hd.get("payment-signature")) return offer(seller.cardanoAddr);
+      return buy();
+    }) as typeof fetch;
+    return { seen, fetchImpl };
+  }
+  const recovered = (status = "pending") => async () => {
+    await getSql()`insert into credit_tokens (id, api_id, pack_id, token_hash, payer, status, remaining, payment_payload_hash)
+      values ('ct_rec', ${api.id}, ${packId}, ${sha256Hex("hk_recovered")}, ${seller.cardanoAddr}, ${status}, 100, 'pp_r')`;
+    return Response.json({ token: "hk_recovered", status, credits: 100 });
+  };
+
+  it("pay sends a recovery hash, so a lost answer is never lost money", async () => {
+    const g = gateway(() => Response.json({ token: "hk_wallet_token", credits: 100 }), () => new Response("{}", { status: 500 }));
+    await handlers(g.fetchImpl).pay(own(SIGNED), ctx(api.id));
+    const paid = g.seen.find((x) => x.headers.get("payment-signature"))!;
+    expect(paid.headers.get("x-hirakumi-recovery")).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("pay: settlement not confirmed in time is not a failure; the token comes from /recover and shows as still settling", async () => {
+    const g = gateway(() => Response.json({ error: "settlement_failed" }, { status: 402 }), recovered("pending"));
+    const res = await handlers(g.fetchImpl).pay(own(SIGNED), ctx(api.id));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ credits: 100, txHash: null, pending: true });
+    const rec = g.seen.find((x) => x.url.endsWith("/recover"))!;
+    expect(rec.url).toBe(`${GATEWAY}/a/${api.id}/packs/${packId}/recover`);
+    // The secret sent to /recover is the one whose sha256 went with the payment.
+    const paid = g.seen.find((x) => x.url.endsWith("/buy") && x.headers.get("payment-signature"))!;
+    expect(sha256Hex(rec.headers.get("x-hirakumi-recovery-secret")!)).toBe(paid.headers.get("x-hirakumi-recovery"));
+    expect(await findSelfTestPack(getSql(), api.id, seller.id)).toMatchObject({ token: "hk_recovered", source: "wallet" });
+  });
+
+  it("pay: a lost connection is 202 pending (not an error, not 'nothing was paid'), and resume then settles it", async () => {
+    let recoverAnswer: () => Response | Promise<Response> = () => new Response("{}", { status: 503 });
+    const g = gateway(() => { throw new TypeError("network"); }, () => recoverAnswer());
+    const h = handlers(g.fetchImpl);
+    const res = await h.pay(own(SIGNED), ctx(api.id));
+    expect(res.status).toBe(202);
+    const body = await res.json();
+    expect(body.status).toBe("pending");
+    expect(body.message).not.toMatch(/nothing|not charged|failed/i);
+    expect(await findSelfTestPack(getSql(), api.id, seller.id)).toBeNull();
+
+    // Still unknown: still pending, and resume never pays again.
+    expect((await h.resume(own(SIGNED), ctx(api.id))).status).toBe(202);
+    recoverAnswer = recovered("active");
+    const done = await h.resume(own(SIGNED), ctx(api.id));
+    expect(done.status).toBe(200);
+    expect(await done.json()).toEqual({ credits: 100, txHash: null, pending: false });
+    expect(g.seen.filter((x) => x.url.endsWith("/buy") && x.headers.get("payment-signature"))).toHaveLength(1);
+  });
+
+  it("resume: a payment Hirakumi never received is a certain failure with nothing paid", async () => {
+    const g = gateway(() => Response.json({}), () => Response.json({ error: "payment_not_found" }, { status: 404 }));
+    const res = await handlers(g.fetchImpl).resume(own(SIGNED), ctx(api.id));
+    expect(res.status).toBe(410);
+    expect((await res.json()).error).toMatch(/never received the payment, so nothing was paid/);
   });
 
   it("pay refuses when the price changed after signing, and pays nothing", async () => {

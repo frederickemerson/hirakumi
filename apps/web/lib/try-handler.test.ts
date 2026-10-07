@@ -68,6 +68,13 @@ describe("try handler", () => {
     expect(out.receipt).toMatchObject({ verdict: "not_kept", creditsLeft: 98, outputHash: null });
   });
 
+  it("a call while the pack's payment is still settling is Pending, not 'No charge'", async () => {
+    const { handle } = setup(() => new Response('{"error":"token_pending"}', { status: 401 }));
+    const out = await (await handle(req({ opId: "getPrice", method: "GET", input: {} }), "api_1")).json();
+    expect(out.result.kind).toBe("pending");
+    expect(out.receipt.verdict).toBe("pending");
+  });
+
   it("always pays: there is no unpaid mode, even if a client asks for one", async () => {
     const { calls, handle } = setup(() => new Response("{}", { status: 200 }));
     await handle(req({ opId: "getPrice", method: "GET", input: {}, paid: false }), "api_1");
@@ -205,6 +212,19 @@ describe("buy handler", () => {
     const got = [];
     for await (const e of readBuyEvents(res.body!)) got.push(e);
     expect(got).toEqual(lines);
+  });
+
+  it("passes ?resume through, so a pending purchase is only checked, never bought again; a bad value is refused", async () => {
+    const { seen, handle } = buyer(() => new Response('{"phase":"pending","purchaseId":"try_1","message":"m"}\n', { headers: { "content-type": "application/x-ndjson" } }));
+    const at = (q: string) => new Request(`http://web.test/api/try/api_1/buy${q}`, { method: "POST", headers: buyReq().headers });
+    expect((await handle(at("?resume=try_abc123"), "api_1")).status).toBe(200);
+    expect((await handle(at("?resume=latest"), "api_1")).status).toBe(200);
+    expect(seen.map((x) => x.url)).toEqual([
+      "https://gw-internal.test/internal/demo/buy-pack/api_1?resume=try_abc123",
+      "https://gw-internal.test/internal/demo/buy-pack/api_1?resume=latest",
+    ]);
+    expect((await handle(at("?resume=..%2Fx"), "api_1")).status).toBe(400);
+    expect(seen).toHaveLength(2);
   });
 
   it("passes the gateway's refusal (limits, low funds) through as a message", async () => {
