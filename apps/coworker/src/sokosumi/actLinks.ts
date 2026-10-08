@@ -7,7 +7,7 @@ import { walletTail } from "./sellerActions.js";
  * link (core actPlaceholder); the outbox makes each token as it posts the comment, so the 30 minutes start then and
  * the plain token is never stored. The wallet named is the API owner's: the page only accepts its signature.
  */
-export async function issueActToken(db: Db, apiId: string, action: ActAction): Promise<{ token: string; wallet: string } | null> {
+async function issueActToken(db: Db, apiId: string, action: ActAction): Promise<{ token: string; wallet: string } | null> {
   const { rows: [owner] } = await db.query<{ cardano_addr: string }>(
     `select s.cardano_addr from apis a join sellers s on s.id = a.seller_id where a.id = $1 and a.deleted_at is null`, [apiId]);
   if (!owner) return null;

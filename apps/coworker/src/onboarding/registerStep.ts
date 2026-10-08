@@ -31,8 +31,8 @@ export type RegisterDeps = {
   now?: () => Date;
 };
 
-export const REGISTRY_POLL_MS = 10_000;
-export const REGISTRY_SLOW_MS = 20 * 60_000;
+const REGISTRY_POLL_MS = 10_000;
+const REGISTRY_SLOW_MS = 20 * 60_000;
 
 function clamp(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`;

@@ -7,7 +7,7 @@ import { latestCode } from "./challenge.js";
 
 /** How old "stale" mode makes every asOf: hours, well past any freshness promise. */
 export const STALE_AGE_MS = 2 * 3_600_000;
-export const MAX_AMOUNT = 1e12;
+const MAX_AMOUNT = 1e12;
 
 export type AppDeps = {
   rates: RateSource;

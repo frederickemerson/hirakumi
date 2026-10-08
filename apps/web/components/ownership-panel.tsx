@@ -108,7 +108,7 @@ export function StepHead({ n, done, id, children }: { n: number; done?: boolean;
 }
 
 /** A labelled code block with one Copy button. Long lines scroll inside the box, never the page. */
-export function Snippet({ label, text, copyLabel }: { label: string; text: string; copyLabel?: string }) {
+function Snippet({ label, text, copyLabel }: { label: string; text: string; copyLabel?: string }) {
   return (
     <div className="min-w-0 rounded-[2px] border-2 border-ink bg-frost">
       <div className="flex items-center justify-between gap-3 border-b-2 border-ink py-1 pr-1 pl-3">

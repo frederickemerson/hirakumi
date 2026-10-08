@@ -18,7 +18,7 @@ export function nextDelay(prev: number, changed: boolean): number {
  * the whole page. Pauses while the tab is hidden, stops once the API is live, and when the state (or
  * a failure) changes it navigates inside a transition: to the new step's page, or a refresh of this one.
  */
-export function useApiProgress(apiId: string, initial: ApiProgress): ApiProgress {
+function useApiProgress(apiId: string, initial: ApiProgress): ApiProgress {
   const router = useRouter();
   const pathname = usePathname();
   const [progress, setProgress] = useState(initial);

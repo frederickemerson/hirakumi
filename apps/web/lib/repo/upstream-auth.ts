@@ -110,7 +110,7 @@ export async function getAuthHint(sql: Sql, apiId: string): Promise<AuthHint | n
   const part = hintPart(h);
   if (!part) return null;
   const parts = Array.isArray(h!.parts) ? h!.parts.map(hintPart) : [];
-  // Several parts (the coworker's parser, follow-up B) only when every one reads; else the first part alone.
+  // Several parts (the coworker's parser) only when every one reads; else the first part alone.
   return parts.length >= 2 && parts.length <= 4 && parts.every(Boolean) ? { ...part, parts: parts as AuthHintPart[] } : part;
 }
 

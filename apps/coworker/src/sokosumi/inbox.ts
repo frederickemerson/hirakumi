@@ -8,8 +8,8 @@ import type { SokosumiClient, SokosumiEvent } from "./client.js";
 import type { LeakCheck } from "../leakCheck.js";
 import { handleBrief, handleReply, resumeLinkedIntakes, type ConversationDeps, type TaskRef } from "./conversation.js";
 
-export const INBOX_PAGE_LIMIT = 50;
-export const INBOX_MAX_PAGES = 3;
+const INBOX_PAGE_LIMIT = 50;
+const INBOX_MAX_PAGES = 3;
 const TERMINAL = new Set(["COMPLETED", "FAILED", "CANCELED", "CANCELLED", "DONE"]);
 
 export type InboxDeps = {

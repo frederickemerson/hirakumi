@@ -111,7 +111,7 @@ export function openLoginChallenge(nonceToken: string, now = nowSeconds()): Logi
 type ActPayload = { addr: string; nonce: string; exp: number; act: string; lines: string[] };
 export type ActChallenge = { addr: string; actId: string; lines: string[]; message: string; nonce: string; exp: number };
 
-export function buildActMessage(addr: string, actId: string, lines: string[], nonce: string, expiresIso: string): string {
+function buildActMessage(addr: string, actId: string, lines: string[], nonce: string, expiresIso: string): string {
   return [
     ...lines,
     "This approves one action on Hirakumi. It costs nothing and moves no funds.",

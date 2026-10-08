@@ -22,7 +22,7 @@ export function SokosumiLinkNotice({ address }: { address: string }) {
 }
 
 /** Said once the setup link's step is done: everything else happens in the Sokosumi task. */
-export const SETUP_DONE = "Done. You can close this tab; the rest continues in Sokosumi.";
+const SETUP_DONE = "Done. You can close this tab; the rest continues in Sokosumi.";
 
 /** The Sokosumi account is already linked to this wallet. `done`: the link only links, so say the tab can close. */
 export function SokosumiLinkedHere({ address, done = false }: { address: string; done?: boolean }) {

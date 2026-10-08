@@ -9,7 +9,7 @@ import type { ApiState } from "@/lib/types";
 const ERASED = ["The API and its endpoints", "Promises, test inputs and test calls", "Prices, ownership checks and progress", "Chat messages about it"];
 
 /** What deleting does, in the seller's words: erased outright, or taken off the market with its records kept. */
-export function deleteCopy(state: ApiState, recordsKept: string | null): { description: string; details: string[] } {
+function deleteCopy(state: ApiState, recordsKept: string | null): { description: string; details: string[] } {
   if (recordsKept === null) {
     return { description: "Nothing on Masumi points at it and nobody paid for it, so it's erased. This can't be undone.", details: ERASED };
   }

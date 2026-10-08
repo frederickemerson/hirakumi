@@ -24,7 +24,7 @@ import type { Api } from "./types";
 /** Calls per hour on one self-test pack; the pack's own credits are the real limit. */
 const CALLS_PER_HOUR = 60;
 
-export const sellerTryPath = (apiId: string) => `/api/apis/${encodeURIComponent(apiId)}/try`;
+const sellerTryPath = (apiId: string) => `/api/apis/${encodeURIComponent(apiId)}/try`;
 
 export type SelfTestDeps = {
   gatewayInternalUrl: string;

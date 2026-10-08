@@ -4,7 +4,7 @@ import { Agent, request } from "undici";
 import { isNoRecordError, normalizeHost } from "@hirakumi/core";
 import { getDomainRoute, SERVED_DOMAIN_STATUSES, tlsAllowed, type DomainRoute, type Sql } from "@hirakumi/db";
 
-export const DOMAIN_TTL_MS = 60_000;
+const DOMAIN_TTL_MS = 60_000;
 
 /**
  * The front-door hosts, cached for DOMAIN_TTL_MS, unknown hosts too (a scan of random names must not reach the

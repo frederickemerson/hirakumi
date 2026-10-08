@@ -3,7 +3,7 @@
 import { createServer, type Server } from "node:http";
 import type { Express, RequestHandler } from "express";
 
-export const MAX_HEADER_BYTES = 64 * 1024;
+const MAX_HEADER_BYTES = 64 * 1024;
 /** The larger header limit must not admit huge URLs: no route needs more than this. */
 export const MAX_URL_BYTES = 8 * 1024;
 

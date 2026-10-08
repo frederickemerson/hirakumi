@@ -135,8 +135,8 @@ export function ReviewPanel({ apiId, promises, pack, suggestedPhrases = {} }: {
 
 export const STATUS_ONLY_NOTICE =
   `This promise only checks the status. Add a phrase every good answer contains before you publish. ${WHY_PHRASE}`;
-export const NO_SUGGESTION_HINT = "Type a word or label every good answer contains, like Price or Symbol. Capital letters don't matter.";
-export const SUGGESTION_HINT =
+const NO_SUGGESTION_HINT = "Type a word or label every good answer contains, like Price or Symbol. Capital letters don't matter.";
+const SUGGESTION_HINT =
   "We found this in every good test answer and not in the answer to a wrong request. Keep it only if every answer will always contain it: not a date, a version or a count.";
 
 /**

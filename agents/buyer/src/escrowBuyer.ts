@@ -57,7 +57,7 @@ export function parseStartJob(body: unknown): StartJobResponse {
   return b as unknown as StartJobResponse;
 }
 
-export function parseJobStatus(body: unknown): JobStatus {
+function parseJobStatus(body: unknown): JobStatus {
   const b = body as Partial<JobStatus> | undefined;
   if (!b || typeof b.job_id !== "string" || typeof b.status !== "string" || !STATUSES.includes(b.status)) {
     throw new Error(`bad /status response: ${JSON.stringify(body)}`);

@@ -26,7 +26,7 @@ export class ReadOnlyModeError extends Error {}
  * A fixed mode from BREAK_MODE, for serverless hosts with no shared store: every instance reads the same variable,
  * so the switch is consistent. Changing it means setting BREAK_MODE and redeploying.
  */
-export function envModeStore(raw: string | undefined): ModeStore {
+function envModeStore(raw: string | undefined): ModeStore {
   const mode: BreakMode = isBreakMode(raw) ? raw : "ok";
   return {
     kind: "env",

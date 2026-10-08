@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { OpForLlm } from "../openapi/parse.js";
 import { LlmOutputError, LlmRefusalError, quoteAsData, type StructuredCall } from "./claude.js";
 
-export const DESCRIPTION_MAX = 300;
+const DESCRIPTION_MAX = 300;
 
 export const DESCRIBE_SYSTEM = [
   "You write short descriptions of HTTP API operations for AI agents that may buy access to them.",
@@ -21,7 +21,7 @@ export type OpDescription = { description: string; sideEffectsLikely: boolean };
 export type DescribeResult = { byOpId: Map<string, OpDescription>; usedFallback: boolean };
 
 /** Used when the model refuses or answers out of bounds; the seller confirms every endpoint anyway. */
-export function fallbackDescriptions(ops: OpForLlm[]): Map<string, OpDescription> {
+function fallbackDescriptions(ops: OpForLlm[]): Map<string, OpDescription> {
   return new Map(
     ops.map((op) => [
       op.opId,

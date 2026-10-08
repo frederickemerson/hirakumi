@@ -6,7 +6,7 @@ import { toPack, type PackRow, type TryPack } from "./try-repo";
  * Free self tests one seller gets across all listings: the gateway's TRY_LIMITS.freeTestsPerSeller, which is what
  * enforces it (apps/gateway/src/demoBuy.ts). The web only reads it to say how many are left.
  */
-export const FREE_TESTS_PER_SELLER = 3;
+const FREE_TESTS_PER_SELLER = 3;
 
 export type SelfTestStatus = {
   /** This listing's free test was bought (or is being bought). A void attempt spent nothing and doesn't count. */

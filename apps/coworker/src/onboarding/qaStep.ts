@@ -54,7 +54,7 @@ function savedGoodAnswers(output: Record<string, unknown> | null | undefined): G
 export type QaProgress = { done: number; total: number; startedAt: string };
 
 /** How many upstream calls qaOperation makes for one operation: its plan of good calls plus one bad-input call. */
-export function plannedCalls(op: Pick<OpRow, "op_id" | "input_schema">, samples: Record<string, unknown>[]): number {
+function plannedCalls(op: Pick<OpRow, "op_id" | "input_schema">, samples: Record<string, unknown>[]): number {
   const inputs = buildGoodInputs(op.input_schema, samples, op.op_id);
   return Math.max(MIN_CALLS, inputs.length) + (buildBadInput(op.input_schema, inputs[0]) ? 1 : 0);
 }

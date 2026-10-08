@@ -13,7 +13,7 @@ import { openCredential } from "./registry";
 import { runOperation } from "./upstream";
 
 /** The DNS record a seller adds: a CNAME to the sslip.io name of our first edge address, or an A record for an apex. */
-export function dnsTargetFor(edgeIps: readonly string[]): { cname: string | null; a: string | null; aaaa: string | null } {
+function dnsTargetFor(edgeIps: readonly string[]): { cname: string | null; a: string | null; aaaa: string | null } {
   const v4 = edgeIps.find((ip) => isIP(ip) === 4) ?? null;
   const v6 = edgeIps.find((ip) => isIP(ip) === 6) ?? null;
   return { cname: v4 ? `${v4.replace(/\./g, "-")}.sslip.io` : null, a: v4, aaaa: v6 };

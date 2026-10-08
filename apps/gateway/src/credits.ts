@@ -81,7 +81,7 @@ export type CallVia = "native" | "front_door";
  * The front door's 402: the usual offer, plus a sentence for whoever was calling the seller's API directly, the
  * listing page and the native URL. Every URL is built from configuration, never from the request's Host.
  */
-export function frontDoorOfferBody(
+function frontDoorOfferBody(
   cfg: Pick<GatewayConfig, "publicBaseUrl" | "webBaseUrl">, loaded: LoadedApi, op: LoadedOp, base: ReturnType<typeof creditsRequiredBody>,
 ) {
   const buyUrl = base.packs[0]?.buyUrl;

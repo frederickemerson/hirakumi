@@ -3,7 +3,7 @@ import { clientAddress } from "../client-address";
 import type { Sql } from "../db";
 
 export const ASK_LIMIT = 10;
-export const ASK_WINDOW_SECONDS = 5 * 60;
+const ASK_WINDOW_SECONDS = 5 * 60;
 
 /** The rate-limit key: the seller for a signed-in caller, otherwise a hash of the client address (no raw IPs stored). */
 export function askBucket(sellerId: string | null, req: Request): string {

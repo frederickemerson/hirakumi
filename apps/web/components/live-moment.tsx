@@ -8,7 +8,7 @@ import type { Health } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /** Show the celebration only for an API that went live recently, once per browser. */
-export const LIVE_MOMENT_WINDOW_MS = 24 * 60 * 60 * 1000;
+const LIVE_MOMENT_WINDOW_MS = 24 * 60 * 60 * 1000;
 const seenKey = (apiId: string) => `hk-live-seen:${apiId}`;
 
 export function shouldCelebrate(liveSince: string | null, seen: boolean, now = Date.now()): boolean {

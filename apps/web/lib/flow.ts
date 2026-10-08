@@ -36,7 +36,7 @@ export function safeNextPath(raw: string | null | undefined): string {
   return url.pathname + url.search + url.hash;
 }
 
-export const STALE_AFTER_MS = 10 * 60 * 1000;
+const STALE_AFTER_MS = 10 * 60 * 1000;
 
 export function isStale(checkedAt: Date | null, now: Date = new Date()): boolean {
   return !checkedAt || now.getTime() - checkedAt.getTime() > STALE_AFTER_MS;

@@ -36,7 +36,7 @@ export type CheckKeyResult = {
 /** States from ownership proof onward: only then is the API's address known to be the seller's, so a call may go there. */
 const PROVEN_STATES: ReadonlySet<ApiState> = new Set(["ownership_verified", "rule_built", "priced", "registering", "live"]);
 /** A check-key call waits at most this long, so the web app's save never hangs on a slow API. */
-export const CHECK_KEY_TIMEOUT_MS = 15_000;
+const CHECK_KEY_TIMEOUT_MS = 15_000;
 
 /** Endpoints that need the key first, then those not known either way, then public ones (migration 0021). */
 const keyRank = (op: LoadedOp) => (op.row.needs_key === true ? 0 : op.row.needs_key === false ? 2 : 1);
@@ -66,7 +66,7 @@ async function chooseCheckOp(d: AppDeps, loaded: LoadedApi): Promise<{ op: Loade
 }
 
 /** The class of one check call. A withheld answer is "echoed" whatever its status, since its status is not kept. */
-export function classifyCheck(outcome: OperationOutcome): CheckKeyClass {
+function classifyCheck(outcome: OperationOutcome): CheckKeyClass {
   const status = outcome.result?.status;
   if (outcome.execution === "timeout") return "timeout";
   if (outcome.execution === "upstream_error" && !outcome.result && outcome.reasons.includes(KEY_WITHHELD_TEXT)) return "echoed";

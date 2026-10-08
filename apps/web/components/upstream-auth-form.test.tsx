@@ -185,7 +185,7 @@ describe("UpstreamAuthForm checks the key before saving", () => {
     expect(document.body.textContent).not.toContain(KEY);
   });
 
-  it("prefills the matching preset when the OpenAPI file asks for two keys at once (follow-up B)", async () => {
+  it("prefills the matching preset when the OpenAPI file asks for two keys at once", async () => {
     const fetchMock = mockFetch(() => jsonResponse({ parts: [{ in: "header", name: "apikey", hint: "WXYZ" }, { in: "header", name: "Authorization", hint: "WXYZ" }] }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();

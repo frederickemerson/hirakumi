@@ -150,7 +150,7 @@ describe("check-key op choice", () => {
   });
 });
 
-describe("check-key and endpoints that need the key (follow-up A, migration 0021)", () => {
+describe("check-key and endpoints that need the key (migration 0021)", () => {
   async function addPublicOp(opId: string, needsKey: boolean | null) {
     const id = newId("op");
     await h.sql`

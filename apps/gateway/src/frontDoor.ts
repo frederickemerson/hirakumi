@@ -6,7 +6,7 @@ import { isServed } from "./domains";
 import { HOP_HEADER } from "./upstream";
 
 /** Every front-door answer names the API it came from: the routed check reads it (internal.ts). */
-export const API_HEADER = "x-hirakumi-api";
+const API_HEADER = "x-hirakumi-api";
 
 /**
  * Hosts that are always Hirakumi's own routes: the public gateway host, and anything that can't be a seller's

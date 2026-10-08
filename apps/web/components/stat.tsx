@@ -2,7 +2,7 @@ import { plural } from "@/lib/copy";
 import { formatTusdm } from "@/lib/money";
 import type { OverviewStats } from "@/lib/repo/stats";
 
-export function Stat({ label, value, note }: { label: string; value: string; note?: string }) {
+function Stat({ label, value, note }: { label: string; value: string; note?: string }) {
   return (
     <div className="rounded-[2px] border-2 border-ink bg-frost p-4">
       <p className="text-caption uppercase tracking-[0.04em] text-graphite">{label}</p>

@@ -44,7 +44,7 @@ export class EmailWalletError extends Error {
   }
 }
 
-export const EMAIL_WALLET_CLICK_AGAIN = "Your email wallet is connected. Click Continue with email or Google again to approve.";
+const EMAIL_WALLET_CLICK_AGAIN = "Your email wallet is connected. Click Continue with email or Google again to approve.";
 /** The SDK's ApiError keeps the CIP-30 code in json.code: lift it to `code`, where walletErrorMessage reads it. */
 function normalize(e: unknown): unknown {
   if (e instanceof EmailWalletError || e instanceof ClickAgainError) return e;

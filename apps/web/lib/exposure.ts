@@ -14,7 +14,7 @@ import { loadExposureTargets, storeExposure, type ExposureTarget } from "./repo/
  *
  * Publishing requires "protected": an API anyone can call for free would never sell through Hirakumi.
  */
-export const EXPOSURE_TIMEOUT_MS = 10_000;
+const EXPOSURE_TIMEOUT_MS = 10_000;
 /** Not the gateway's user agent: an API that lets that one through without a key is still open to anyone. */
 const USER_AGENT = "hirakumi-leak-check/0.1";
 

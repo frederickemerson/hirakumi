@@ -46,7 +46,7 @@ function parseBody(text: string, status: number, contentType: string): unknown {
   }
 }
 
-export const receiptsPath = (apiId: string) => `/api/try/${encodeURIComponent(apiId)}/receipts`;
+const receiptsPath = (apiId: string) => `/api/try/${encodeURIComponent(apiId)}/receipts`;
 
 /** One paid call through the real gateway, like an agent with a pack: the answer plus its receipt. */
 export function createTryHandler(d: TryDeps) {

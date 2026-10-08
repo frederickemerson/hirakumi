@@ -1,5 +1,5 @@
 /** Web routes P2 serves (contract addition). */
-export const setupLink = (webBaseUrl: string, setupToken: string) =>
+const setupLink = (webBaseUrl: string, setupToken: string) =>
   `${webBaseUrl}/setup?t=${encodeURIComponent(setupToken)}`;
 /** Moves the task's Sokosumi account to the wallet signed in on the page (apps/web /setup link mode). */
 export const linkWalletLink = (webBaseUrl: string, setupToken: string) => `${setupLink(webBaseUrl, setupToken)}&link=1`;

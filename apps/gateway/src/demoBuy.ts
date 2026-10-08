@@ -18,9 +18,9 @@ export const TRY_LIMITS: TryPurchaseLimits = { perApiWindowSeconds: 10 * 60, glo
 /** Never pay more than this for one pack (5 tUSDM). Also the buyer library's spend cap. */
 export const MAX_PACK_MICROS = 5_000_000n;
 /** Below this the wallet can't be trusted to cover fees and the min-ADA of the payment output. */
-export const MIN_LOVELACE = 3_000_000n;
+const MIN_LOVELACE = 3_000_000n;
 /** A purchase still `buying` after this crashed (the web gives up after 110 s). */
-export const BUYING_STALE_MINUTES = 10;
+const BUYING_STALE_MINUTES = 10;
 /** /recover is our own gateway; past this the lock is released and the next try asks again. */
 const RECOVER_TIMEOUT_MS = 20_000;
 
@@ -39,7 +39,7 @@ export type BuyEvent =
   | { phase: "failed"; message: string; spent: boolean };
 
 export const PENDING_MESSAGE = "The payment is sent and waiting for Cardano to confirm it. It is saved, so it is never paid twice.";
-export const NOT_PAID_MESSAGE = "The payment did not go through. Nothing was paid.";
+const NOT_PAID_MESSAGE = "The payment did not go through. Nothing was paid.";
 const NOT_RECEIVED_MESSAGE = "Hirakumi never received the payment, so nothing was paid.";
 const NOT_STARTED_MESSAGE = "No purchase was started, so nothing was paid.";
 const ENDED_MESSAGE = "The purchase did not complete.";
