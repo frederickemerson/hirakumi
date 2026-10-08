@@ -35,16 +35,16 @@ const FAILED: (OwnershipReason | DnsReason)[] = ["missing", "mismatch"];
 
 const WHERE = { dns: "the TXT record at _hirakumi.<your host>", header: "the X-Hirakumi-Verify header at its base URL" } as const;
 
-export const PAUSED_MESSAGE = (detail: string, kind: "dns" | "header" = "dns") =>
+const PAUSED_MESSAGE = (detail: string, kind: "dns" | "header" = "dns") =>
   `Hirakumi paused new sales of your API: two checks in a row did not find your code in ${WHERE[kind]} (${detail}). ` +
   `Buyers' credits they already bought still work. Put the ${kind === "dns" ? "record" : "header"} back, the same code as when you proved ownership, and sales start again at the next check.`;
-export const RESTORED_MESSAGE = (kind: "dns" | "header" = "dns") =>
+const RESTORED_MESSAGE = (kind: "dns" | "header" = "dns") =>
   kind === "dns"
     ? "Your API's _hirakumi TXT record is back, so Hirakumi is selling it again."
     : "Your API's X-Hirakumi-Verify header is back, so Hirakumi is selling it again.";
 
 /** What the seller is told when a front-door re-check changes their hostname's status. Plain words, no dashes. */
-export const DOMAIN_MESSAGES = (host: string, detail: string): Partial<Record<DomainStatus, string>> => ({
+const DOMAIN_MESSAGES = (host: string, detail: string): Partial<Record<DomainStatus, string>> => ({
   disabled:
     `Hirakumi stopped answering ${host} for your API: two checks in a row did not find your code in the TXT record at _hirakumi.${host}. ` +
     `Callers there get an error now. Sales on Hirakumi's own URL go on. Put the record back and ${host} works again at the next check.`,

@@ -27,10 +27,10 @@ export type KeyCheck = {
 };
 
 const PLACE_LABEL: Record<Placement, string> = { header: "header", query: "query parameter" };
-export const QUERY_KEY_WARNING = "A key in the address can leak in logs and error messages. Use a header if your API accepts one.";
-export const ADDRESS_KEY_WARNING =
+const QUERY_KEY_WARNING = "A key in the address can leak in logs and error messages. Use a header if your API accepts one.";
+const ADDRESS_KEY_WARNING =
   "Part of your API's address looks like a key. A key in the address isn't sealed and can leak in logs and error messages. Put it in a header or query parameter here instead.";
-export const FIXED_TEXT_NOTE = "Fixed text isn't withheld if your API repeats it. Use it only for public values, such as a version.";
+const FIXED_TEXT_NOTE = "Fixed text isn't withheld if your API repeats it. Use it only for public values, such as a version.";
 
 /** "X-API-Key in header, ending in WXYZ". Short keys have no hint. */
 export function describeSetting(s: UpstreamAuthSetting): string {
@@ -124,7 +124,7 @@ function rowsFor(view: UpstreamAuthView | null, p: Preset): Row[] {
  * The preset and rows for a key the OpenAPI file says comes in several parts: two headers, or headers and query
  * parameters. Each row has its name and the word before it filled in; never a value. Null for a single key.
  */
-export function presetForHint(hint: UpstreamAuthHint | null): { preset: Preset; rows: Row[] } | null {
+function presetForHint(hint: UpstreamAuthHint | null): { preset: Preset; rows: Row[] } | null {
   if (!hint?.parts || hint.parts.length < 2) return null;
   const rows = hint.parts.map((p) => ({ ...row(p.in), name: p.name, ...(p.prefix?.trim() ? { scheme: p.prefix.trim() } : {}) }));
   return { preset: hint.parts.some((p) => p.in === "query") ? "headerPlusQuery" : "twoHeaders", rows };

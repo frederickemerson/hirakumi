@@ -26,7 +26,7 @@ export type EscrowJob = {
  * address, a free test, or bought through the seller's Try it live). Never a sale, never earnings or reputation.
  * `ready`: hasSelfTestSchema; before 0016 ran nothing is a self test.
  */
-export const notSelfTest = (alias: string, ready: boolean) =>
+const notSelfTest = (alias: string, ready: boolean) =>
   ready ? `not exists (select 1 from self_test_credit_tokens x where x.credit_token_id = ${alias}.id)` : "true";
 
 /** A paid call that counts toward stats: not made with a self-test pack. `c` is the calls row. */

@@ -1,7 +1,7 @@
 import { PermanentError } from "../errors.js";
 import { uniqueValues, type InputSchema } from "../openapi/parse.js";
 
-export const MAX_INPUTS = 10;
+const MAX_INPUTS = 10;
 export const INVALID_STRING = "__hk_invalid__";
 
 type Prop = Record<string, unknown>;

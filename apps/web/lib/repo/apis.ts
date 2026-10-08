@@ -19,7 +19,7 @@ const LEGACY_API_COLUMNS = API_COLUMNS.filter((c) => c !== "intake_kind");
  * The select list for an Api row, on either side of migration 0014 (anyApi: hasAnyApiSchema). Synchronous on
  * purpose: a fragment is a thenable, so returning it from an async function would run it as a query.
  */
-export function apiColumns(sql: Sql | postgres.TransactionSql, anyApi: boolean) {
+function apiColumns(sql: Sql | postgres.TransactionSql, anyApi: boolean) {
   return anyApi ? sql`${sql(API_COLUMNS)}` : sql`${sql(LEGACY_API_COLUMNS)}, 'openapi'::text as intake_kind`;
 }
 

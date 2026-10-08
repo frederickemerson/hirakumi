@@ -19,7 +19,7 @@ export type SokosumiLink =
   | { status: "conflict" };
 
 /** API states whose listing is (or is becoming) live, or is over: they stay with the wallet that listed them. */
-export const PINNED_STATES = ["live", "registering", "retired"] as const;
+const PINNED_STATES = ["live", "registering", "retired"] as const;
 
 async function linkState(sql: Sql | postgres.TransactionSql, sokosumiUserId: string, sellerId: string): Promise<SokosumiLink> {
   const [me] = await sql<{ sokosumiUserId: string | null }[]>`select sokosumi_user_id from sellers where id = ${sellerId}`;

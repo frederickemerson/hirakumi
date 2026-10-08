@@ -103,14 +103,14 @@ function mergeParams(pathLevel: unknown, opLevel: unknown): Param[] {
 }
 
 /** The parts of a key: one, or the several a requirement of schemes at once needs. */
-export const partsOf = (hint: AuthHint): AuthPart[] => hint.parts ?? [hint];
+const partsOf = (hint: AuthHint): AuthPart[] => hint.parts ?? [hint];
 
 /** True when a parameter is at this part's place: same placement, and the same name (any case for a header). */
 const atPart = (p: { name: string; in: string }, part: AuthPart): boolean =>
   p.in === part.in && (part.in === "header" ? p.name.toLowerCase() === part.name.toLowerCase() : p.name === part.name);
 
 /** True when a declared parameter is where the gateway puts (a part of) the API's key: it is not a buyer input. */
-export function isAuthParam(p: { name: string; in: string }, hint: AuthHint | null): boolean {
+function isAuthParam(p: { name: string; in: string }, hint: AuthHint | null): boolean {
   return !!hint && partsOf(hint).some((part) => atPart(p, part));
 }
 

@@ -56,7 +56,7 @@ export function settlementPreference(header: (name: string) => string | undefine
 export const quoteKey = (apiId: string, packId: string, b: BuyerKeys) =>
   sha256Hex(`${apiId}|${packId}|${b.receiptKey}|${b.refundAddress}`);
 
-export function datumOf(q: Pick<QuoteRow, "channel_id" | "receipt_key" | "refund_address" | "seller_address" | "price_per_call_micros" | "max_calls" | "fee_address" | "fee_bps" | "contest_period_ms" | "close_fee_budget_lovelace">, ruleHash: string, closer: string): PackDatum {
+function datumOf(q: Pick<QuoteRow, "channel_id" | "receipt_key" | "refund_address" | "seller_address" | "price_per_call_micros" | "max_calls" | "fee_address" | "fee_bps" | "contest_period_ms" | "close_fee_budget_lovelace">, ruleHash: string, closer: string): PackDatum {
   return {
     channelId: q.channel_id,
     receiptKey: q.receipt_key,

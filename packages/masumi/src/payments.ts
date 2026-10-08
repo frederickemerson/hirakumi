@@ -46,7 +46,7 @@ function fromMs(field: string, value: string | null): Date {
   return new Date(ms);
 }
 
-export function assertPreprodAddress(field: string, address: string): void {
+function assertPreprodAddress(field: string, address: string): void {
   if (!address.startsWith("addr_test1")) throw new MasumiInputError(`${field} must be a preprod address (addr_test1…)`);
 }
 

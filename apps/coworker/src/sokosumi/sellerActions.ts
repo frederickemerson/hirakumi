@@ -49,7 +49,7 @@ export async function listOps(db: Db, apiId: string): Promise<ListedOp[]> {
 }
 
 /** Same rule as the web (apps/web/lib/endpoints.ts): anything but a GET, or a GET that looks like it writes. */
-export const needsReadOnlyConfirmation = (op: Pick<ListedOp, "method" | "sideEffectsLikely">) => op.method !== "GET" || op.sideEffectsLikely;
+const needsReadOnlyConfirmation = (op: Pick<ListedOp, "method" | "sideEffectsLikely">) => op.method !== "GET" || op.sideEffectsLikely;
 
 export function opLine(op: ListedOp): string {
   return `${op.ref}. ${op.method} ${op.path} (${op.opId})${op.description ? `: ${op.description}` : ""}${needsReadOnlyConfirmation(op) ? " [may change data]" : ""}`;

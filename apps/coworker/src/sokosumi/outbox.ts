@@ -3,7 +3,7 @@ import type { TaskStatus } from "../messages.js";
 import { expandActLinks } from "./actLinks.js";
 import { SokosumiHttpError, type SokosumiClient } from "./client.js";
 
-export const MAX_DELIVERY_ATTEMPTS = 10;
+const MAX_DELIVERY_ATTEMPTS = 10;
 
 type Row = { id: string; api_id: string | null; task_id: string; body: string; task_status: TaskStatus | null };
 

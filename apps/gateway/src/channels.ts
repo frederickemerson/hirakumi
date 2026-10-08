@@ -9,7 +9,7 @@ import type { AppDeps } from "./deps";
 import { parseBearer } from "./http";
 import { IOU_HEADER, checkIou, latestIou } from "./ious";
 
-export const CLOSE_AUTH_HEADER = "x-hirakumi-close-auth";
+const CLOSE_AUTH_HEADER = "x-hirakumi-close-auth";
 
 const txUrl = (h: string | null) => (h ? `https://preprod.cardanoscan.io/transaction/${h}` : null);
 

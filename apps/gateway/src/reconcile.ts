@@ -5,7 +5,7 @@ import { activateTokenById, listPendingPayments, revokePendingToken, type Sql } 
  * An x402 Cardano payment is valid for at most maxTimeoutSeconds (600 s) after it is signed. A pending payment
  * still not on-chain an hour later can never land; revoke it so dead rows don't fill the oldest-first queue.
  */
-export const PENDING_EXPIRY_SECONDS = 3600;
+const PENDING_EXPIRY_SECONDS = 3600;
 
 export type ChainOutput = { address: string; amount: Array<{ unit: string; quantity: string }> };
 export type ChainLookup = (txHash: string) => Promise<{ found: false } | { found: true; outputs: ChainOutput[] }>;

@@ -56,7 +56,7 @@ const SUGGESTED_PRICE = `${formatTusdm(SUGGESTED_PACK.priceMicros)} tUSDM for ${
  * Sokosumi renders comments as Markdown, so the record's fields are code spans: a bare `_hirakumi` turns into italics.
  * The coworker looks the record up itself (onboarding/dnsWatch.ts) and posts the signing link when it finds it.
  */
-export function ownershipMessage(api: Pick<TaskApi, "origin" | "pathPrefix">, code: string): string {
+function ownershipMessage(api: Pick<TaskApi, "origin" | "pathPrefix">, code: string): string {
   const rec = verifyRecordFor(api.origin);
   if (!rec.ok) return `Prove you own ${baseUrlOf(api)}: ${rec.detail} Give your API its own domain name, then reply here.`;
   const domain = parse(rec.host).domain;
@@ -72,7 +72,7 @@ export function ownershipMessage(api: Pick<TaskApi, "origin" | "pathPrefix">, co
 }
 
 /** The API's address as the seller gave it: origin + path_prefix, origin + "/" for the root. */
-export const baseUrlOf = (api: Pick<TaskApi, "origin" | "pathPrefix">) => apiBaseUrl(api);
+const baseUrlOf = (api: Pick<TaskApi, "origin" | "pathPrefix">) => apiBaseUrl(api);
 
 /** Keys are added on the signing page (sealed so only the gateway reads them), never in a comment. */
 const keyLine = (hint: AuthHint | null) =>

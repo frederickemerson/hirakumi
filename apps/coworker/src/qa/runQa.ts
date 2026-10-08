@@ -21,8 +21,8 @@ export type OpQaResult = {
 
 /** A good test answer as stored with the QA output: the first MAX_GOOD_ANSWER_LENGTH characters, and whether that is all of it. */
 export type GoodAnswer = { body: string; complete: boolean };
-export const MAX_GOOD_ANSWERS = 5;
-export const MAX_GOOD_ANSWER_LENGTH = 32_000;
+const MAX_GOOD_ANSWERS = 5;
+const MAX_GOOD_ANSWER_LENGTH = 32_000;
 
 function parseJson(body: string): { ok: true; value: unknown } | { ok: false } {
   try {

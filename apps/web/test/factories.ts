@@ -9,7 +9,7 @@ const API_COLUMNS = [
   "health_checked_at", "escrow_op_id", "agent_identifier", "created_at",
 ];
 
-export const TEST_RULE: RuleDefinition = {
+const TEST_RULE: RuleDefinition = {
   version: 1,
   status: { min: 200, max: 299 },
   contentType: "application/json",

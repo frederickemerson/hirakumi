@@ -12,7 +12,7 @@ import type { LoadedApi } from "./registry";
 export type PackSettlement = { mode: SettlementMode; reasons: string[]; recommended?: SettlementMode };
 
 const DAY_MS = 86_400_000;
-export const SIGNALS_TTL_MS = 60_000;
+const SIGNALS_TTL_MS = 60_000;
 
 /** One query per API per minute: listing age and health_events. Keyed by the database, so each app has its own. */
 const signalCache = new WeakMap<Sql, Map<string, { at: number; value: Promise<SettlementSignals | null> }>>();
@@ -40,7 +40,7 @@ export function canEscrow(d: AppDeps, pack: PackRow): boolean {
 }
 
 /** A buyer who demands escrow gets its own decision, so asking and not asking never share an answer. */
-export const decisionKey = (apiId: string, packId: string, b: BuyerKeys, priceMicros: string, wantsEscrow = false) =>
+const decisionKey = (apiId: string, packId: string, b: BuyerKeys, priceMicros: string, wantsEscrow = false) =>
   sha256Hex(`${apiId}|${packId}|${b.receiptKey}|${b.refundAddress}|${priceMicros}${wantsEscrow ? "|escrow" : ""}`);
 
 /** The policy's answer for a buyer who can escrow, from live data. Persist it before offering it (see below). */

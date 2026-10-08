@@ -75,7 +75,7 @@ export type PackMode = "direct" | "escrow" | "hybrid";
 export const DEFAULT_TRY_LIVE_APIS = ["api_eejiaioyqt"];
 
 /** "a, b" to ["a", "b"]; unset gives the default featured list; an empty string gives none. */
-export function parseTryLiveApis(raw: string | undefined): string[] {
+function parseTryLiveApis(raw: string | undefined): string[] {
   if (raw === undefined) return [...DEFAULT_TRY_LIVE_APIS];
   return [...new Set(raw.split(",").map((s) => s.trim()).filter(Boolean))];
 }
@@ -95,7 +95,7 @@ export type PackEscrowConfig = {
   raiseMarginMs: number;
 };
 
-export const MASUMI_ESCROW_UNIT_PREPROD =
+const MASUMI_ESCROW_UNIT_PREPROD =
   "16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d";
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig {
@@ -150,7 +150,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
  * both). A key that doesn't parse or doesn't match is not used, loudly, and never stops the process: keyless APIs,
  * escrow and jobs keep running, and keyed APIs turn Down with an operator reason instead of failing to open.
  */
-export function upstreamAuthKeyFrom(env: NodeJS.ProcessEnv): Pick<GatewayConfig, "upstreamAuthPrivateKey" | "upstreamAuthKeyProblem"> {
+function upstreamAuthKeyFrom(env: NodeJS.ProcessEnv): Pick<GatewayConfig, "upstreamAuthPrivateKey" | "upstreamAuthKeyProblem"> {
   const privateKey = env.UPSTREAM_AUTH_PRIVATE_KEY?.trim() || null;
   const publicKey = env.UPSTREAM_AUTH_PUBLIC_KEY?.trim() || null;
   if (!privateKey) return { upstreamAuthPrivateKey: null, upstreamAuthKeyProblem: null };
@@ -172,7 +172,7 @@ export function upstreamAuthKeyFrom(env: NodeJS.ProcessEnv): Pick<GatewayConfig,
 }
 
 /** "1.1.1.1, 8.8.8.8" to a list of IPs; unset or blank gives the public default. A name is refused (it needs DNS itself). */
-export function parseDnsResolvers(raw: string | undefined): string[] {
+function parseDnsResolvers(raw: string | undefined): string[] {
   const items = (raw ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   if (items.length === 0) return [...DEFAULT_DNS_RESOLVERS];
   const bad = items.find((item) => isIP(item) === 0);
@@ -189,10 +189,10 @@ function parsePort(raw: string | undefined, dflt = 4021, name = "GATEWAY_PORT"):
   return n;
 }
 
-export const DEFAULT_EDGE_IPS = ["52.70.235.103"];
+const DEFAULT_EDGE_IPS = ["52.70.235.103"];
 
 /** "a, b" to a list of IPs; unset or blank gives the default. A name is refused: the routed check compares addresses. */
-export function parseEdgeIps(raw: string | undefined): string[] {
+function parseEdgeIps(raw: string | undefined): string[] {
   const items = (raw ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
   if (items.length === 0) return [...DEFAULT_EDGE_IPS];
   const bad = items.find((item) => isIP(item) === 0);
@@ -201,7 +201,7 @@ export function parseEdgeIps(raw: string | undefined): string[] {
 }
 
 /** An http(s) URL without a trailing slash, or null when unset. */
-export function parseWebBaseUrl(raw: string | undefined): string | null {
+function parseWebBaseUrl(raw: string | undefined): string | null {
   const v = raw?.trim();
   if (!v) return null;
   let u: URL;
@@ -215,7 +215,7 @@ export function parseWebBaseUrl(raw: string | undefined): string | null {
 }
 
 /** "a.b.c.d/n, x:y::/n, a.b.c.d" → normalised CIDRs. A bare address is a /32 or /128. /0 is refused (trusts everyone). */
-export function parseTrustedCidrs(raw: string | undefined): string[] {
+function parseTrustedCidrs(raw: string | undefined): string[] {
   const out: string[] = [];
   for (const item of (raw ?? "").split(",").map((s) => s.trim()).filter(Boolean)) {
     const m = /^([^/]+)(?:\/(\d{1,3}))?$/.exec(item);

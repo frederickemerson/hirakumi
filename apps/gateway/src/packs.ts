@@ -16,7 +16,7 @@ import { downBody, ruleUrl, sellingPausedBody } from "./http";
 import { primaryRule, type LoadedApi } from "./registry";
 import { canEscrow, settlementFor, type PackSettlement } from "./settlement";
 
-export const PACK_ROUTE = "POST /a/:apiId/packs/:packId";
+const PACK_ROUTE = "POST /a/:apiId/packs/:packId";
 const PACK_PATH = /^\/a\/([^/]+)\/packs\/([^/]+)$/;
 const NETWORK = "cardano:preprod" as const;
 

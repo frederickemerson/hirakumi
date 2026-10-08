@@ -8,7 +8,7 @@ import { API_STATES, type ApiState, type OnboardStep, type OnboardStepStatus } f
  * no step row; the state alone says whether they are done or waiting for the seller.
  */
 export type TimelineKey = keyof typeof TIMELINE_LABEL;
-export const TIMELINE_KEYS = Object.keys(TIMELINE_LABEL) as TimelineKey[];
+const TIMELINE_KEYS = Object.keys(TIMELINE_LABEL) as TimelineKey[];
 
 export type TimelineProgress = { done: number; total: number };
 export type TimelineItem = {

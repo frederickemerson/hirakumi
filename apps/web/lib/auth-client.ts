@@ -35,7 +35,7 @@ function subscribe(l: () => void): () => void {
  * Asks the server once; concurrent callers share the request. A failed probe settles on signed out: the header
  * must show something, and a seller whose session can't be read can't use it on this page either.
  */
-export function probeAuth(): Promise<void> {
+function probeAuth(): Promise<void> {
   if (probing) return probing;
   const started = version;
   probing = (async () => {

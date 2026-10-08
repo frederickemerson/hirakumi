@@ -116,7 +116,7 @@ describe("parseOpenApi: APIs that need a key", () => {
     expect(r.operations[0].llm.parameters.map((p) => p.name)).toEqual(["symbol"]);
   });
 
-  describe("two keys at once (follow-up B, UPSTREAM_AUTH_V3)", () => {
+  describe("two keys at once (UPSTREAM_AUTH_V3)", () => {
     const supabase = {
       schemes: { apikey: { type: "apiKey", in: "header", name: "apikey" }, jwt: { type: "http", scheme: "bearer" } },
       security: [{ apikey: [], jwt: [] }],

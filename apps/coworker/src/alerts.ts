@@ -6,13 +6,13 @@ import { enqueueMessage } from "./messages.js";
 
 type Row = { id: string; api_id: string; to_health: "healthy" | "down"; reasons: unknown; at: Date; name: string };
 
-export const formatUtc = (d: Date) => `${d.toISOString().replace("T", " ").slice(0, 19)} UTC`;
+const formatUtc = (d: Date) => `${d.toISOString().replace("T", " ").slice(0, 19)} UTC`;
 
 /**
  * Earliest failing probe in the current failure run (probes are calls rows with kind 'probe'). A rate-limited probe
  * (upstream_ok with verdict n/a, apps/gateway monitor.ts) is inconclusive, not a failure.
  */
-export async function firstFailureAt(pool: pg.Pool, apiId: string, until: Date): Promise<Date | null> {
+async function firstFailureAt(pool: pg.Pool, apiId: string, until: Date): Promise<Date | null> {
   const { rows } = await pool.query<{ first: Date | null }>(
     `select min(created_at) as first from calls
      where api_id = $1 and kind = 'probe' and verdict <> 'pass' and not (execution = 'upstream_ok' and verdict = 'n/a')

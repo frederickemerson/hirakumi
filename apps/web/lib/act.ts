@@ -16,7 +16,7 @@ import type { Api, ApiState } from "./types";
  */
 
 /** Where each action can run. A link for a step the API has passed, or not reached, does nothing. */
-export const ACT_STATES: Record<ActAction, readonly ApiState[]> = {
+const ACT_STATES: Record<ActAction, readonly ApiState[]> = {
   ownership: ["endpoints_confirmed"],
   key: ["endpoints_confirmed", "ownership_verified", "rule_built", "priced", "registering", "live"],
   publish: ["priced"],

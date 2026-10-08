@@ -10,7 +10,7 @@ type Toast = { id: number; text: string; leaving: boolean };
 type Listener = (text: string) => void;
 
 const listeners = new Set<Listener>();
-export const TOAST_MS = 2_400;
+const TOAST_MS = 2_400;
 const EXIT_MS = 160;
 
 export function toast(text: string): void {

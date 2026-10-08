@@ -75,7 +75,7 @@ describe("parseStep for an API that needs a key", () => {
     expect((await messagesFor(db.pool, apiId))[0].body).not.toMatch(/key/);
   });
 
-  it("stores which endpoints need the key (operations.needs_key, follow-up A)", async () => {
+  it("stores which endpoints need the key (operations.needs_key)", async () => {
     const keyed = await seedApi(db.pool);
     await parseStep({ pool: db.pool, fetchSpec: vi.fn().mockResolvedValue(KEYED) }, keyed);
     const open = await seedApi(db.pool);

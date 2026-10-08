@@ -31,7 +31,7 @@ export function keyIsPublic(r: RenderedPreset, texts: readonly (string | null | 
  * lift it past upstreamSecretHint's 16 characters and show most of it. So the hint comes from the token after the
  * scheme word, and a Basic value has none (its end is the end of the base64 password).
  */
-export function secretHint(value: string): string {
+function secretHint(value: string): string {
   if (/^basic\s/i.test(value.trim())) return "";
   return upstreamSecretHint(value.trim().split(/\s+/).pop() ?? "");
 }

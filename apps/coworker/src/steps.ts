@@ -16,14 +16,14 @@ export type StepRow = {
 };
 
 /** The web stepper name for each driven step (used on Sokosumi task comments). */
-export const HUMAN_STEP_OF: Record<StepName, HumanStep> = {
+const HUMAN_STEP_OF: Record<StepName, HumanStep> = {
   parse: "Read your file",
   describe: "Describe endpoints",
   qa: "Test calls",
   register: "Register on Masumi",
 };
 
-export const STEP_LABELS: Record<StepName, string> = {
+const STEP_LABELS: Record<StepName, string> = {
   parse: "reading your API",
   describe: "describing your endpoints",
   qa: "test calls",
@@ -50,7 +50,7 @@ export async function getStep(db: Db, apiId: string, step: StepName): Promise<St
   return rows[0] ?? null;
 }
 
-export async function startStep(db: Db, apiId: string, step: StepName): Promise<StepRow> {
+async function startStep(db: Db, apiId: string, step: StepName): Promise<StepRow> {
   const { rows } = await db.query<StepRow>(
     `insert into onboard_steps (api_id, step, status, attempts, updated_at) values ($1, $2, 'running', 1, now())
      on conflict (api_id, step) do update set status = 'running', attempts = onboard_steps.attempts + 1, updated_at = now()
@@ -87,7 +87,7 @@ export async function touchStep(db: Db, apiId: string, step: StepName): Promise<
   await db.query(`update onboard_steps set updated_at = now() where api_id = $1 and step = $2`, [apiId, step]);
 }
 
-export async function failStep(
+async function failStep(
   db: Db,
   apiId: string,
   step: StepName,

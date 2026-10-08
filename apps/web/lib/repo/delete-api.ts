@@ -47,10 +47,10 @@ export const API_DELETE_ORDER: { table: string; run: (tx: Tx, apiId: string) => 
 ];
 
 /** The last word on a Sokosumi task whose API the seller deleted before publishing. */
-export const DELETED_TASK_MESSAGE = "You deleted this API. Nothing was published.";
+const DELETED_TASK_MESSAGE = "You deleted this API. Nothing was published.";
 
 /** The last word on a Sokosumi task whose API the seller deleted while it was being published. */
-export const DELETED_REGISTERING_TASK_MESSAGE = "You deleted this API. It won't go on the market.";
+const DELETED_REGISTERING_TASK_MESSAGE = "You deleted this API. It won't go on the market.";
 
 export type DeleteApiResult =
   | {

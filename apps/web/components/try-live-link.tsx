@@ -4,7 +4,7 @@ import { buttonVariants } from "@/components/ui/button";
 import type { ApiState, Health } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-export const TRY_LABEL = "Try it live";
+const TRY_LABEL = "Try it live";
 export const TRY_DOWN_REASON = "Down right now. You can try it again once it passes its checks.";
 
 export const tryHref = (apiId: string) => `/p/${encodeURIComponent(apiId)}/try`;

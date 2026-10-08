@@ -42,7 +42,7 @@ export type FailureCounter = {
  * and only the newest `max` times are kept per key, so memory stays bounded the same way.
  */
 /** begin() waits at most this long by default: below an escrow call's 30 s lease and any client's patience. */
-export const FAILURE_WAIT_MS = 5_000;
+const FAILURE_WAIT_MS = 5_000;
 
 /**
  * In memory, so per gateway process: this deployment runs one gateway (Caddyfile reverse_proxy gateway:4021). With

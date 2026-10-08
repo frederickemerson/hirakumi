@@ -2,7 +2,7 @@ import type { Sql } from "../db";
 import { validateEndpointSelection, type EndpointSelection } from "../endpoints";
 import type { ApiState, Operation, RepoResult } from "../types";
 
-export const OPERATION_COLUMNS = [
+const OPERATION_COLUMNS = [
   "id", "op_id", "method", "path", "description", "side_effects_likely", "side_effects_confirmed_none", "enabled",
 ];
 

@@ -59,7 +59,7 @@ export function WalletIcon({ icon, className = "size-5" }: { icon: string; class
   return <img src={icon} alt="" aria-hidden className={`${className} shrink-0 rounded-[2px] object-contain outline outline-1 -outline-offset-1 outline-black/10`} />;
 }
 
-export const GET_A_WALLET = [
+const GET_A_WALLET = [
   { name: "Lace", href: "https://www.lace.io" },
   { name: "Eternl", href: "https://eternl.io" },
   { name: "Vespr", href: "https://vespr.xyz" },

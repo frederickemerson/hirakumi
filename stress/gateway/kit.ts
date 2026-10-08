@@ -8,7 +8,7 @@ import { decodePaymentRequiredHeader, encodePaymentSignatureHeader } from "@x402
 import type { PaymentRequirements } from "@x402/core/types";
 import type { Express } from "express";
 import { listen } from "../../apps/gateway/src/server";
-import { fakeTxHash, seedLiveApi, type Harness } from "../../apps/gateway/test/helpers";
+import { fakeTxHash } from "../../apps/gateway/test/helpers";
 
 export { fakeTxHash, makeHarness, seedLiveApi, insertActiveToken, anotherBase, type Harness } from "../../apps/gateway/test/helpers";
 export { FakeEscrowChain } from "../../apps/gateway/test/fakeChain";
@@ -85,11 +85,6 @@ export async function startHostileSeller() {
 
 export const passingBody = (symbol = "ADA") => JSON.stringify({ symbol, price: 0.42, updatedAt: new Date().toISOString() });
 
-/** Seeds a live API on `origin` priced like the gateway tests (100 calls for 2 tUSDM). */
-export async function seedOn(h: Harness, origin: string, opts: Parameters<typeof seedLiveApi>[2] = {}) {
-  return seedLiveApi(h.sql, origin, opts);
-}
-
 export async function offerOf(res: { status: number; headers: Record<string, string | string[] | undefined> }) {
   const raw = res.headers["payment-required"];
   if (!raw) return null;
@@ -103,7 +98,3 @@ export function paymentHeader(required: { x402Version: number; resource?: unknow
 
 export const txHash = (transaction: string) => fakeTxHash(transaction)!;
 
-export function percentile(sorted: number[], p: number) {
-  if (!sorted.length) return 0;
-  return sorted[Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))]!;
-}

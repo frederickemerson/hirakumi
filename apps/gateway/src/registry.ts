@@ -65,7 +65,7 @@ export function compileInputValidator(schema: Record<string, unknown>): (input: 
   return fn;
 }
 
-export const REGISTRY_TTL_MS = 60_000;
+const REGISTRY_TTL_MS = 60_000;
 
 export class ApiRegistry {
   private readonly cache = new Map<string, { at: number; value: Promise<LoadedApi | null> }>();

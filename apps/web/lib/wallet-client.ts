@@ -58,7 +58,7 @@ export function walletAction(verb: string, w: WalletInfo): string {
 }
 
 /** The browser's extension wallets (CIP-30), deduplicated. */
-export function listInjectedWallets(): WalletInfo[] {
+function listInjectedWallets(): WalletInfo[] {
   if (typeof window === "undefined" || !window.cardano) return [];
   return dedupeWallets(
     Object.entries(window.cardano)
@@ -103,7 +103,7 @@ export async function connectWallet(id: string): Promise<{ api: Cip30Api; addres
   return { api, addressHex: await api.getChangeAddress() };
 }
 
-export function textToHex(s: string): string {
+function textToHex(s: string): string {
   return Array.from(new TextEncoder().encode(s), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
